@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ROUTE_ENGLAND, ROUTE_INDIA, INDIA_OFFSET } from '../src/games/snakesladders-board.js';
+import { ROUTE_ENGLAND, ROUTE_INDIA, INDIA_OFFSET, SQUARE_TEXT } from '../src/games/snakesladders-board.js';
 import { walk, buildWorld } from '../src/games/snakesladders-render.js';
 
 // Minimal SVG-capable DOM stub. Same reasoning as the one in
@@ -106,7 +106,7 @@ test('consecutive squares are close together', () => {
 });
 
 // ---- tokens, the die and the roll control ----
-import { tokenOffset } from '../src/games/snakesladders-render.js';
+import { tokenOffset, dieFace } from '../src/games/snakesladders-render.js';
 import { render, createInitialState } from '../src/games/snakesladders.js';
 
 const NAMES = { 0: 'Harvey', 1: 'Shruti' };
@@ -172,4 +172,42 @@ test('rolling reports a die between one and six', () => {
   });
   for (let i = 0; i < 200; i++) host.__sl.rollButton.click();
   assert.ok(seen.size >= 3, 'the die should not keep returning the same face');
+});
+
+test('the caption shows the joke at the foot of a ladder, not the empty square it lands on', () => {
+  // The writing lives on the link's source square (4 is 'the bus actually turns
+  // up'), and the destination usually says nothing. Reading `to` would throw
+  // away every joke on the board.
+  const { host } = container();
+  const climbed = {
+    ...createInitialState(), pos0: 14, turn: 1, moves: 1,
+    die: 3, seat: 0, from: 1, via: 4, to: 14
+  };
+  render(climbed, host, { mySeat: 0, names: NAMES, onAction: () => {} });
+  assert.equal(host.__sl.caption.textContent, SQUARE_TEXT[4]);
+});
+
+test('the caption shows the landed square when no link was taken', () => {
+  const { host } = container();
+  const plain = {
+    ...createInitialState(), pos0: 17, turn: 1, moves: 1,
+    die: 2, seat: 0, from: 15, via: null, to: 17
+  };
+  render(plain, host, { mySeat: 0, names: NAMES, onAction: () => {} });
+  assert.equal(host.__sl.caption.textContent, SQUARE_TEXT[17]);
+});
+
+test('the die is drawn with pips, not a font glyph', () => {
+  // The Unicode die characters are not in every font and rendered as a tofu
+  // box in testing. Pips drawn as circles work on any device.
+  const doc = makeDoc();
+  for (let n = 1; n <= 6; n++) {
+    const face = dieFace(doc, n);
+    const pips = face.children.filter((c) => c.tag === 'circle');
+    assert.equal(pips.length, n, `a ${n} should have ${n} pips`);
+  }
+});
+
+test('an unrolled die shows no pips', () => {
+  assert.equal(dieFace(makeDoc(), null).children.filter((c) => c.tag === 'circle').length, 0);
 });

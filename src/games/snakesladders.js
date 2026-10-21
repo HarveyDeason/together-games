@@ -1,5 +1,5 @@
 import { LINKS, LAST_SQUARE, SQUARE_TEXT } from './snakesladders-board.js';
-import { buildWorld, makeToken, placeToken } from './snakesladders-render.js';
+import { buildWorld, makeToken, placeToken, dieFace } from './snakesladders-render.js';
 
 export const meta = { id: 'snakesladders', name: 'Snakes & Ladders', seats: 2 };
 
@@ -152,9 +152,18 @@ export function render(state, el, { mySeat, names, onAction }) {
   const myTurn = status.phase === 'playing' && mySeat !== null && status.whoseTurn === mySeat;
   world.rollButton.disabled = !myTurn || world.busy;
 
-  if (state.die) world.die.textContent = DIE_FACE[state.die];
+  if (state.die) {
+    world.die.innerHTML = '';
+    world.die.appendChild(dieFace(doc, state.die));
+    world.die.setAttribute('aria-label', `Rolled ${state.die}`);
+  }
 
-  const text = state.to === null ? '' : SQUARE_TEXT[state.to];
+  // The writing lives on the square you LANDED on, which for a ladder or a
+  // cable is `via`, not the square it threw you to. Reading `to` first would
+  // silently drop every joke attached to a link.
+  const text = state.via !== null && SQUARE_TEXT[state.via]
+    ? SQUARE_TEXT[state.via]
+    : (state.to === null ? '' : SQUARE_TEXT[state.to]);
   if (status.phase === 'won') {
     world.caption.textContent = status.winner === mySeat ? 'You got there.' : `${names[status.winner]} got there first.`;
   } else if (text) {

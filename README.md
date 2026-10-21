@@ -50,5 +50,12 @@ Realtime Database → Rules and click Publish.
    clients diverge and the function stops being testable.
 3. Add unit tests in `test/<id>.test.js`.
 4. Register it in `src/games/registry.js`.
-5. Relax the `game/state` block in `firebase-rules.json`, which is currently
-   shaped for Tic Tac Toe only (board/turn/moves).
+5. Widen the `game/state` block in `firebase-rules.json` if the game needs
+   fields no existing game uses. The rules are a **union** across all games —
+   every field any game writes, with a type check on each — rather than
+   per-game rules. They are a shape guard against a stray client, not the
+   referee; `applyAction` is the referee.
+6. Republish the rules in the Firebase console. Pushing does not deploy them.
+
+The game id lives at `rooms/<code>/game/id`, beside the state, so switching
+game is a single atomic write. Never split them across two paths.

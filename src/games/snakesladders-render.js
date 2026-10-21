@@ -353,3 +353,34 @@ export function placeToken(token, squarePos, square, seat) {
   const parked = square === 0 ? 26 : 0;
   token.setAttribute('transform', `translate(${at.x + dx},${at.y + dy + parked})`);
 }
+
+// Pip layout on a 3x3 grid, in units of the die's half-size.
+const PIPS = {
+  1: [[0, 0]],
+  2: [[-1, -1], [1, 1]],
+  3: [[-1, -1], [0, 0], [1, 1]],
+  4: [[-1, -1], [1, -1], [-1, 1], [1, 1]],
+  5: [[-1, -1], [1, -1], [0, 0], [-1, 1], [1, 1]],
+  6: [[-1, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [1, 1]]
+};
+
+/** Draw a die face as pips.
+ *
+ *  Not the Unicode die characters: they are missing from plenty of system
+ *  fonts and render as a tofu box, which is exactly what happened on the first
+ *  pass. Circles work everywhere. */
+export function dieFace(doc, value) {
+  const svg = doc.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 48 48');
+  svg.setAttribute('class', 'sl-die-face');
+  svg.setAttribute('aria-hidden', 'true');
+  for (const [px, py] of PIPS[value] ?? []) {
+    const pip = doc.createElementNS(NS, 'circle');
+    pip.setAttribute('cx', 24 + px * 12);
+    pip.setAttribute('cy', 24 + py * 12);
+    pip.setAttribute('r', 5);
+    pip.setAttribute('fill', 'currentColor');
+    svg.appendChild(pip);
+  }
+  return svg;
+}

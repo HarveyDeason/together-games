@@ -3,20 +3,34 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#12131a">
   <title>Together Games</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <main class="lobby">
     <h1>Together Games</h1>
-    <p id="deploy-check">Connecting&hellip;</p>
+
+    <section id="name-step">
+      <label class="field-label" for="name-input">What should we call you?</label>
+      <input id="name-input" class="field" type="text" maxlength="40" autocomplete="given-name" placeholder="Your name">
+      <button type="button" id="name-save" class="btn">Continue</button>
+    </section>
+
+    <section id="room-step" hidden>
+      <p class="greeting" id="greeting"></p>
+      <button type="button" id="create-room" class="btn">Create a room</button>
+      <p class="or">or</p>
+      <label class="field-label" for="code-input">Join with a code</label>
+      <input id="code-input" class="field field-code" type="text" maxlength="4"
+             inputmode="latin" autocapitalize="characters" autocomplete="off" placeholder="ABCD">
+      <button type="button" id="join-room" class="btn btn-secondary">Join</button>
+      <button type="button" id="change-name" class="link-btn">Not <span id="current-name"></span>?</button>
+    </section>
+
+    <p class="error" id="error" role="alert"></p>
   </main>
-  <script type="module">
-    import { onConnectionChange } from './src/firebase.js';
-    const el = document.getElementById('deploy-check');
-    onConnectionChange((connected) => {
-      el.textContent = connected ? 'Connected to Firebase.' : 'Offline.';
-    });
-  </script>
+
+  <script type="module" src="src/main-lobby.js"></script>
 </body>
 </html>

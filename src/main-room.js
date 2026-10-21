@@ -23,11 +23,7 @@ if (!isValidCode(code) || !identity) {
   // Carry the code to the lobby. Without it, the first person to tap a shared
   // WhatsApp link lands on an empty lobby and the invite is lost — which is
   // the single most important journey in the app.
-  const target = isValidCode(code) ? `index.html?r=${code}` : 'index.html';
-  location.replace(target);
-  // replace() is asynchronous; without this the rest of the module runs and
-  // throws on identity.clientId, flashing a bogus error on the way out.
-  throw new Error('redirecting to lobby');
+  location.replace(isValidCode(code) ? `index.html?r=${code}` : 'index.html');
 }
 
 let mySeat = null;
@@ -222,4 +218,7 @@ async function start() {
   initReactions({ code, identity });
 }
 
-start();
+// location.replace() above does not stop this module, so gate the entry point
+// rather than throwing: joinRoom(code, null) would otherwise blow up and flash
+// a bogus error banner on the way out.
+if (isValidCode(code) && identity) start();

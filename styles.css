@@ -338,3 +338,11 @@ body {
 .ttt-cell:focus-visible,
 .btn:focus-visible,
 .reaction-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.invite-line {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface));
+  border-radius: 0.75rem;
+  font-size: 0.9375rem;
+}

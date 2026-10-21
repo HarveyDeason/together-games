@@ -1,4 +1,4 @@
-import { db, ref, get, set, remove, runTransaction, onDisconnect, onConnectionChange } from './firebase.js';
+import { db, ref, get, set, remove, onValue, runTransaction, onDisconnect, onConnectionChange } from './firebase.js';
 import { randomCode } from './roomcode.js';
 
 const MAX_CODE_ATTEMPTS = 5;
@@ -44,27 +44,53 @@ export async function joinRoom(code, identity) {
   return { seat: result.snapshot.val()[identity.clientId].seat };
 }
 
-/** Marks this client present in the room. Firebase clears the flag server-side
- *  if the connection drops, so a crashed or locked phone is detected without
- *  any heartbeat code of our own. */
+/** Marks this client present in the room.
+ *
+ *  Three things conspire against a naive version:
+ *   - Firebase's onDisconnect only fires when the socket actually closes. A
+ *     locked phone can hold a half-dead socket open for a minute or more, so
+ *     the dot would still say "here" when nobody is.
+ *   - Two tabs in the same browser share one clientId and therefore one
+ *     presence node, so closing either one marks you away while the other is
+ *     still open and visible.
+ *   - A silently dropped mobile socket can have its onDisconnect land AFTER
+ *     the replacement connection wrote `true`, deleting it.
+ *
+ *  So: hidden means away, and we watch our own node and re-assert it whenever
+ *  it goes missing while we are connected and visible. */
 export function trackPresence(code, clientId) {
   const myPresence = ref(db, `rooms/${code}/presence/${clientId}`);
+  let connected = false;
 
-  onConnectionChange(async (connected) => {
-    if (!connected) return;
-    // Must be re-armed on every reconnect — onDisconnect is consumed when it fires.
-    await onDisconnect(myPresence).remove();
-    await set(myPresence, true);
+  const shouldBeHere = () => connected && document.visibilityState === 'visible';
+
+  function assert() {
+    if (shouldBeHere()) set(myPresence, true).catch(() => {});
+  }
+
+  onConnectionChange(async (isConnected) => {
+    connected = isConnected;
+    if (!isConnected) return;
+    // Re-armed on every reconnect: onDisconnect is consumed once it fires.
+    await onDisconnect(myPresence).remove().catch(() => {});
+    assert();
   });
 
-  // Backgrounding a tab on iOS can suspend the socket without closing it.
-  // Returning to the tab re-asserts presence immediately rather than waiting
-  // for Firebase to notice.
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') set(myPresence, true).catch(() => {});
+    if (document.visibilityState === 'visible') assert();
+    else remove(myPresence).catch(() => {});
+  });
+
+  // Self-heal: if anything removed our flag while we are still here, put it
+  // back. This covers the second-tab case and the late-onDisconnect race.
+  onValue(myPresence, (snap) => {
+    if (!snap.exists() && shouldBeHere()) assert();
   });
 
   window.addEventListener('pagehide', () => {
     remove(myPresence).catch(() => {});
   });
+
+  // bfcache restores fire pageshow without a visibilitychange.
+  window.addEventListener('pageshow', assert);
 }

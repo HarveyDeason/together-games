@@ -30,11 +30,20 @@ function showNameStep(identity) {
 
 document.getElementById('name-save').addEventListener('click', () => {
   showError('');
+  let identity;
   try {
-    showRoomStep(saveName(nameInput.value));
-  } catch {
-    showError('Please enter a name.');
+    identity = saveName(nameInput.value);
+  } catch (error) {
+    // saveName throws for an empty name, but also if storage is disabled or
+    // crypto.randomUUID is unavailable. Saying "please enter a name" to someone
+    // who just typed one is worse than useless.
+    showError(error.message === 'Name cannot be empty'
+      ? 'Please enter a name.'
+      : 'Your browser would not let us save your name. Private browsing or blocked site data is the usual cause.');
+    return;
   }
+  if (hasInvite) location.href = `room.html?r=${invitedTo}`;
+  else showRoomStep(identity);
 });
 
 document.getElementById('change-name').addEventListener('click', () => {
@@ -78,6 +87,23 @@ codeInput.addEventListener('input', () => {
   codeInput.value = codeInput.value.toUpperCase().replace(/[^A-Z]/g, '');
 });
 
+// A code in the URL means someone tapped a shared link. Remember it, and the
+// moment we have a name, go straight into that room rather than making them
+// retype a code they never saw.
+const invitedTo = normaliseCode(new URLSearchParams(location.search).get('r'));
+const hasInvite = isValidCode(invitedTo);
+
+if (hasInvite) {
+  codeInput.value = invitedTo;
+  document.getElementById('invite-line').textContent =
+    `You have been invited to room ${invitedTo}.`;
+  document.getElementById('invite-line').hidden = false;
+}
+
 const identity = getIdentity();
-if (identity) showRoomStep(identity);
-else showNameStep(null);
+if (identity) {
+  if (hasInvite) location.replace(`room.html?r=${invitedTo}`);
+  else showRoomStep(identity);
+} else {
+  showNameStep(null);
+}

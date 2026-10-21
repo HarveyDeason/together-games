@@ -1,4 +1,4 @@
-import { db, ref, onValue, set, runTransaction, onConnectionChange } from './firebase.js';
+import { db, ref, onValue, runTransaction, onConnectionChange } from './firebase.js';
 import { getIdentity } from './identity.js';
 import { joinRoom, trackPresence } from './room.js';
 import { normaliseCode, isValidCode } from './roomcode.js';
@@ -19,7 +19,16 @@ const code = normaliseCode(new URLSearchParams(location.search).get('r'));
 const identity = getIdentity();
 const game = getGame('tictactoe');
 
-if (!isValidCode(code) || !identity) location.replace('index.html');
+if (!isValidCode(code) || !identity) {
+  // Carry the code to the lobby. Without it, the first person to tap a shared
+  // WhatsApp link lands on an empty lobby and the invite is lost — which is
+  // the single most important journey in the app.
+  const target = isValidCode(code) ? `index.html?r=${code}` : 'index.html';
+  location.replace(target);
+  // replace() is asynchronous; without this the rest of the module runs and
+  // throws on identity.clientId, flashing a bogus error on the way out.
+  throw new Error('redirecting to lobby');
+}
 
 let mySeat = null;
 let players = {};
@@ -92,10 +101,6 @@ function draw() {
   }
 
   rematchEl.hidden = status.phase === 'playing';
-
-  if (status.phase !== 'playing') {
-    recordResult({ code, gameId: game.meta.id, status, players });
-  }
 }
 
 /** All game writes go through a transaction, so two simultaneous taps
@@ -120,10 +125,19 @@ async function submitAction(action) {
 }
 
 rematchEl.addEventListener('click', async () => {
-  // nextStarter derives the previous starter from moves/turn. state.turn alone
-  // is not it: after a win, turn holds whoever lost, who may well have started.
-  const first = state ? game.nextStarter(state) : 0;
-  await set(ref(db, `rooms/${code}/game`), { state: game.createInitialState({ first }) });
+  // A transaction, not a set: both players see this button at once, and an
+  // unconditional write would wipe a move already played in the new game.
+  // `first` is derived from the SERVER's state for the same reason.
+  try {
+    await runTransaction(ref(db, `rooms/${code}/game`), (current) => {
+      if (!current?.state) return current;
+      // Someone already started the next game — leave it alone.
+      if (game.getStatus(current.state).phase === 'playing') return;
+      return { state: game.createInitialState({ first: game.nextStarter(current.state) }) };
+    });
+  } catch {
+    showBanner('Could not start a new game. Check your connection.');
+  }
 });
 
 codeEl.addEventListener('click', async () => {
@@ -193,6 +207,15 @@ async function start() {
     }
     state = snap.val();
     draw();
+
+    // Scoring happens here and nowhere else: this is the only place the state
+    // is known to be the server's current value. Calling it from draw() let a
+    // reconnecting client score a stale finished game a second time.
+    const status = game.getStatus(state);
+    if (status.phase !== 'playing') {
+      recordResult({ code, gameId: game.meta.id, status, players })
+        .catch(() => showBanner('Could not save the score.'));
+    }
   });
 
   initChat({ code, identity, namesFor: (clientId) => players[clientId]?.name ?? 'Them' });

@@ -9,20 +9,27 @@ no app, no account, no cost.
 ## Running locally
 
 Because the site uses ES modules, opening `index.html` directly with `file://`
-will not work (the browser blocks module loads over `file://`). Serve it over
-HTTP from the repository root:
+will not work — browsers block module loads over `file://`. Serve it over HTTP
+from the repository root:
 
 ```
-python -m http.server 5060
+python -m http.server 5070
 ```
 
-Then open <http://localhost:5060/>. The lobby is `/`, a room is `/room.html`.
+Then open <http://localhost:5070/>. The lobby is `/`, a room is `/room.html`.
+
+Port 5070 is deliberate. Chrome refuses a handful of ports outright with
+`ERR_UNSAFE_PORT`, including 5060 and 5061 (SIP), 6000 (X11) and 6667 (IRC).
+If you change the port, avoid those.
 
 ## Tests
 
 ```
 npm test
 ```
+
+No dependencies to install — the tests use Node's built-in runner, so this
+works on a clean clone.
 
 ## Deploying
 

@@ -9,7 +9,14 @@
 <body>
   <main class="lobby">
     <h1>Together Games</h1>
-    <p id="deploy-check">Deploy pipeline works.</p>
+    <p id="deploy-check">Connecting&hellip;</p>
   </main>
+  <script type="module">
+    import { onConnectionChange } from './src/firebase.js';
+    const el = document.getElementById('deploy-check');
+    onConnectionChange((connected) => {
+      el.textContent = connected ? 'Connected to Firebase.' : 'Offline.';
+    });
+  </script>
 </body>
 </html>

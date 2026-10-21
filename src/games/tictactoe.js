@@ -38,3 +38,40 @@ export function applyAction(state, action, seat) {
   const board = state.board.slice(0, square) + String(seat) + state.board.slice(square + 1);
   return { state: { board, turn: seat === 0 ? 1 : 0, moves: state.moves + 1 } };
 }
+
+const SYMBOLS = { 0: '✕', 1: '◯' };
+
+export function render(state, el, { mySeat, names, onAction }) {
+  const status = getStatus(state);
+  const myTurn = status.phase === 'playing' && status.whoseTurn === mySeat;
+
+  el.innerHTML = '';
+
+  const grid = document.createElement('div');
+  grid.className = 'ttt-grid';
+  grid.setAttribute('role', 'grid');
+
+  for (let i = 0; i < 9; i++) {
+    const mark = state.board[i];
+    const cell = document.createElement('button');
+    cell.className = 'ttt-cell';
+    cell.type = 'button';
+
+    if (mark !== '.') {
+      cell.textContent = SYMBOLS[mark];
+      cell.dataset.seat = mark;
+      cell.disabled = true;
+      cell.setAttribute('aria-label', `Square ${i + 1}, ${names[mark]}`);
+    } else {
+      cell.disabled = !myTurn;
+      cell.setAttribute('aria-label', `Square ${i + 1}, empty`);
+    }
+
+    if (status.line && status.line.includes(i)) cell.classList.add('is-winning');
+
+    cell.addEventListener('click', () => onAction({ type: 'place', square: i }));
+    grid.appendChild(cell);
+  }
+
+  el.appendChild(grid);
+}

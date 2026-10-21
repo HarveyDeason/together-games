@@ -1,0 +1,60 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "rooms": {
+      "$code": {
+        ".read": "$code.length === 4",
+        ".write": "$code.length === 4",
+        "meta": {
+          "createdAt": { ".validate": "newData.isNumber()" },
+          "currentGame": { ".validate": "newData.isString() && newData.val().length <= 32" },
+          "$other": { ".validate": false }
+        },
+        "players": {
+          "$clientId": {
+            "name": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 40" },
+            "seat": { ".validate": "newData.isNumber() && (newData.val() === 0 || newData.val() === 1)" },
+            "$other": { ".validate": false }
+          }
+        },
+        "presence": {
+          "$clientId": { ".validate": "newData.isBoolean()" }
+        },
+        "game": {
+          "scored": { ".validate": "newData.isBoolean()" },
+          "state": {
+            ".validate": "newData.hasChildren(['board', 'turn', 'moves'])",
+            "board": { ".validate": "newData.isString() && newData.val().length === 9" },
+            "turn": { ".validate": "newData.isNumber() && (newData.val() === 0 || newData.val() === 1)" },
+            "moves": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 9" },
+            "$other": { ".validate": false }
+          },
+          "$other": { ".validate": false }
+        },
+        "chat": {
+          "$messageId": {
+            "from": { ".validate": "newData.isString() && newData.val().length <= 64" },
+            "text": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 500" },
+            "at": { ".validate": "newData.isNumber()" },
+            "$other": { ".validate": false }
+          }
+        },
+        "reactions": {
+          "$reactionId": {
+            "from": { ".validate": "newData.isString() && newData.val().length <= 64" },
+            "emoji": { ".validate": "newData.isString() && newData.val().length <= 8" },
+            "at": { ".validate": "newData.isNumber()" },
+            "$other": { ".validate": false }
+          }
+        },
+        "scores": {
+          "$gameId": {
+            "$key": { ".validate": "newData.isNumber() && newData.val() >= 0" }
+          }
+        },
+        "$other": { ".validate": false }
+      }
+    }
+  }
+}

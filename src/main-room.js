@@ -2,7 +2,7 @@ import { db, ref, onValue, runTransaction, onConnectionChange } from './firebase
 import { getIdentity } from './identity.js';
 import { joinRoom, trackPresence } from './room.js';
 import { normaliseCode, isValidCode } from './roomcode.js';
-import { getGame } from './games/registry.js';
+import { GAMES, getGame, DEFAULT_GAME } from './games/registry.js';
 import { initChat } from './chat.js';
 import { initReactions } from './reactions.js';
 import { watchScores, recordResult } from './scoreboard.js';
@@ -14,10 +14,10 @@ const codeEl = document.getElementById('room-code');
 const opponentEl = document.getElementById('opponent');
 const bannerEl = document.getElementById('banner');
 const scoreEl = document.getElementById('score-line');
+const pickerEl = document.getElementById('game-picker');
 
 const code = normaliseCode(new URLSearchParams(location.search).get('r'));
 const identity = getIdentity();
-const game = getGame('tictactoe');
 
 if (!isValidCode(code) || !identity) {
   // Carry the code to the lobby. Without it, the first person to tap a shared
@@ -30,6 +30,8 @@ let mySeat = null;
 let players = {};
 let presence = {};
 let scores = {};
+let gameId = DEFAULT_GAME;
+let game = getGame(DEFAULT_GAME);
 let state = null;
 let online = true;
 
@@ -129,7 +131,7 @@ rematchEl.addEventListener('click', async () => {
       if (!current?.state) return current;
       // Someone already started the next game — leave it alone.
       if (game.getStatus(current.state).phase === 'playing') return;
-      return { state: game.createInitialState({ first: game.nextStarter(current.state) }) };
+      return { id: gameId, state: game.createInitialState({ first: game.nextStarter(current.state) }) };
     });
   } catch {
     showBanner('Could not start a new game. Check your connection.');
@@ -152,6 +154,49 @@ codeEl.addEventListener('click', async () => {
   }
 });
 
+let stopScores = null;
+function watchGameScores() {
+  if (stopScores) stopScores();
+  scores = {};
+  stopScores = watchScores({
+    code,
+    gameId,
+    onChange: (next) => { scores = next; renderScores(); }
+  });
+}
+
+function renderPicker() {
+  pickerEl.innerHTML = '';
+  for (const [id, mod] of Object.entries(GAMES)) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = mod.meta.name;
+    button.setAttribute('aria-current', String(id === gameId));
+    button.addEventListener('click', () => switchGame(id));
+    pickerEl.appendChild(button);
+  }
+}
+
+/** One transaction on the whole game node, so the id and the state can never
+ *  disagree. Refuses to wipe a game already in progress. */
+async function switchGame(id) {
+  if (id === gameId) return;
+  try {
+    await runTransaction(ref(db, `rooms/${code}/game`), (current) => {
+      if (current?.id === id) return current;
+      if (current?.state && getGame(current.id ?? DEFAULT_GAME).getStatus(current.state).phase === 'playing'
+          && current.state.moves > 0) {
+        return;   // a game is under way — leave it alone
+      }
+      return { id, state: getGame(id).createInitialState() };
+    }).then((result) => {
+      if (!result.committed) showBanner('Finish this game first, or hit Rematch.');
+    });
+  } catch {
+    showBanner('Could not switch game.');
+  }
+}
+
 async function start() {
   codeEl.textContent = code;
 
@@ -171,6 +216,9 @@ async function start() {
     draw();
   });
 
+  renderPicker();
+  watchGameScores();
+
   trackPresence(code, identity.clientId);
 
   onValue(ref(db, `rooms/${code}/presence`), (snap) => {
@@ -184,24 +232,33 @@ async function start() {
     draw();
   });
 
-  watchScores({
-    code,
-    gameId: game.meta.id,
-    onChange: (next) => {
-      scores = next;
-      renderScores();
-    }
-  });
 
-  onValue(ref(db, `rooms/${code}/game/state`), async (snap) => {
-    if (!snap.exists()) {
-      // Whoever arrives first creates the board.
-      await runTransaction(ref(db, `rooms/${code}/game/state`), (current) =>
-        current ? current : game.createInitialState()
-      );
+  // Listen to the whole game node, never to game/state alone. The id and the
+  // state must arrive together: with two separate listeners there is always a
+  // window where the id names one game and the state belongs to another, and
+  // the other phone throws rendering it.
+  onValue(ref(db, `rooms/${code}/game`), async (snap) => {
+    const node = snap.val();
+
+    if (!node?.state) {
+      // Whoever arrives first lays out the board.
+      await runTransaction(ref(db, `rooms/${code}/game`), (current) =>
+        current?.state ? current : { id: DEFAULT_GAME, state: getGame(DEFAULT_GAME).createInitialState() }
+      ).catch(() => showBanner('Could not start the game.'));
       return;
     }
-    state = snap.val();
+
+    const nextId = GAMES[node.id] ? node.id : DEFAULT_GAME;
+    if (nextId !== gameId) {
+      gameId = nextId;
+      game = getGame(gameId);
+      boardEl.innerHTML = '';
+      delete boardEl.__sl;          // drop the previous game's cached scene
+      watchGameScores();
+      renderPicker();
+    }
+
+    state = node.state;
     draw();
 
     // Scoring happens here and nowhere else: this is the only place the state
@@ -209,7 +266,7 @@ async function start() {
     // reconnecting client score a stale finished game a second time.
     const status = game.getStatus(state);
     if (status.phase !== 'playing') {
-      recordResult({ code, gameId: game.meta.id, status, players })
+      recordResult({ code, gameId, status, players })
         .catch(() => showBanner('Could not save the score.'));
     }
   });

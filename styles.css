@@ -380,3 +380,28 @@ body {
   font-size: 0.9375rem;
   color: var(--muted);
 }
+
+.game-picker {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-bottom: 0.875rem;
+  flex-wrap: wrap;
+}
+
+.game-picker button {
+  padding: 0.5rem 0.875rem;
+  font: inherit;
+  font-size: 0.875rem;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.game-picker button[aria-current="true"] {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}

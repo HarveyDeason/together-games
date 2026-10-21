@@ -18,6 +18,7 @@ function makeDoc() {
       listeners: {},
       setAttribute(k, v) { node.attrs[k] = v; },
       getAttribute(k) { return node.attrs[k]; },
+      removeAttribute(k) { delete node.attrs[k]; },
       appendChild(child) { node.children.push(child); return child; },
       addEventListener(type, fn) { (node.listeners[type] ??= []).push(fn); },
       click() { for (const fn of node.listeners.click ?? []) fn(); },
@@ -74,16 +75,25 @@ test('buildWorld gives a position for every square', () => {
   }
 });
 
-test('buildWorld returns an svg and a token layer', () => {
-  const { svg, tokenLayer } = buildWorld(makeDoc());
+test('buildWorld returns an svg, a camera and a token layer', () => {
+  const { svg, camera, tokenLayer } = buildWorld(makeDoc());
   assert.equal(svg.tag, 'svg');
-  assert.ok(tokenLayer, 'tokens need a layer to live in');
-  assert.ok(svg.children.includes(tokenLayer), 'the token layer must be inside the svg');
+  assert.ok(camera, 'the world needs a camera group to pan');
+  assert.ok(svg.children.includes(camera), 'the camera must be inside the svg');
+  assert.ok(camera.children.includes(tokenLayer), 'tokens ride the camera');
 });
 
 test('the token layer is drawn last so tokens sit above the world', () => {
-  const { svg, tokenLayer } = buildWorld(makeDoc());
-  assert.equal(svg.children[svg.children.length - 1], tokenLayer);
+  const { camera, tokenLayer } = buildWorld(makeDoc());
+  assert.equal(camera.children[camera.children.length - 1], tokenLayer);
+});
+
+test('the sky does not ride the camera', () => {
+  // Panning the background would drag the gradient off the edge of the frame.
+  const { svg, camera } = buildWorld(makeDoc());
+  const sky = svg.children.find((c) => c.tag === 'rect');
+  assert.ok(sky, 'there should be a sky rect');
+  assert.ok(!camera.children.includes(sky), 'the sky must stay put while the camera moves');
 });
 
 test('squares one and one hundred are far apart', () => {
@@ -131,8 +141,8 @@ test('the world is built once across repeated renders', () => {
   const { host } = container();
   const state = createInitialState();
   for (let i = 0; i < 3; i++) render(state, host, { mySeat: 0, names: NAMES, onAction: () => {} });
-  const svgs = host.children.filter((c) => c.tag === 'svg');
-  assert.equal(svgs.length, 1, 'rebuilding a hundred blocks on every update would cripple a phone');
+  const stages = host.children.filter((c) => c.tag === 'div' && c.className === 'sl-stage');
+  assert.equal(stages.length, 1, 'rebuilding a hundred blocks on every update would cripple a phone');
 });
 
 test('the roll control is disabled when it is not your turn', () => {
@@ -284,4 +294,41 @@ test('a fresh game clears the caption and the die', () => {
   assert.equal(host.__sl.caption.textContent, '');
   assert.equal(host.__sl.die.children[0].children.filter((c) => c.tag === 'circle').length, 0,
     'the die should be blank before the first roll, not a leftover face');
+});
+
+// ---- the camera ----
+import { cameraTransform, cameraTarget, VIEW_W, VIEW_H } from '../src/games/snakesladders-render.js';
+
+test('the camera centres the given point in the viewport', () => {
+  const t = cameraTransform(900, 700, 1);
+  // At scale 1 the centre of the world should land in the centre of the view.
+  assert.match(t, /translate\(/);
+  const [, tx, ty] = t.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/).map(Number);
+  assert.ok(Math.abs((900 * 1 + tx) - VIEW_W / 2) < 0.01);
+  assert.ok(Math.abs((700 * 1 + ty) - VIEW_H / 2) < 0.01);
+});
+
+test('the camera still centres the point when zoomed in', () => {
+  const scale = 2.4;
+  const t = cameraTransform(400, 300, scale);
+  const [, tx, ty] = t.match(/translate\(([-\d.]+),\s*([-\d.]+)\)/).map(Number);
+  assert.ok(Math.abs((400 * scale + tx) - VIEW_W / 2) < 0.01, 'x must stay centred under zoom');
+  assert.ok(Math.abs((300 * scale + ty) - VIEW_H / 2) < 0.01, 'y must stay centred under zoom');
+  assert.match(t, /scale\(2\.4\)/);
+});
+
+test('the camera follows the token that is moving', () => {
+  const state = { pos0: 20, pos1: 55, turn: 0, seat: 1, from: 50, via: null, to: 55 };
+  assert.equal(cameraTarget(state, 0, 1), 55, 'watch the move that is happening');
+});
+
+test('when nothing is moving the camera sits on whoever rolls next', () => {
+  const state = { pos0: 20, pos1: 55, turn: 1, seat: null, from: null, via: null, to: null };
+  assert.equal(cameraTarget(state, 0, null), 55);
+});
+
+test('a player waiting to start is framed on square one', () => {
+  // Position 0 means "not yet on the board" and has no square of its own.
+  const state = { pos0: 0, pos1: 0, turn: 0, seat: null, from: null, via: null, to: null };
+  assert.equal(cameraTarget(state, 0, null), 1);
 });

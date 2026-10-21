@@ -4,7 +4,8 @@ import { ROUTE_ENGLAND, ROUTE_INDIA, INDIA_OFFSET, LINKS } from './snakesladders
 // are chosen so the two islands clear each other and the whole board fits one
 // portrait viewBox.
 const HW = 28, HH = 14, TZ = 20, OX = 300, OY = 880;
-const VIEW_W = 1800, VIEW_H = 1400;
+export const VIEW_W = 1800, VIEW_H = 1400;
+export const ZOOM = 2.4;
 const NS = 'http://www.w3.org/2000/svg';
 
 export const iso = (x, y, z) => [OX + (x - y) * HW, OY + (x + y) * HH - z * TZ];
@@ -88,7 +89,11 @@ export function buildWorld(doc) {
   defs.appendChild(sun);
   svg.appendChild(defs);
   svg.appendChild(el('rect', { width: VIEW_W, height: VIEW_H, fill: 'url(#sl-sky)' }));
-  svg.appendChild(el('circle', { cx: 1420, cy: 160, r: 340, fill: 'url(#sl-sun)' }));
+
+  // The sky stays put; everything else rides the camera.
+  const camera = el('g', { class: 'sl-camera' });
+  svg.appendChild(camera);
+  camera.appendChild(el('circle', { cx: 1420, cy: 160, r: 340, fill: 'url(#sl-sun)' }));
 
   // rain, over England only
   const weather = el('g');
@@ -97,7 +102,7 @@ export function buildWorld(doc) {
     const ry = 930 + ((i * 53) % 300);
     weather.appendChild(el('line', { x1: rx, y1: ry, x2: rx - 5, y2: ry + 15, stroke: '#9FB4D8', 'stroke-width': 1.3, opacity: 0.32 }));
   }
-  svg.appendChild(weather);
+  camera.appendChild(weather);
 
   // --- terrain grown outward from the route, so each island has a ragged edge ---
   const land = new Map();
@@ -231,7 +236,7 @@ export function buildWorld(doc) {
   }
   items.sort((a, b) => (a.d - b.d) || (a.z - b.z));
   for (const i of items) stage.appendChild(i.make());
-  svg.appendChild(stage);
+  camera.appendChild(stage);
 
   // --- the thirteen links ---
   const links = el('g');
@@ -278,7 +283,7 @@ export function buildWorld(doc) {
       }
     }
   }
-  svg.appendChild(links);
+  camera.appendChild(links);
 
   // --- the flight: the only link between the islands ---
   const flight = el('g');
@@ -301,7 +306,7 @@ export function buildWorld(doc) {
     plane.appendChild(el('path', { d: 'M-34,-2 L-46,-16 L-38,-16 L-28,-3 Z', fill: '#DCD1B9' }));
     flight.appendChild(plane);
   }
-  svg.appendChild(flight);
+  camera.appendChild(flight);
 
   // place names
   const name = (gx, gy, z, text, size) => {
@@ -311,16 +316,16 @@ export function buildWorld(doc) {
       'font-size': size, fill: '#FFF0BC', opacity: 0.85, 'letter-spacing': 2
     });
     t.textContent = text;
-    svg.appendChild(t);
+    camera.appendChild(t);
   };
   name(4.5, 11, 0.2, 'KEYNSHAM', 26);
   name(3 + INDIA_OFFSET[0], -15 + INDIA_OFFSET[1], 9.2, 'NAGPUR', 32);
 
   // Tokens live above everything, so this group goes on last.
   const tokenLayer = el('g', { class: 'sl-tokens' });
-  svg.appendChild(tokenLayer);
+  camera.appendChild(tokenLayer);
 
-  return { svg, squarePos, tokenLayer };
+  return { svg, camera, squarePos, tokenLayer };
 }
 
 /** Where a seat's token sits relative to the centre of its square, so two
@@ -383,4 +388,26 @@ export function dieFace(doc, value) {
     svg.appendChild(pip);
   }
   return svg;
+}
+
+/** Where to put the camera so a world point sits in the middle of the view.
+ *
+ *  A transform on a group rather than a viewBox change: viewBox cannot be
+ *  animated with CSS, a transform can, so panning stays smooth on a phone. */
+export function cameraTransform(cx, cy, scale) {
+  const tx = VIEW_W / 2 - cx * scale;
+  const ty = VIEW_H / 2 - cy * scale;
+  return `translate(${tx}, ${ty}) scale(${scale})`;
+}
+
+/** Which square the camera should be looking at.
+ *
+ *  While a token is walking, watch it — that is the whole point of a camera.
+ *  Otherwise sit on whoever rolls next, so you can see where the next move
+ *  starts from. Square 0 means "not on the board yet", which has no tile, so
+ *  frame the start instead. */
+export function cameraTarget(state, mySeat, movingSeat) {
+  const seat = movingSeat ?? state.turn ?? mySeat ?? 0;
+  const pos = seat === 0 ? state.pos0 : state.pos1;
+  return Math.max(1, pos || 0);
 }

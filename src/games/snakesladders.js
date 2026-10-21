@@ -1,5 +1,8 @@
 import { LINKS, LAST_SQUARE, SQUARE_TEXT } from './snakesladders-board.js';
-import { buildWorld, makeToken, placeToken, dieFace } from './snakesladders-render.js';
+import {
+  buildWorld, makeToken, placeToken, dieFace,
+  cameraTransform, cameraTarget, ZOOM
+} from './snakesladders-render.js';
 
 export const meta = { id: 'snakesladders', name: 'Snakes & Ladders', seats: 2 };
 
@@ -87,6 +90,28 @@ export function applyAction(state, action, seat) {
 
 const STEP_MS = 90;
 const LINK_MS = 260;
+const FOLLOW_KEY = 'together-games.snakesladders.follow';
+
+function readFollowPreference() {
+  // Zoomed in by default: the whole point is that the board is hard to read
+  // at full width on a phone.
+  try { return localStorage.getItem(FOLLOW_KEY) !== '0'; } catch { return true; }
+}
+
+/** Point the camera at whatever matters right now. */
+function moveCamera(world, immediate = false) {
+  const scale = world.following ? ZOOM : 1;
+  const square = world.following
+    ? cameraTarget(world.state ?? { pos0: 0, pos1: 0, turn: 0 }, world.mySeat, world.movingSeat ?? null)
+    : null;
+  const at = square ? world.squarePos[square] : { x: 900, y: 700 };
+
+  world.camera.setAttribute('transform', cameraTransform(at.x, at.y, scale));
+  world.camButton.textContent = world.following ? 'Zoom out' : 'Follow';
+  world.camButton.setAttribute('aria-pressed', String(world.following));
+  if (immediate) world.svg.setAttribute('data-cam', 'snap');
+  else world.svg.removeAttribute('data-cam');
+}
 
 const prefersReducedMotion = () =>
   typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -114,8 +139,24 @@ export function render(state, el, { mySeat, names, onAction }) {
 
   if (!world) {
     el.innerHTML = '';
-    const { svg, squarePos, tokenLayer } = buildWorld(doc);
-    el.appendChild(svg);
+    const { svg, camera, squarePos, tokenLayer } = buildWorld(doc);
+
+    // The board is wider than a phone, so it ships zoomed in and follows the
+    // action. The stage wraps the svg so the camera button can sit over it.
+    const stage = doc.createElement('div');
+    stage.className = 'sl-stage';
+    stage.appendChild(svg);
+
+    const camButton = doc.createElement('button');
+    camButton.type = 'button';
+    camButton.className = 'sl-cam';
+    camButton.addEventListener('click', () => {
+      world.following = !world.following;
+      try { localStorage.setItem(FOLLOW_KEY, world.following ? '1' : '0'); } catch { /* private mode */ }
+      moveCamera(world, true);
+    });
+    stage.appendChild(camButton);
+    el.appendChild(stage);
 
     const tokens = { 0: makeToken(doc, 0), 1: makeToken(doc, 1) };
     tokenLayer.appendChild(tokens[0]);
@@ -153,13 +194,15 @@ export function render(state, el, { mySeat, names, onAction }) {
     el.appendChild(caption);
 
     world = {
-      doc, svg, squarePos, tokens, die, rollButton, caption,
-      shown: { 0: 0, 1: 0 }, busy: false, generation: 0, animatedKey: null
+      doc, svg, camera, camButton, squarePos, tokens, die, rollButton, caption,
+      shown: { 0: 0, 1: 0 }, busy: false, generation: 0, animatedKey: null,
+      following: readFollowPreference(), lookingAt: null
     };
     el.__sl = world;
     placeToken(tokens[0], squarePos, 0, 0);
     placeToken(tokens[1], squarePos, 0, 1);
     showDie(world, null);
+    moveCamera(world, true);
   }
 
   // Everything downstream reads the LATEST state off `world`, never a value
@@ -212,6 +255,8 @@ function settle(world) {
   placeToken(world.tokens[1], world.squarePos, s.pos1, 1);
   world.shown = { 0: s.pos0, 1: s.pos1 };
   world.busy = false;
+  world.movingSeat = null;
+  moveCamera(world);
   showDie(world, s.die);
   setCaption(world);
   setControls(world);
@@ -248,6 +293,9 @@ function animate(world) {
     if (square < landed) {
       square += 1;
       placeToken(world.tokens[s.seat], world.squarePos, square, s.seat);
+      world.movingSeat = s.seat;
+      world.shown[s.seat] = square;
+      moveCamera(world);
       setTimeout(hop, STEP_MS);
       return;
     }
@@ -255,6 +303,8 @@ function animate(world) {
       setTimeout(() => {
         if (superseded()) return;
         placeToken(world.tokens[s.seat], world.squarePos, s.to, s.seat);
+        world.shown[s.seat] = s.to;
+        moveCamera(world);
         settle(world);
       }, LINK_MS);
       return;

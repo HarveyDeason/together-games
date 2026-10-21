@@ -405,3 +405,30 @@ body {
 }
 
 .sl-die-face { width: 2rem; height: 2rem; display: block; }
+
+.sl-stage { position: relative; }
+
+.sl-camera { transition: transform 420ms cubic-bezier(0.22, 0.61, 0.36, 1); }
+.sl-world[data-cam="snap"] .sl-camera { transition: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sl-camera { transition: none; }
+}
+
+.sl-cam {
+  position: absolute;
+  right: 0.625rem;
+  bottom: 0.625rem;
+  padding: 0.5rem 0.875rem;
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  backdrop-filter: blur(6px);
+  cursor: pointer;
+}
+
+.sl-cam:active { transform: scale(0.96); }

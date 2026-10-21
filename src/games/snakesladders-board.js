@@ -6,8 +6,8 @@
  *  Runs are deliberately different lengths and the climbs different sizes, so
  *  the path has a shape rather than being a grid. */
 export const ROUTE_ENGLAND = [
-  [0, 7, 0.6], [6, 7, 0.6], [6, 4, 1.2], [0, 4, 1.2], [0, 1, 2.0],
-  [8, 1, 2.0], [8, -2, 2.8], [3, -2, 2.8], [3, -5, 3.4], [9, -5, 3.4]
+  [0, 7, 0.6], [5, 7, 0.6], [5, 4, 1.2], [0, 4, 1.2], [0, 1, 2.0],
+  [7, 1, 2.0], [7, -2, 2.8], [2, -2, 2.8], [2, -5, 3.4], [7, -5, 3.4]
 ];
 
 export const ROUTE_INDIA = [

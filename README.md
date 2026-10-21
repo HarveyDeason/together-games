@@ -9,11 +9,14 @@ no app, no account, no cost.
 ## Running locally
 
 Because the site uses ES modules, opening `index.html` directly with `file://`
-will not work. Serve it over HTTP:
+will not work (the browser blocks module loads over `file://`). Serve it over
+HTTP from the repository root:
 
 ```
-npx serve .
+python -m http.server 5060
 ```
+
+Then open <http://localhost:5060/>. The lobby is `/`, a room is `/room.html`.
 
 ## Tests
 

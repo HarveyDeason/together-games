@@ -48,7 +48,7 @@
               ".validate": "newData.isNumber() && (newData.val() === 0 || newData.val() === 1)"
             },
             "moves": {
-              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 500"
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 5000"
             },
             "board": {
               ".validate": "newData.isString() && newData.val().length <= 64"

@@ -107,6 +107,7 @@ test('consecutive squares are close together', () => {
 
 // ---- tokens, the die and the roll control ----
 import { tokenOffset, dieFace } from '../src/games/snakesladders-render.js';
+import { tookLink } from '../src/games/snakesladders.js';
 import { render, createInitialState } from '../src/games/snakesladders.js';
 
 const NAMES = { 0: 'Harvey', 1: 'Shruti' };
@@ -170,11 +171,14 @@ test('rolling reports a die between one and six', () => {
       seen.add(a.die);
     }
   });
-  for (let i = 0; i < 200; i++) host.__sl.rollButton.click();
+  for (let i = 0; i < 200; i++) {
+    host.__sl.rollButton.disabled = false;   // the real button debounces; we want the distribution
+    host.__sl.rollButton.click();
+  }
   assert.ok(seen.size >= 3, 'the die should not keep returning the same face');
 });
 
-test('the caption shows the joke at the foot of a ladder, not the empty square it lands on', () => {
+test('the caption shows the joke at the foot of a ladder, not the empty square it lands on', async () => {
   // The writing lives on the link's source square (4 is 'the bus actually turns
   // up'), and the destination usually says nothing. Reading `to` would throw
   // away every joke on the board.
@@ -184,16 +188,18 @@ test('the caption shows the joke at the foot of a ladder, not the empty square i
     die: 3, seat: 0, from: 1, via: 4, to: 14
   };
   render(climbed, host, { mySeat: 0, names: NAMES, onAction: () => {} });
+  await new Promise((r) => setTimeout(r, 900));   // the caption lands with the token
   assert.equal(host.__sl.caption.textContent, SQUARE_TEXT[4]);
 });
 
-test('the caption shows the landed square when no link was taken', () => {
+test('the caption shows the landed square when no link was taken', async () => {
   const { host } = container();
   const plain = {
     ...createInitialState(), pos0: 17, turn: 1, moves: 1,
     die: 2, seat: 0, from: 15, via: null, to: 17
   };
   render(plain, host, { mySeat: 0, names: NAMES, onAction: () => {} });
+  await new Promise((r) => setTimeout(r, 600));
   assert.equal(host.__sl.caption.textContent, SQUARE_TEXT[17]);
 });
 
@@ -210,4 +216,72 @@ test('the die is drawn with pips, not a font glyph', () => {
 
 test('an unrolled die shows no pips', () => {
   assert.equal(dieFace(makeDoc(), null).children.filter((c) => c.tag === 'circle').length, 0);
+});
+
+// ---- replay, cancellation and the caption (from the branch review) ----
+const settled = (host) => host.__sl.busy === false;
+const moveState = (over) => ({ ...createInitialState(), ...over });
+
+test('a move already shown is not animated again', () => {
+  // The room listens to the whole game node, so writing game/scored after a win
+  // re-delivers the same state. Replaying the move made the winning token
+  // zig-zag between two competing animation chains.
+  const { host } = container();
+  const move = moveState({ pos0: 6, turn: 1, moves: 1, die: 6, seat: 0, from: 0, via: null, to: 6 });
+  render(move, host, { mySeat: 0, names: NAMES, onAction: () => {} });
+  host.__sl.busy = false;                       // pretend the walk finished
+  render(move, host, { mySeat: 0, names: NAMES, onAction: () => {} });
+  assert.ok(settled(host), 're-rendering a shown move must not start a new walk');
+});
+
+test('a newer move supersedes one still animating', async () => {
+  const { host } = container();
+  const first = moveState({ pos0: 6, turn: 1, moves: 1, die: 6, seat: 0, from: 0, via: null, to: 6 });
+  const second = moveState({ pos0: 6, pos1: 4, turn: 0, moves: 2, die: 4, seat: 1, from: 0, via: null, to: 4 });
+  render(first, host, { mySeat: 0, names: NAMES, onAction: () => {} });
+  render(second, host, { mySeat: 0, names: NAMES, onAction: () => {} });
+  await new Promise((r) => setTimeout(r, 900));
+  assert.deepEqual(host.__sl.shown, { 0: 6, 1: 4 });
+  assert.ok(settled(host), 'the superseded chain must not leave the board busy');
+});
+
+test('tookLink is false when firebase has dropped the null via', () => {
+  // Firebase omits keys whose value is null, so a plain move arrives with `via`
+  // undefined, not null. Comparing against null made every ordinary move wait
+  // for the link pause that never came.
+  assert.equal(tookLink({ via: undefined, to: 11 }), false);
+  assert.equal(tookLink({ via: null, to: 11 }), false);
+  assert.equal(tookLink({ via: 11, to: 11 }), false);
+  assert.equal(tookLink({ via: 4, to: 14 }), true);
+});
+
+test('the caption clears when the square says nothing', async () => {
+  const { host } = container();
+  render(moveState({ pos0: 14, turn: 1, moves: 1, die: 3, seat: 0, from: 1, via: 4, to: 14 }),
+    host, { mySeat: 0, names: NAMES, onAction: () => {} });
+  await new Promise((r) => setTimeout(r, 900));
+  assert.equal(host.__sl.caption.textContent, SQUARE_TEXT[4]);
+  render(moveState({ pos0: 16, turn: 1, moves: 2, die: 2, seat: 0, from: 14, via: null, to: 16 }),
+    host, { mySeat: 0, names: NAMES, onAction: () => {} });
+  await new Promise((r) => setTimeout(r, 900));
+  assert.equal(host.__sl.caption.textContent, '',
+    'a stale joke must not be re-attributed to a later move');
+});
+
+test('the caption says why an overshoot did not move you', async () => {
+  const { host } = container();
+  render(moveState({ pos0: 98, turn: 1, moves: 9, die: 4, seat: 0, from: 98, via: null, to: 98 }),
+    host, { mySeat: 0, names: NAMES, onAction: () => {} });
+  await new Promise((r) => setTimeout(r, 400));
+  assert.match(host.__sl.caption.textContent, /exact/i);
+});
+
+test('a fresh game clears the caption and the die', () => {
+  const { host } = container();
+  render(moveState({ pos0: 100, turn: 1, moves: 9, die: 3, seat: 0, from: 97, via: null, to: 100 }),
+    host, { mySeat: 0, names: NAMES, onAction: () => {} });
+  render(createInitialState(), host, { mySeat: 0, names: NAMES, onAction: () => {} });
+  assert.equal(host.__sl.caption.textContent, '');
+  assert.equal(host.__sl.die.children[0].children.filter((c) => c.tag === 'circle').length, 0,
+    'the die should be blank before the first roll, not a leftover face');
 });

@@ -105,15 +105,21 @@ function draw() {
  *  resolve cleanly instead of overwriting each other. */
 async function submitAction(action) {
   let rejected = false;
-  await runTransaction(ref(db, `rooms/${code}/game/state`), (current) => {
-    if (!current) return current;
-    const result = game.applyAction(current, action, mySeat);
+  // Transact on the whole node and read the module from `current.id`. Using the
+  // local `game` meant a tap landing in the window between the other player
+  // switching game and this client's listener firing would run the wrong rules
+  // over the new state and throw inside the transaction.
+  await runTransaction(ref(db, `rooms/${code}/game`), (current) => {
+    if (!current?.state) return current;
+    const mod = GAMES[current.id];
+    if (!mod) { rejected = true; return; }
+    const result = mod.applyAction(current.state, action, mySeat);
     if (result.error) {
       rejected = true;
       return; // abort
     }
-    return result.state;
-  });
+    return { ...current, state: result.state };
+  }).catch(() => { rejected = true; });
   if (rejected) {
     boardEl.animate(
       [{ transform: 'translateX(-4px)' }, { transform: 'translateX(4px)' }, { transform: 'translateX(0)' }],
@@ -129,9 +135,11 @@ rematchEl.addEventListener('click', async () => {
   try {
     await runTransaction(ref(db, `rooms/${code}/game`), (current) => {
       if (!current?.state) return current;
+      const mod = GAMES[current.id];
+      if (!mod) return;
       // Someone already started the next game — leave it alone.
-      if (game.getStatus(current.state).phase === 'playing') return;
-      return { id: gameId, state: game.createInitialState({ first: game.nextStarter(current.state) }) };
+      if (mod.getStatus(current.state).phase === 'playing') return;
+      return { id: current.id, state: mod.createInitialState({ first: mod.nextStarter(current.state) }) };
     });
   } catch {
     showBanner('Could not start a new game. Check your connection.');
@@ -158,6 +166,7 @@ let stopScores = null;
 function watchGameScores() {
   if (stopScores) stopScores();
   scores = {};
+  renderScores();
   stopScores = watchScores({
     code,
     gameId,
@@ -184,13 +193,14 @@ async function switchGame(id) {
   try {
     await runTransaction(ref(db, `rooms/${code}/game`), (current) => {
       if (current?.id === id) return current;
-      if (current?.state && getGame(current.id ?? DEFAULT_GAME).getStatus(current.state).phase === 'playing'
-          && current.state.moves > 0) {
+      const mod = GAMES[current?.id];
+      if (mod && current.state && current.state.moves > 0
+          && mod.getStatus(current.state).phase === 'playing') {
         return;   // a game is under way — leave it alone
       }
       return { id, state: getGame(id).createInitialState() };
     }).then((result) => {
-      if (!result.committed) showBanner('Finish this game first, or hit Rematch.');
+      if (!result.committed) showBanner('Finish this game before switching.');
     });
   } catch {
     showBanner('Could not switch game.');

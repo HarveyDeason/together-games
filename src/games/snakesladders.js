@@ -86,10 +86,19 @@ export function applyAction(state, action, seat) {
 }
 
 const STEP_MS = 90;
-const DIE_FACE = { 1: '\u2680', 2: '\u2681', 3: '\u2682', 4: '\u2683', 5: '\u2684', 6: '\u2685' };
+const LINK_MS = 260;
 
 const prefersReducedMotion = () =>
   typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/** Did this move end by taking a ladder or a cable?
+ *
+ *  Firebase omits keys whose value is null, so a plain move arrives from the
+ *  database with `via` UNDEFINED, not null. Comparing against null made every
+ *  ordinary move wait for a link animation that was never coming. */
+export function tookLink(state) {
+  return state.via != null && state.via !== state.to;
+}
 
 /** Draws the game.
  *
@@ -108,10 +117,7 @@ export function render(state, el, { mySeat, names, onAction }) {
     const { svg, squarePos, tokenLayer } = buildWorld(doc);
     el.appendChild(svg);
 
-    const tokens = {
-      0: makeToken(doc, 0),
-      1: makeToken(doc, 1)
-    };
+    const tokens = { 0: makeToken(doc, 0), 1: makeToken(doc, 1) };
     tokenLayer.appendChild(tokens[0]);
     tokenLayer.appendChild(tokens[1]);
 
@@ -120,16 +126,22 @@ export function render(state, el, { mySeat, names, onAction }) {
 
     const die = doc.createElement('span');
     die.className = 'sl-die';
-    die.textContent = '\u2684';
+    die.setAttribute('aria-live', 'polite');
 
     const rollButton = doc.createElement('button');
     rollButton.className = 'btn sl-roll';
     rollButton.type = 'button';
     rollButton.textContent = 'Roll';
     rollButton.addEventListener('click', () => {
+      if (rollButton.disabled) return;
+      rollButton.disabled = true;           // a second tap before the next
+                                            // render would only be rejected
       // The die is generated here, never inside applyAction, which must stay
       // pure so both clients agree on the same action.
-      world.onAction({ type: 'roll', die: 1 + Math.floor(Math.random() * 6) });
+      const sent = world.onAction({ type: 'roll', die: 1 + Math.floor(Math.random() * 6) });
+      // If the write fails there is no snapshot to re-render from, so the
+      // button would stay disabled and the player could never roll again.
+      Promise.resolve(sent).catch(() => {}).then(() => setControls(world));
     });
 
     const caption = doc.createElement('p');
@@ -140,81 +152,114 @@ export function render(state, el, { mySeat, names, onAction }) {
     el.appendChild(bar);
     el.appendChild(caption);
 
-    world = { svg, squarePos, tokens, die, rollButton, caption, shown: { 0: 0, 1: 0 }, busy: false };
+    world = {
+      doc, svg, squarePos, tokens, die, rollButton, caption,
+      shown: { 0: 0, 1: 0 }, busy: false, generation: 0, animatedKey: null
+    };
     el.__sl = world;
     placeToken(tokens[0], squarePos, 0, 0);
     placeToken(tokens[1], squarePos, 0, 1);
+    showDie(world, null);
   }
 
+  // Everything downstream reads the LATEST state off `world`, never a value
+  // closed over when an animation started. A stale closure used to move the
+  // tokens back and disable Roll on a turn that had already passed.
+  world.state = state;
+  world.mySeat = mySeat;
+  world.names = names;
   world.onAction = onAction;
 
-  const status = getStatus(state);
-  const myTurn = status.phase === 'playing' && mySeat !== null && status.whoseTurn === mySeat;
-  world.rollButton.disabled = !myTurn || world.busy;
-
-  if (state.die) {
-    world.die.innerHTML = '';
-    world.die.appendChild(dieFace(doc, state.die));
-    world.die.setAttribute('aria-label', `Rolled ${state.die}`);
-  }
-
-  // The writing lives on the square you LANDED on, which for a ladder or a
-  // cable is `via`, not the square it threw you to. Reading `to` first would
-  // silently drop every joke attached to a link.
-  const text = state.via !== null && SQUARE_TEXT[state.via]
-    ? SQUARE_TEXT[state.via]
-    : (state.to === null ? '' : SQUARE_TEXT[state.to]);
-  if (status.phase === 'won') {
-    world.caption.textContent = status.winner === mySeat ? 'You got there.' : `${names[status.winner]} got there first.`;
-  } else if (text) {
-    world.caption.textContent = text;
-  }
-
-  animate(world, state, mySeat);
+  animate(world);
 }
 
-/** Walk the moving token square by square, then slide along any link, so the
- *  other phone sees the same journey rather than a token teleporting. */
-function animate(world, state, mySeat) {
-  const { tokens, squarePos, shown } = world;
+function showDie(world, value) {
+  world.die.innerHTML = '';
+  world.die.appendChild(dieFace(world.doc, value ?? null));
+  world.die.setAttribute('aria-label', value ? `Rolled ${value}` : 'No roll yet');
+}
 
-  const settle = () => {
-    for (const seat of [0, 1]) {
-      const pos = seat === 0 ? state.pos0 : state.pos1;
-      placeToken(tokens[seat], squarePos, pos, seat);
-      shown[seat] = pos;
-    }
-    world.busy = false;
-    const status = getStatus(state);
-    world.rollButton.disabled = !(status.phase === 'playing' && mySeat !== null && status.whoseTurn === mySeat);
-  };
+function setControls(world) {
+  const status = getStatus(world.state);
+  const mine = status.phase === 'playing' && world.mySeat !== null && status.whoseTurn === world.mySeat;
+  world.rollButton.disabled = world.busy || !mine;
+}
 
-  const seat = state.seat;
-  if (seat === null || state.from === null || prefersReducedMotion() || typeof setTimeout !== 'function') {
-    settle();
+/** The caption is written when the move LANDS, not when it starts, so the joke
+ *  does not arrive before the token does. It is always written — including to
+ *  the empty string — or a line sticks around and gets attributed to a later
+ *  move, or survives into the next game. */
+function setCaption(world) {
+  const s = world.state;
+  const status = getStatus(s);
+
+  if (status.phase === 'won') {
+    world.caption.textContent = status.winner === world.mySeat
+      ? 'You got there.'
+      : `${world.names[status.winner]} got there first.`;
+    return;
+  }
+  if (s.seat == null) { world.caption.textContent = ''; return; }
+  if (s.to === s.from) { world.caption.textContent = 'Too far. You need the exact roll.'; return; }
+
+  const landed = s.via ?? s.to;
+  world.caption.textContent = SQUARE_TEXT[landed] ?? '';
+}
+
+function settle(world) {
+  const s = world.state;
+  placeToken(world.tokens[0], world.squarePos, s.pos0, 0);
+  placeToken(world.tokens[1], world.squarePos, s.pos1, 1);
+  world.shown = { 0: s.pos0, 1: s.pos1 };
+  world.busy = false;
+  showDie(world, s.die);
+  setCaption(world);
+  setControls(world);
+}
+
+/** Walk the moving token square by square, then drop it down the link, so the
+ *  other phone sees the same journey rather than a token teleporting.
+ *
+ *  Every chain carries a generation. The room listens to the whole game node,
+ *  so a write to `game/scored` after a win re-delivers the same state and used
+ *  to start a second chain fighting the first — on the winning move. */
+function animate(world) {
+  const s = world.state;
+  const key = `${s.moves}:${s.seat ?? 'x'}`;
+
+  if (world.animatedKey === key) { settle(world); return; }
+  world.animatedKey = key;
+  const generation = ++world.generation;
+  const superseded = () => world.generation !== generation;
+
+  if (s.seat == null || s.from == null || prefersReducedMotion() || typeof setTimeout !== 'function') {
+    settle(world);
     return;
   }
 
-  const landed = state.via ?? state.to;
-  if (shown[seat] === state.to && state.from === state.to) { settle(); return; }
-
   world.busy = true;
-  world.rollButton.disabled = true;
+  setControls(world);
 
-  let square = state.from;
+  const landed = s.via ?? s.to;
+  let square = s.from;
+
   const hop = () => {
+    if (superseded()) return;
     if (square < landed) {
       square += 1;
-      placeToken(tokens[seat], squarePos, square, seat);
+      placeToken(world.tokens[s.seat], world.squarePos, square, s.seat);
       setTimeout(hop, STEP_MS);
       return;
     }
-    if (state.via !== null && state.via !== state.to) {
-      // the ladder or the cable
-      setTimeout(() => { placeToken(tokens[seat], squarePos, state.to, seat); settle(); }, 260);
+    if (tookLink(s)) {
+      setTimeout(() => {
+        if (superseded()) return;
+        placeToken(world.tokens[s.seat], world.squarePos, s.to, s.seat);
+        settle(world);
+      }, LINK_MS);
       return;
     }
-    settle();
+    settle(world);
   };
   hop();
 }

@@ -26,6 +26,20 @@ export function getStatus(state) {
   return { phase: 'playing', winner: null, whoseTurn: state.turn, line: null };
 }
 
+/** Which seat should move first in the NEXT game.
+ *
+ *  The previous game's starter is derived rather than stored: seats alternate
+ *  every move, so after an even number of moves it is the starter's turn again,
+ *  and after an odd number it is not. That keeps `first` out of the database,
+ *  whose security rule rejects any key it does not know about.
+ *
+ *  Deriving it matters because `state.turn` alone is NOT the previous starter:
+ *  after a win it is whoever lost, who may or may not have started. */
+export function nextStarter(state) {
+  const previousStarter = state.moves % 2 === 0 ? state.turn : 1 - state.turn;
+  return 1 - previousStarter;
+}
+
 export function applyAction(state, action, seat) {
   if (getStatus(state).phase !== 'playing') return { error: 'game-over' };
   if (seat !== state.turn) return { error: 'not-your-turn' };

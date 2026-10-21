@@ -1,4 +1,4 @@
-import { db, ref, get, runTransaction } from './firebase.js';
+import { db, ref, get, set, remove, runTransaction, onDisconnect, onConnectionChange } from './firebase.js';
 import { randomCode } from './roomcode.js';
 
 const MAX_CODE_ATTEMPTS = 5;
@@ -42,4 +42,29 @@ export async function joinRoom(code, identity) {
 
   if (!result.committed) throw new Error('room-full');
   return { seat: result.snapshot.val()[identity.clientId].seat };
+}
+
+/** Marks this client present in the room. Firebase clears the flag server-side
+ *  if the connection drops, so a crashed or locked phone is detected without
+ *  any heartbeat code of our own. */
+export function trackPresence(code, clientId) {
+  const myPresence = ref(db, `rooms/${code}/presence/${clientId}`);
+
+  onConnectionChange(async (connected) => {
+    if (!connected) return;
+    // Must be re-armed on every reconnect — onDisconnect is consumed when it fires.
+    await onDisconnect(myPresence).remove();
+    await set(myPresence, true);
+  });
+
+  // Backgrounding a tab on iOS can suspend the socket without closing it.
+  // Returning to the tab re-asserts presence immediately rather than waiting
+  // for Firebase to notice.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') set(myPresence, true).catch(() => {});
+  });
+
+  window.addEventListener('pagehide', () => {
+    remove(myPresence).catch(() => {});
+  });
 }

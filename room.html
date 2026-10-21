@@ -3,20 +3,41 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#12131a">
   <title>Together Games</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="room-head">
-    <div class="room-code" id="room-code">LOCAL</div>
-    <div class="opponent" id="opponent"></div>
+    <button type="button" class="room-code" id="room-code" title="Tap to share"></button>
+    <div class="opponent" id="opponent">Waiting&hellip;</div>
   </header>
 
+  <p class="banner" id="banner" role="status" hidden></p>
+
   <main class="room-main">
+    <p class="score-line" id="score-line"></p>
     <p class="turn-line" id="turn-line"></p>
     <div id="board"></div>
+    <div class="reaction-bar" id="reaction-bar" aria-label="Send a reaction"></div>
     <button type="button" id="rematch" class="btn" hidden>Rematch</button>
   </main>
+
+  <button type="button" class="chat-toggle" id="chat-toggle" aria-expanded="false" aria-controls="chat-sheet">
+    Chat <span class="chat-badge" id="chat-badge" hidden></span>
+  </button>
+
+  <section class="chat-sheet" id="chat-sheet" hidden aria-label="Chat">
+    <div class="chat-sheet-head">
+      <strong>Chat</strong>
+      <button type="button" id="chat-close" class="link-btn">Close</button>
+    </div>
+    <ol class="chat-log" id="chat-log"></ol>
+    <form class="chat-form" id="chat-form">
+      <input id="chat-input" class="field" type="text" maxlength="500" autocomplete="off" placeholder="Say something">
+      <button type="submit" class="btn chat-send">Send</button>
+    </form>
+  </section>
 
   <script type="module" src="src/main-room.js"></script>
 </body>

@@ -4,7 +4,8 @@ import {
   meta,
   createInitialState,
   applyAction,
-  getStatus
+  getStatus,
+  nextStarter
 } from '../src/games/tictactoe.js';
 
 // Helper: build a state from a board string. Turn and move count are derived
@@ -133,4 +134,38 @@ test('a full game plays through to a win', () => {
   const status = getStatus(state);
   assert.equal(status.phase, 'won');
   assert.equal(status.winner, 0);
+});
+
+test('the next starter alternates from whoever started the last game', () => {
+  // Derived from moves/turn rather than stored, so the database schema (and its
+  // security rule, which rejects unknown keys) does not need a `first` field.
+  // Fresh game started by seat 0 -> seat 1 starts next.
+  assert.equal(nextStarter(createInitialState({ first: 0 })), 1);
+  assert.equal(nextStarter(createInitialState({ first: 1 })), 0);
+});
+
+test('the next starter is correct after a win by the player who started', () => {
+  // Seat 0 started and won on move 5; turn has advanced to seat 1.
+  assert.equal(nextStarter({ board: '000110...'.slice(0, 9), turn: 1, moves: 5 }), 1);
+});
+
+test('the next starter is correct after a win by the player who did not start', () => {
+  // Seat 0 started, seat 1 won on move 6; turn has advanced back to seat 0.
+  // Seat 0 started last time, so seat 1 starts next.
+  assert.equal(nextStarter({ board: '011011.0.', turn: 0, moves: 6 }), 1);
+});
+
+test('the next starter is correct after a draw', () => {
+  // Nine moves starting from seat 0 leaves turn at 1; seat 1 starts next.
+  assert.equal(nextStarter({ board: '010011100', turn: 1, moves: 9 }), 1);
+});
+
+test('alternating rematches hand the first move back and forth', () => {
+  let state = createInitialState();
+  const starters = [state.turn];
+  for (let i = 0; i < 4; i++) {
+    state = createInitialState({ first: nextStarter(state) });
+    starters.push(state.turn);
+  }
+  assert.deepEqual(starters, [0, 1, 0, 1, 0]);
 });

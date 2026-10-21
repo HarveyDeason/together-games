@@ -148,3 +148,193 @@ h1 { font-size: 1.75rem; margin: 0 0 1rem; }
 .greeting { color: var(--muted); margin: 0 0 1.25rem; }
 .or { text-align: center; color: var(--muted); margin: 1.25rem 0 0; }
 .error { color: #ff8f8f; min-height: 1.5rem; margin-top: 1rem; }
+
+.banner {
+  margin: 0;
+  padding: 0.625rem 1rem;
+  text-align: center;
+  font-size: 0.9375rem;
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface));
+  border-bottom: 1px solid var(--line);
+}
+
+button.room-code {
+  font: 600 1.125rem/1 ui-monospace, "SF Mono", Menlo, monospace;
+  letter-spacing: 0.18em;
+  color: var(--text);
+  background: none;
+  border: 0;
+  padding: 0.25rem;
+  cursor: pointer;
+}
+
+.opponent {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--muted);
+  font-size: 0.9375rem;
+}
+
+.opponent::before {
+  content: "";
+  width: 0.625rem;
+  height: 0.625rem;
+  border-radius: 50%;
+  border: 2px solid var(--muted);
+  flex: none;
+}
+
+.opponent[data-state="present"]::before { background: var(--seat1); border-color: var(--seat1); }
+.opponent[data-state="away"]::before { background: none; border-color: var(--muted); }
+.opponent[data-state="absent"]::before { display: none; }
+
+.score-line {
+  margin: 0 0 0.75rem;
+  text-align: center;
+  font-size: 0.875rem;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+
+#board { position: relative; }
+
+.reaction-bar {
+  display: flex;
+  justify-content: center;
+  gap: 0.375rem;
+  margin-top: 1rem;
+}
+
+.reaction-btn {
+  padding: 0.5rem;
+  font-size: 1.375rem;
+  line-height: 1;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  cursor: pointer;
+}
+
+.reaction-btn:active { transform: scale(0.92); }
+
+.reaction-float {
+  position: absolute;
+  bottom: 0;
+  font-size: 2.25rem;
+  pointer-events: none;
+  animation: reaction-rise 2.2s ease-out forwards;
+}
+
+@keyframes reaction-rise {
+  0%   { transform: translateY(0) scale(0.6); opacity: 0; }
+  15%  { transform: translateY(-10%) scale(1.1); opacity: 1; }
+  100% { transform: translateY(-160%) scale(1); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reaction-float { animation-duration: 1s; }
+}
+
+.chat-toggle {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.125rem;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.35);
+  cursor: pointer;
+}
+
+.chat-badge {
+  min-width: 1.375rem;
+  padding: 0 0.375rem;
+  font-size: 0.8125rem;
+  line-height: 1.375rem;
+  text-align: center;
+  color: #fff;
+  background: var(--accent);
+  border-radius: 999px;
+}
+
+.chat-sheet {
+  position: fixed;
+  inset: auto 0 0 0;
+  display: flex;
+  flex-direction: column;
+  max-height: min(70dvh, 30rem);
+  padding: 0.75rem 1rem calc(0.75rem + env(safe-area-inset-bottom));
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  border-radius: 1rem 1rem 0 0;
+  box-shadow: 0 -10px 30px rgb(0 0 0 / 0.4);
+}
+
+.chat-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 0.5rem;
+}
+
+.chat-sheet-head .link-btn { margin: 0; }
+
+.chat-log {
+  flex: 1;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0.5rem 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.chat-msg {
+  align-self: flex-start;
+  max-width: 85%;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg);
+  border-radius: 0.875rem;
+}
+
+.chat-msg.is-mine { align-self: flex-end; background: color-mix(in srgb, var(--accent) 30%, var(--bg)); }
+.chat-who { display: block; font-size: 0.75rem; color: var(--muted); }
+.chat-text { overflow-wrap: anywhere; }
+
+.chat-form { display: flex; gap: 0.5rem; padding-top: 0.5rem; }
+.chat-send { width: auto; margin: 0; flex: none; }
+
+html { -webkit-tap-highlight-color: transparent; }
+
+body {
+  padding-bottom: env(safe-area-inset-bottom);
+  overscroll-behavior-y: contain;
+}
+
+.room-head { padding-top: calc(0.75rem + env(safe-area-inset-top)); }
+
+/* Keep the board clear of the floating chat button on short screens. */
+.room-main { padding-bottom: 5.5rem; }
+
+@media (min-height: 44rem) {
+  .ttt-grid { width: min(100%, 26rem); }
+}
+
+/* Landscape phones: keep the whole board on screen. */
+@media (orientation: landscape) and (max-height: 30rem) {
+  .ttt-grid { width: min(100%, 16rem); }
+  .score-line, .turn-line { margin-bottom: 0.375rem; }
+}
+
+.ttt-cell:focus-visible,
+.btn:focus-visible,
+.reaction-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

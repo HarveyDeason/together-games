@@ -322,3 +322,34 @@ export function buildWorld(doc) {
 
   return { svg, squarePos, tokenLayer };
 }
+
+/** Where a seat's token sits relative to the centre of its square, so two
+ *  tokens on the same square stay both visible. */
+export function tokenOffset(seat) {
+  return seat === 0 ? { dx: -9, dy: -4 } : { dx: 9, dy: -4 };
+}
+
+const TOKEN_COLOUR = { 0: '#C4463E', 1: '#2F8F7E' };
+
+export function makeToken(doc, seat) {
+  const g = doc.createElementNS(NS, 'g');
+  const add = (tag, attrs) => {
+    const n = doc.createElementNS(NS, tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    g.appendChild(n);
+    return n;
+  };
+  add('ellipse', { cx: 0, cy: 2, rx: 10, ry: 4.5, fill: '#000', opacity: 0.3 });
+  add('path', { d: 'M-6.5,0 q0,-15 6.5,-17 q6.5,2 6.5,17 Z', fill: TOKEN_COLOUR[seat] });
+  add('circle', { cx: 0, cy: -20, r: 6, fill: '#F0C878' });
+  return g;
+}
+
+/** Move a token to a square, honouring the two-token offset. */
+export function placeToken(token, squarePos, square, seat) {
+  const at = squarePos[Math.max(1, square)];
+  const { dx, dy } = tokenOffset(seat);
+  // Square 0 means "not yet on the board": park it just below square 1.
+  const parked = square === 0 ? 26 : 0;
+  token.setAttribute('transform', `translate(${at.x + dx},${at.y + dy + parked})`);
+}

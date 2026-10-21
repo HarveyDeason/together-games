@@ -1,4 +1,5 @@
-import { LINKS, LAST_SQUARE } from './snakesladders-board.js';
+import { LINKS, LAST_SQUARE, SQUARE_TEXT } from './snakesladders-board.js';
+import { buildWorld, makeToken, placeToken } from './snakesladders-render.js';
 
 export const meta = { id: 'snakesladders', name: 'Snakes & Ladders', seats: 2 };
 
@@ -82,4 +83,129 @@ export function applyAction(state, action, seat) {
       to
     }
   };
+}
+
+const STEP_MS = 90;
+const DIE_FACE = { 1: '\u2680', 2: '\u2681', 3: '\u2682', 4: '\u2683', 5: '\u2684', 6: '\u2685' };
+
+const prefersReducedMotion = () =>
+  typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/** Draws the game.
+ *
+ *  Unlike the Tic Tac Toe module this does NOT rebuild on every update: the
+ *  world is a hundred isometric blocks and redrawing them on a phone every time
+ *  a die lands would stutter. The scene is built on the first call and kept on
+ *  the container; afterwards only the tokens, the die and the caption change.
+ *  The game contract allows this — render may do as it likes so long as it
+ *  draws the state it is given. */
+export function render(state, el, { mySeat, names, onAction }) {
+  const doc = el.ownerDocument ?? globalThis.document;
+  let world = el.__sl;
+
+  if (!world) {
+    el.innerHTML = '';
+    const { svg, squarePos, tokenLayer } = buildWorld(doc);
+    el.appendChild(svg);
+
+    const tokens = {
+      0: makeToken(doc, 0),
+      1: makeToken(doc, 1)
+    };
+    tokenLayer.appendChild(tokens[0]);
+    tokenLayer.appendChild(tokens[1]);
+
+    const bar = doc.createElement('div');
+    bar.className = 'sl-bar';
+
+    const die = doc.createElement('span');
+    die.className = 'sl-die';
+    die.textContent = '\u2684';
+
+    const rollButton = doc.createElement('button');
+    rollButton.className = 'btn sl-roll';
+    rollButton.type = 'button';
+    rollButton.textContent = 'Roll';
+    rollButton.addEventListener('click', () => {
+      // The die is generated here, never inside applyAction, which must stay
+      // pure so both clients agree on the same action.
+      world.onAction({ type: 'roll', die: 1 + Math.floor(Math.random() * 6) });
+    });
+
+    const caption = doc.createElement('p');
+    caption.className = 'sl-caption';
+
+    bar.appendChild(die);
+    bar.appendChild(rollButton);
+    el.appendChild(bar);
+    el.appendChild(caption);
+
+    world = { svg, squarePos, tokens, die, rollButton, caption, shown: { 0: 0, 1: 0 }, busy: false };
+    el.__sl = world;
+    placeToken(tokens[0], squarePos, 0, 0);
+    placeToken(tokens[1], squarePos, 0, 1);
+  }
+
+  world.onAction = onAction;
+
+  const status = getStatus(state);
+  const myTurn = status.phase === 'playing' && mySeat !== null && status.whoseTurn === mySeat;
+  world.rollButton.disabled = !myTurn || world.busy;
+
+  if (state.die) world.die.textContent = DIE_FACE[state.die];
+
+  const text = state.to === null ? '' : SQUARE_TEXT[state.to];
+  if (status.phase === 'won') {
+    world.caption.textContent = status.winner === mySeat ? 'You got there.' : `${names[status.winner]} got there first.`;
+  } else if (text) {
+    world.caption.textContent = text;
+  }
+
+  animate(world, state, mySeat);
+}
+
+/** Walk the moving token square by square, then slide along any link, so the
+ *  other phone sees the same journey rather than a token teleporting. */
+function animate(world, state, mySeat) {
+  const { tokens, squarePos, shown } = world;
+
+  const settle = () => {
+    for (const seat of [0, 1]) {
+      const pos = seat === 0 ? state.pos0 : state.pos1;
+      placeToken(tokens[seat], squarePos, pos, seat);
+      shown[seat] = pos;
+    }
+    world.busy = false;
+    const status = getStatus(state);
+    world.rollButton.disabled = !(status.phase === 'playing' && mySeat !== null && status.whoseTurn === mySeat);
+  };
+
+  const seat = state.seat;
+  if (seat === null || state.from === null || prefersReducedMotion() || typeof setTimeout !== 'function') {
+    settle();
+    return;
+  }
+
+  const landed = state.via ?? state.to;
+  if (shown[seat] === state.to && state.from === state.to) { settle(); return; }
+
+  world.busy = true;
+  world.rollButton.disabled = true;
+
+  let square = state.from;
+  const hop = () => {
+    if (square < landed) {
+      square += 1;
+      placeToken(tokens[seat], squarePos, square, seat);
+      setTimeout(hop, STEP_MS);
+      return;
+    }
+    if (state.via !== null && state.via !== state.to) {
+      // the ladder or the cable
+      setTimeout(() => { placeToken(tokens[seat], squarePos, state.to, seat); settle(); }, 260);
+      return;
+    }
+    settle();
+  };
+  hop();
 }

@@ -14,10 +14,13 @@ function makeDoc() {
       attrs: {},
       style: {},
       textContent: '',
+      disabled: false,
+      listeners: {},
       setAttribute(k, v) { node.attrs[k] = v; },
       getAttribute(k) { return node.attrs[k]; },
       appendChild(child) { node.children.push(child); return child; },
-      addEventListener() {},
+      addEventListener(type, fn) { (node.listeners[type] ??= []).push(fn); },
+      click() { for (const fn of node.listeners.click ?? []) fn(); },
       querySelectorAll() { return []; },
       set innerHTML(v) { if (v === '') node.children = []; },
       get innerHTML() { return ''; }
@@ -100,4 +103,73 @@ test('consecutive squares are close together', () => {
     const dy = squarePos[n].y - squarePos[n - 1].y;
     assert.ok(Math.hypot(dx, dy) < 60, `squares ${n - 1} and ${n} are too far apart`);
   }
+});
+
+// ---- tokens, the die and the roll control ----
+import { tokenOffset } from '../src/games/snakesladders-render.js';
+import { render, createInitialState } from '../src/games/snakesladders.js';
+
+const NAMES = { 0: 'Harvey', 1: 'Shruti' };
+
+function container() {
+  const doc = makeDoc();
+  const host = doc.createElement('div');
+  host.ownerDocument = doc;
+  return { host, doc };
+}
+
+test('two tokens on the same square are offset from each other', () => {
+  // Without this one player loses sight of their own token the moment both
+  // land on the same square.
+  const a = tokenOffset(0), b = tokenOffset(1);
+  assert.ok(Math.abs(a.dx - b.dx) >= 8 || Math.abs(a.dy - b.dy) >= 8,
+    'the two tokens must be visibly apart');
+});
+
+test('the world is built once across repeated renders', () => {
+  const { host } = container();
+  const state = createInitialState();
+  for (let i = 0; i < 3; i++) render(state, host, { mySeat: 0, names: NAMES, onAction: () => {} });
+  const svgs = host.children.filter((c) => c.tag === 'svg');
+  assert.equal(svgs.length, 1, 'rebuilding a hundred blocks on every update would cripple a phone');
+});
+
+test('the roll control is disabled when it is not your turn', () => {
+  const { host } = container();
+  render(createInitialState(), host, { mySeat: 1, names: NAMES, onAction: () => {} });
+  assert.equal(host.__sl.rollButton.disabled, true);
+});
+
+test('the roll control is enabled on your turn', () => {
+  const { host } = container();
+  render(createInitialState(), host, { mySeat: 0, names: NAMES, onAction: () => {} });
+  assert.equal(host.__sl.rollButton.disabled, false);
+});
+
+test('the roll control is disabled once the game is won', () => {
+  const { host } = container();
+  const won = { ...createInitialState(), pos0: 100 };
+  render(won, host, { mySeat: 0, names: NAMES, onAction: () => {} });
+  assert.equal(host.__sl.rollButton.disabled, true);
+});
+
+test('the roll control is disabled for a spectator', () => {
+  const { host } = container();
+  render(createInitialState(), host, { mySeat: null, names: NAMES, onAction: () => {} });
+  assert.equal(host.__sl.rollButton.disabled, true);
+});
+
+test('rolling reports a die between one and six', () => {
+  const { host } = container();
+  const seen = new Set();
+  render(createInitialState(), host, {
+    mySeat: 0, names: NAMES,
+    onAction: (a) => {
+      assert.equal(a.type, 'roll');
+      assert.ok(Number.isInteger(a.die) && a.die >= 1 && a.die <= 6, `bad die ${a.die}`);
+      seen.add(a.die);
+    }
+  });
+  for (let i = 0; i < 200; i++) host.__sl.rollButton.click();
+  assert.ok(seen.size >= 3, 'the die should not keep returning the same face');
 });

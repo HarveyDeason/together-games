@@ -1,6 +1,6 @@
 # Two-Player Games — Design
 
-**Date:** 2026-08-09
+**Date:** 2026-10-21
 **Status:** Approved (design), awaiting implementation plan
 
 ## Purpose

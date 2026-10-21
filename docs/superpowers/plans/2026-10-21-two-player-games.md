@@ -152,8 +152,8 @@ h1 { font-size: 1.75rem; margin: 0 0 1rem; }
 Two people, two phones, one board. Live multiplayer games in the browser —
 no app, no account, no cost.
 
-- Design spec: `docs/superpowers/specs/2026-08-09-two-player-games-design.md`
-- Implementation plan: `docs/superpowers/plans/2026-08-09-two-player-games.md`
+- Design spec: `docs/superpowers/specs/2026-10-21-two-player-games-design.md`
+- Implementation plan: `docs/superpowers/plans/2026-10-21-two-player-games.md`
 
 ## Running locally
 

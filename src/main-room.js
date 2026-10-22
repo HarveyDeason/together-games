@@ -18,6 +18,7 @@ const scoreEl = document.getElementById('score-line');
 const pickerEl = document.getElementById('game-picker');
 const leaveRowEl = document.getElementById('leave-row');
 const leaveNoteEl = document.getElementById('leave-note');
+const backHomeEl = document.getElementById('back-home');
 
 const code = normaliseCode(new URLSearchParams(location.search).get('r'));
 const identity = getIdentity();
@@ -69,6 +70,7 @@ function updateOpponent() {
 }
 
 function renderScores() {
+  if (ended) return;
   if (mySeat === null) return;
   const names = namesBySeat();
   const otherSeat = mySeat === 0 ? 1 : 0;
@@ -84,6 +86,11 @@ function renderScores() {
 }
 
 function draw() {
+  // An ended room is never drawn again, by any route. The connection listener
+  // calls draw() on every reconnect — routine on a phone that locks or loses
+  // signal — and without this it would repaint a live board, re-offer Rematch
+  // and accept moves on a game that was closed for good.
+  if (ended) return;
   if (!state) return;
   const status = game.getStatus(state);
   const names = namesBySeat();
@@ -108,6 +115,10 @@ function draw() {
 /** All game writes go through a transaction, so two simultaneous taps
  *  resolve cleanly instead of overwriting each other. */
 async function submitAction(action) {
+  // A game transaction cannot see meta/endedAt from inside itself, so the local
+  // flag is the only check available — and it is the one that matters, since a
+  // move landing in a closed room would be written for both players.
+  if (ended) return;
   let rejected = false;
   // Transact on the whole node and read the module from `current.id`. Using the
   // local `game` meant a tap landing in the window between the other player
@@ -142,6 +153,7 @@ async function submitAction(action) {
  *  screen behind, with nothing left to press. */
 function showEnded() {
   ended = true;
+  state = null;        // nothing left for a stray draw() to repaint
   boardEl.innerHTML = '';
   delete boardEl.__sl;
   turnEl.textContent = 'This game has ended.';
@@ -152,7 +164,11 @@ function showEnded() {
   // ended" invites you to keep playing with a room that is closed.
   document.getElementById('reaction-bar').hidden = true;
   leaveRowEl.hidden = true;
+  leaveNoteEl.hidden = false;
   leaveNoteEl.textContent = 'It is closed for both of you, and cannot be reopened.';
+  // Somebody arriving on an old link has no other way out: the invite path uses
+  // location.replace, so Back goes to wherever the link came from.
+  backHomeEl.hidden = false;
   forgetRoom(code);
 }
 
@@ -181,6 +197,8 @@ rematchEl.addEventListener('click', async () => {
  *  is to say so. Nothing on this site has ever told you a game survives being
  *  walked away from, and that doubt is what stops two people starting a long
  *  game at 10pm. */
+backHomeEl.addEventListener('click', () => { location.href = 'index.html'; });
+
 document.getElementById('save-leave').addEventListener('click', () => {
   recordVisit(code);
   location.href = 'index.html';
@@ -283,6 +301,10 @@ async function start() {
       : 'Could not join this room.');
     return;
   }
+
+  // Only now: a client that never got a seat has no business ending the game.
+  leaveRowEl.hidden = false;
+  leaveNoteEl.hidden = false;
 
   rememberRoom(code, gameId);
   markActivity(code);

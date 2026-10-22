@@ -120,6 +120,20 @@ test('a row gains its status line and dot when its snapshot arrives', async () =
   assert.equal(row.dataset.presence, 'present');
 });
 
+test('the row shows how long ago the last move was', () => {
+  // One of the four things the row exists to answer. Computing it and writing
+  // it only to a data attribute shows the user nothing.
+  storeRooms([{ code: 'ABCD', gameId: 'tictactoe', joinedAt: NOW - MINUTE, visitedAt: NOW - MINUTE }]);
+
+  const done = initRoomList({
+    container, identity, now: NOW, read: async () => liveSnapshot(), watch: () => () => {}
+  });
+
+  return done.then(() => {
+    assert.match(textOf(rowFor(container, 'ABCD')), /2 min/);
+  });
+});
+
 test('row order does not change when snapshots arrive out of order', async () => {
   storeRooms([
     { code: 'AAAA', gameId: 'tictactoe', joinedAt: NOW - MINUTE, visitedAt: NOW - MINUTE },

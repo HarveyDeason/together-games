@@ -23,11 +23,14 @@
     <div class="reaction-bar" id="reaction-bar" aria-label="Send a reaction"></div>
     <button type="button" id="rematch" class="btn" hidden>Rematch</button>
 
-    <div class="leave-row" id="leave-row">
+    <!-- Hidden until joinRoom succeeds. End game destroys the only copy, and it
+         must not be reachable by somebody the room turned away. -->
+    <div class="leave-row" id="leave-row" hidden>
       <button type="button" id="save-leave" class="btn btn-secondary">Save &amp; leave</button>
       <button type="button" id="end-game" class="link-btn link-danger">End game</button>
     </div>
-    <p class="leave-note" id="leave-note">Stop any time. The game is saved, and it will be waiting for you both in Your rooms.</p>
+    <p class="leave-note" id="leave-note" hidden>Stop any time. The game is saved, and it will be waiting for you both in Your rooms.</p>
+    <button type="button" id="back-home" class="btn btn-secondary" hidden>Back to your rooms</button>
   </main>
 
   <button type="button" class="chat-toggle" id="chat-toggle" aria-expanded="false" aria-controls="chat-sheet">

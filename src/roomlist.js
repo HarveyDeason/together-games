@@ -120,12 +120,16 @@ function buildRow(room, go) {
   title.append(name, code);
   main.append(title, status);
 
+  const time = document.createElement('span');
+  time.className = 'roomcard-time';
+  time.hidden = true;
+
   const go_ = document.createElement('span');
   go_.className = 'roomcard-go';
   go_.textContent = 'Go';
 
-  row.append(dot, main, go_);
-  row.__parts = { dot, name, status, go: go_ };
+  row.append(dot, main, time, go_);
+  row.__parts = { dot, name, status, time, go: go_ };
   return row;
 }
 
@@ -133,7 +137,7 @@ function buildRow(room, go) {
  *  answer from the database. The dot stays off the screen entirely in that
  *  case: an unlit dot would say "she is not here", which is a claim. */
 function paint(row, description) {
-  const { dot, name, status } = row.__parts;
+  const { dot, name, status, time } = row.__parts;
 
   if (description.gameName != null) name.textContent = description.gameName;
 
@@ -150,5 +154,7 @@ function paint(row, description) {
     row.dataset.presence = description.otherPresent ? 'present' : 'away';
   }
 
+  time.textContent = description.timeLabel;
+  time.hidden = !description.timeLabel;
   row.dataset.time = description.timeLabel;
 }

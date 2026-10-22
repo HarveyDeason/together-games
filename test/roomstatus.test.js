@@ -173,6 +173,13 @@ test('a room with no game node yet does not throw', () => {
   assert.ok(typeof result.statusLine === 'string');
 });
 
+test('a room whose game node has not arrived makes no claim about which game it is', () => {
+  // Same rule as an unreadable room: the lobby already knows what it listed
+  // this as, and "Game" is a downgrade, not an answer.
+  const result = describe({ snapshot: snapshot({ players: bothPlayers }) });
+  assert.equal(result.gameName, null);
+});
+
 test('an unknown game id does not throw and still names the room', () => {
   const result = describe({
     snapshot: snapshot({ players: bothPlayers, game: { id: 'darlingco', state: { turn: 0, moves: 0 } } })

@@ -536,3 +536,12 @@ body {
 }
 
 .link-danger { color: var(--seat0); }
+
+.roomcard-time {
+  flex: none;
+  color: var(--muted);
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
+#back-home { margin-top: 1.5rem; }

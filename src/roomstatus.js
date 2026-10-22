@@ -102,7 +102,16 @@ export function describeRoom({ snapshot, myClientId, now, fallbackAt }) {
 
   const mod = GAMES[node.id];
   if (!mod || !node.state) {
-    return { available: true, ended: false, gameName, statusLine: 'Not started', otherPresent, timeLabel };
+    // gameName null for the same reason an unreadable room gives null: a game
+    // node that has not arrived is not evidence that the room is "Game".
+    return {
+      available: true,
+      ended: false,
+      gameName: node.id ? gameName : null,
+      statusLine: 'Not started',
+      otherPresent,
+      timeLabel
+    };
   }
 
   const status = mod.getStatus(node.state);

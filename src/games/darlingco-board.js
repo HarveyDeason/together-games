@@ -25,6 +25,9 @@ export const UTIL_MULT = [4, 10];
 
 /** How many lines of the event log are kept and shown. */
 export const MAX_LOG = 6;
+/** Longest log line the engine will store. Must stay below the 160 cap on
+ *  log entries in firebase-rules.json: a longer write is rejected silently. */
+export const MAX_LOG_LINE = 150;
 
 /** The eight colour sets. `squares` must match the `set` on each property. */
 export const SETS = {

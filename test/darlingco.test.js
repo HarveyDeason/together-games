@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { LJ_CARDS, JB_CARDS, MAX_LOG, START_CASH } from '../src/games/darlingco-board.js';
+import { readFileSync } from 'node:fs';
+import { LJ_CARDS, JB_CARDS, MAX_LOG, MAX_LOG_LINE, START_CASH } from '../src/games/darlingco-board.js';
 import { rentFor, netWorth } from '../src/games/darlingco-state.js';
 import {
   meta, createInitialState, getStatus, nextStarter, shuffleOrder, logged, readLog, applyAction, sendToJail, applyCard
@@ -1061,4 +1062,35 @@ test('the tally exemption does not open up ordinary actions to the off-turn seat
   assert.equal(act(s, 'roll', 1 - s.actor).error, 'not-your-turn');
   assert.equal(act(s, 'bankrupt', 1 - s.actor).error, 'not-your-turn');
   assert.equal(applyAction(s, { type: 'build', square: 1 }, 1 - s.actor).error, 'not-your-turn');
+});
+
+// ---- Task 9 fix: log lines must fit the database rules -----------------------
+
+const rulesLogCap = () => {
+  const rules = JSON.parse(readFileSync(new URL('../firebase-rules.json', import.meta.url), 'utf8'));
+  const v = rules.rules.rooms.$code.game.state.log.$index['.validate'];
+  return Number(/length <= (\d+)/.exec(v)[1]);
+};
+
+test('the engine line limit sits below the log cap in firebase-rules.json', () => {
+  assert.ok(MAX_LOG_LINE < rulesLogCap());
+});
+
+test('every shipped card, drawn and logged, fits the rules cap', () => {
+  const cap = rulesLogCap();
+  for (const c of LJ_CARDS) {
+    const line = readLog(drawLJ(c.code)).at(-1);
+    assert.ok(line.length <= MAX_LOG_LINE && line.length <= cap, `LJ ${c.code}: ${line.length}`);
+  }
+  for (const c of JB_CARDS) {
+    const line = readLog(drawJB(c.code)).at(-1);
+    assert.ok(line.length <= MAX_LOG_LINE && line.length <= cap, `JB ${c.code}: ${line.length}`);
+  }
+});
+
+test('an over-long log line is cut to the limit and ends in an ellipsis', () => {
+  const long = logged(createInitialState(), 'x'.repeat(MAX_LOG_LINE + 40)).at(-1);
+  assert.equal(long.length, MAX_LOG_LINE);
+  assert.ok(long.endsWith('…'));
+  assert.equal(logged(createInitialState(), 'x'.repeat(MAX_LOG_LINE)).at(-1).length, MAX_LOG_LINE);
 });

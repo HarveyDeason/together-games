@@ -8,7 +8,7 @@
 //    always read the log through readLog
 
 import {
-  GAME_ID, GAME_NAME, START_CASH, LJ_CARDS, JB_CARDS, MAX_LOG, SQUARES,
+  GAME_ID, GAME_NAME, START_CASH, LJ_CARDS, JB_CARDS, MAX_LOG, MAX_LOG_LINE, SQUARES,
   GO_PAY, JAIL_FINE, JAIL_SQUARE, SETS, LJ_NAME, JB_NAME
 } from './darlingco-board.js';
 import {
@@ -88,9 +88,11 @@ export function readLog(state) {
   return state.log ?? [];
 }
 
-/** The log with `line` appended, trimmed to the last MAX_LOG. */
+/** The log with `line` appended, trimmed to the last MAX_LOG. A line over
+ *  MAX_LOG_LINE is cut and ends in an ellipsis, so it cannot breach the rules. */
 export function logged(state, line) {
-  return [...readLog(state), line].slice(-MAX_LOG);
+  const fit = line.length > MAX_LOG_LINE ? line.slice(0, MAX_LOG_LINE - 1) + '…' : line;
+  return [...readLog(state), fit].slice(-MAX_LOG);
 }
 
 const KNOWN_ACTIONS = ['roll', 'jail-pay', 'jail-card', 'end', 'buy', 'decline', 'pay', 'card-ok', 'bankrupt'];

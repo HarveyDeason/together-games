@@ -168,7 +168,7 @@
             },
             "log": {
               "$index": {
-                ".validate": "newData.isString() && newData.val().length <= 80"
+                ".validate": "newData.isString() && newData.val().length <= 160"
               }
             },
             "$other": {

@@ -54,7 +54,7 @@
               ".validate": "newData.isNumber() && (newData.val() === 0 || newData.val() === 1)"
             },
             "moves": {
-              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 5000"
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 50000"
             },
             "board": {
               ".validate": "newData.isString() && newData.val().length <= 64"
@@ -79,6 +79,97 @@
             },
             "seat": {
               ".validate": "newData.isNumber() && (newData.val() === 0 || newData.val() === 1)"
+            },
+            "first": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1"
+            },
+            "phase": {
+              ".validate": "newData.isString() && newData.val().length <= 8"
+            },
+            "actor": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1"
+            },
+            "cash": {
+              "$index": {
+                ".validate": "newData.isNumber() && newData.val() >= -100000 && newData.val() <= 1000000"
+              }
+            },
+            "pos": {
+              "$index": {
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 39"
+              }
+            },
+            "jail": {
+              "$index": {
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 10"
+              }
+            },
+            "outCards": {
+              "$index": {
+                ".validate": "newData.isString() && newData.val().length <= 4"
+              }
+            },
+            "own": {
+              ".validate": "newData.isString() && newData.val().length === 40"
+            },
+            "built": {
+              ".validate": "newData.isString() && newData.val().length === 40"
+            },
+            "mortg": {
+              ".validate": "newData.isString() && newData.val().length === 40"
+            },
+            "deckLJ": {
+              ".validate": "newData.isString() && newData.val().length <= 64"
+            },
+            "curLJ": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1000"
+            },
+            "deckJB": {
+              ".validate": "newData.isString() && newData.val().length <= 64"
+            },
+            "curJB": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1000"
+            },
+            "pot": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1000000"
+            },
+            "die1": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 6"
+            },
+            "die2": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 6"
+            },
+            "doubles": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 10"
+            },
+            "owed": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1000000"
+            },
+            "owedTo": {
+              ".validate": "newData.isNumber() && newData.val() >= -1 && newData.val() <= 1"
+            },
+            "pendingBuy": {
+              ".validate": "newData.isNumber() && newData.val() >= -1 && newData.val() <= 39"
+            },
+            "pendingCard": {
+              ".validate": "newData.isNumber() && newData.val() >= -1 && newData.val() <= 15"
+            },
+            "pendingDeck": {
+              ".validate": "newData.isString() && newData.val().length <= 2"
+            },
+            "settleOffer": {
+              ".validate": "newData.isNumber() && newData.val() >= -1 && newData.val() <= 1"
+            },
+            "over": {
+              ".validate": "newData.isString() && newData.val().length <= 8"
+            },
+            "winner": {
+              ".validate": "newData.isNumber() && newData.val() >= -1 && newData.val() <= 1"
+            },
+            "log": {
+              "$index": {
+                ".validate": "newData.isString() && newData.val().length <= 80"
+              }
             },
             "$other": {
               ".validate": false

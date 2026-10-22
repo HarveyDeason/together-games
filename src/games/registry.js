@@ -1,9 +1,11 @@
 import * as tictactoe from './tictactoe.js';
 import * as snakesladders from './snakesladders.js';
+import * as darlingco from './darlingco.js';
 
 export const GAMES = {
   [tictactoe.meta.id]: tictactoe,
-  [snakesladders.meta.id]: snakesladders
+  [snakesladders.meta.id]: snakesladders,
+  [darlingco.meta.id]: darlingco
 };
 
 export const DEFAULT_GAME = tictactoe.meta.id;

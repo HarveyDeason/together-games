@@ -1,6 +1,6 @@
 // Darling & Co.: the game module. This file is the contract the site reads
 // (meta, createInitialState, applyAction, getStatus, nextStarter, render).
-// applyAction and render are filled in by later tasks.
+// render lives in darlingco-render.js and is re-exported below.
 //
 // State rules that matter because Firebase stores the state:
 //  - no null anywhere (a null key vanishes); use -1, '', 0 or false
@@ -506,6 +506,4 @@ export function applyAction(state, action, seat) {
   }
 }
 
-export function render() {
-  throw new Error('Darling & Co. render: not yet');
-}
+export { renderBoard as render } from './darlingco-render.js';

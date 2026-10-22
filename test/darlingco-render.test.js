@@ -16,7 +16,7 @@ function makeEl(tag) {
     setAttribute(k, v) { el.attrs[k] = v; },
     appendChild(c) { el.children.push(c); return c; }
   };
-  el.classList = { add: (c) => el.classes.add(c), contains: (c) => el.classes.has(c) };
+  el.classList = { add: (c) => el.classes.add(c), remove: (c) => el.classes.delete(c), contains: (c) => el.classes.has(c) };
   return el;
 }
 const doc = { createElement: makeEl };
@@ -65,6 +65,9 @@ test('the stripe sits on the edge nearest the middle', () => {
   assert.equal(edgeOf(15), 'left');
   assert.equal(edgeOf(25), 'top');
   assert.equal(edgeOf(35), 'right');
+  for (const [i, e] of [[0, 'bottom'], [9, 'bottom'], [10, 'left'], [19, 'left'], [20, 'top'], [29, 'top'], [30, 'right'], [39, 'right']]) {
+    assert.equal(edgeOf(i), e, `square ${i}`);
+  }
   const t = (i) => tileFor(fresh(), i);
   assert.ok(all(t(6)).some((n) => n.classes.has('dc-stripe')));
   assert.equal(t(6).dataset.edge, 'bottom');
@@ -144,6 +147,25 @@ test('both tokens show when they share a square', () => {
   s.pos = [9, 9];
   const t = tokens(tileFor(s, 9));
   assert.deepEqual(t.map((n) => n.dataset.seat).sort(), ['0', '1']);
+});
+test('every tile carries its full name as title and aria-label', () => {
+  const { tiles } = buildBoard(doc);
+  tiles.forEach((t, i) => {
+    assert.equal(t.attrs.title, SQUARES[i].name);
+    assert.equal(t.attrs['aria-label'], SQUARES[i].name);
+  });
+});
+test('painting leaves classes it does not own alone', () => {
+  const s = fresh();
+  const { tiles } = buildBoard(doc);
+  tiles[6].classList.add('dc-animating');
+  s.mortg = setChar(s.mortg, 6, '1');
+  paintTile(tiles[6], s, 6);
+  assert.ok(tiles[6].classes.has('dc-animating'));
+  assert.ok(tiles[6].classes.has('dc-tile'));
+  paintTile(tiles[6], fresh(), 6);
+  assert.ok(tiles[6].classes.has('dc-animating'));
+  assert.ok(!tiles[6].classes.has('is-mortgaged'));
 });
 test('every square paints without error', () => {
   const { tiles } = buildBoard(doc);

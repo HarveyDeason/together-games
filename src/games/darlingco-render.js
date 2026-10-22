@@ -52,6 +52,9 @@ export function buildBoard(doc) {
     tile.style.gridColumn = String(column);
     tile.dataset.edge = edgeOf(i);
     tile.dataset.square = String(i);
+    // The untruncated name is always reachable, whatever the tile clips.
+    tile.setAttribute('title', sq.name);
+    tile.setAttribute('aria-label', sq.name);
     if (set) {
       const stripe = el(doc, 'span', 'dc-stripe');
       stripe.style.background = set.colour;
@@ -84,8 +87,9 @@ export function paintTile(tile, state, i) {
   else delete tile.dataset.own;
 
   const mortgaged = isMortgaged(state, i);
-  const base = CORNERS.has(i) ? 'dc-tile dc-corner' : 'dc-tile';
-  tile.className = mortgaged ? `${base} is-mortgaged` : base;
+  // Only the class this function owns; others (animations) are left alone.
+  if (mortgaged) tile.classList.add('is-mortgaged');
+  else tile.classList.remove('is-mortgaged');
 
   const built = housesOn(state, i);
   if (built > 0) tile.dataset.built = String(built);

@@ -555,8 +555,15 @@ body {
 
 /* ---- Darling & Co. board ------------------------------------------------
    An 11 x 11 ring: corners 1.3fr, the nine squares between them 1fr. The
-   middle (rows 2-10, columns 2-10) is reserved for the centre panel. */
+   middle (rows 2-10, columns 2-10) is reserved for the centre panel.
+
+   Every tile is its own small grid with real slots, so nothing spills over
+   anything else: houses row, then icon + tokens, then the name (clamped to
+   two lines with an ellipsis, whatever its length). The stripe is absolutely
+   positioned in a band of --dc-stripe that the tile reserves as padding on
+   the same edge, so no content can ever sit under it. */
 .dc-board {
+  --dc-stripe: clamp(4px, 1.3vw, 8px);
   display: grid;
   grid-template-columns: 1.3fr repeat(9, minmax(0, 1fr)) 1.3fr;
   grid-template-rows: 1.3fr repeat(9, minmax(0, 1fr)) 1.3fr;
@@ -575,14 +582,16 @@ body {
   overflow: hidden;
   min-width: 0;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: auto auto;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-areas: "h h" "i t" "n n";
+  justify-content: center;
   align-items: center;
-  padding: 1px 0 2px;
+  padding: 1px;
   background: var(--surface);
   color: var(--muted);
-  --tint: var(--surface);
 }
 .dc-corner { background: color-mix(in srgb, var(--surface) 70%, var(--bg)); }
 
@@ -590,82 +599,84 @@ body {
 .dc-tile[data-own="0"] { background: color-mix(in srgb, var(--seat0) 32%, var(--surface)); color: var(--text); }
 .dc-tile[data-own="1"] { background: color-mix(in srgb, var(--seat1) 32%, var(--surface)); color: var(--text); }
 
-/* The set stripe sits on the edge facing the middle of the board. */
+/* The set stripe sits on the edge facing the middle; the tile reserves the
+   same band as padding on that edge. Corners carry no stripe. */
 .dc-stripe { position: absolute; }
-.dc-tile[data-edge="bottom"] .dc-stripe { top: 0; left: 0; right: 0; height: 24%; }
-.dc-tile[data-edge="top"] .dc-stripe { bottom: 0; left: 0; right: 0; height: 24%; }
-.dc-tile[data-edge="left"] .dc-stripe { right: 0; top: 0; bottom: 0; width: 24%; }
-.dc-tile[data-edge="right"] .dc-stripe { left: 0; top: 0; bottom: 0; width: 24%; }
-
-.dc-ic { font-size: clamp(7px, 2.2vw, 14px); line-height: 1.1; text-align: center; }
-.dc-nm {
-  font-size: clamp(5px, 1.4vw, 8px);
-  line-height: 1.1;
-  text-align: center;
-  max-width: 100%;
-  max-height: 2.2em;
-  overflow: hidden;
-  word-break: break-word;
-}
+.dc-tile[data-edge="bottom"] .dc-stripe { top: 0; left: 0; right: 0; height: var(--dc-stripe); }
+.dc-tile[data-edge="top"] .dc-stripe { bottom: 0; left: 0; right: 0; height: var(--dc-stripe); }
+.dc-tile[data-edge="left"] .dc-stripe { right: 0; top: 0; bottom: 0; width: var(--dc-stripe); }
+.dc-tile[data-edge="right"] .dc-stripe { left: 0; top: 0; bottom: 0; width: var(--dc-stripe); }
+.dc-tile[data-edge="bottom"]:not(.dc-corner) { padding-top: calc(var(--dc-stripe) + 1px); }
+.dc-tile[data-edge="top"]:not(.dc-corner) { padding-bottom: calc(var(--dc-stripe) + 1px); }
+.dc-tile[data-edge="left"]:not(.dc-corner) { padding-right: calc(var(--dc-stripe) + 1px); }
+.dc-tile[data-edge="right"]:not(.dc-corner) { padding-left: calc(var(--dc-stripe) + 1px); }
 
 .dc-houses {
-  position: absolute;
-  top: 1px;
-  left: 0;
-  right: 0;
-  text-align: center;
-  font-size: clamp(4px, 1.2vw, 8px);
-  line-height: 1;
+  grid-area: h;
+  min-height: clamp(5px, 1.3vw, 9px);
+  font-size: clamp(4px, 1.1vw, 8px);
+  line-height: 1.2;
   color: #ffdf8a;
   letter-spacing: 0.4px;
-  z-index: 1;
+  text-align: center;
+  white-space: nowrap;
 }
-.dc-tile[data-edge="bottom"] .dc-houses { top: 26%; }
-.dc-tile[data-edge="left"] .dc-houses { right: 26%; }
-.dc-tile[data-edge="right"] .dc-houses { left: 26%; }
-.dc-tile[data-built="5"] .dc-houses { font-size: clamp(7px, 2vw, 12px); }
+.dc-tile[data-built="5"] .dc-houses { font-size: clamp(5px, 1.3vw, 9px); }
 
-/* Mortgaged: hatched and dimmed, with an M. */
+/* Mortgaged: hatched and dimmed, with an M in the houses row. */
 .dc-tile.is-mortgaged {
   background-image: repeating-linear-gradient(135deg, transparent 0 3px, rgba(0, 0, 0, 0.55) 3px 5px);
 }
 .dc-tile.is-mortgaged .dc-ic,
 .dc-tile.is-mortgaged .dc-nm { opacity: 0.55; }
 .dc-mort {
-  position: absolute;
-  top: 1px;
-  right: 2px;
-  font: 700 clamp(5px, 1.5vw, 9px)/1 ui-monospace, Menlo, monospace;
+  grid-area: h;
+  justify-self: end;
+  font: 700 clamp(4px, 1.2vw, 8px)/1.2 ui-monospace, Menlo, monospace;
   color: #fff;
-  z-index: 2;
 }
-.dc-tile[data-edge="left"] .dc-mort { right: auto; left: 2px; }
 
-/* Tokens sit side by side on the tile, so two on one square never overlap. */
-.dc-toks {
-  position: absolute;
-  bottom: 1px;
-  left: 0;
-  right: 0;
-  display: flex;
-  justify-content: center;
-  gap: 2px;
-  z-index: 3;
+.dc-ic {
+  grid-area: i;
+  font-size: clamp(7px, 2.2vw, 14px);
+  line-height: 1.1;
+  text-align: center;
 }
+
+/* Tokens have their own slot beside the icon; two never overlap. */
+.dc-toks {
+  grid-area: t;
+  display: flex;
+  gap: 1px;
+  align-items: center;
+}
+.dc-toks:not(:empty) { margin-left: 2px; }
 .dc-tok {
-  width: clamp(5px, 1.7vw, 10px);
-  height: clamp(5px, 1.7vw, 10px);
+  display: block;
+  width: clamp(4px, 1.3vw, 9px);
+  height: clamp(4px, 1.3vw, 9px);
   border-radius: 50%;
   box-shadow: 0 0 0 1px var(--bg);
 }
 .dc-tok.s0 { background: var(--seat0); }
 .dc-tok.s1 { background: var(--seat1); }
 
+.dc-nm {
+  grid-area: n;
+  align-self: start;
+  min-height: 0;
+  max-width: 100%;
+  font-size: clamp(5px, 1.3vw, 8px);
+  line-height: 1.05;
+  text-align: center;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  text-overflow: ellipsis;
+}
+
 /* The reserved middle. */
 .dc-mid { grid-area: 2 / 2 / 11 / 11; min-width: 0; background: var(--bg); }
-
-/* Keep the name clear of the stripe, which eats part of the tile. */
-.dc-tile[data-edge="top"] { padding-bottom: 26%; }
-.dc-tile[data-edge="left"] { padding-right: 26%; }
-.dc-tile[data-edge="right"] { padding-left: 26%; }
-.dc-corner { padding: 1px 0 2px !important; }

@@ -615,11 +615,31 @@ test('selling does not pass the turn', () => {
 
 test('you cannot sell or mortgage what you do not own', () => {
   const s0 = { ...createInitialState(), own: own([[9, 1]]) };
-  for (const sq of [9, 0, 2, 4, 5, 12, 99, -1, 1.5, '9']) {
+  for (const sq of [9, 0, 2, 4, 5, 12]) {
     for (const type of ['build', 'sell', 'mortgage', 'unmortgage']) {
-      assert.notEqual(applyAction(s0, side(sq, type), 0).error, undefined, `${type} ${sq}`);
+      assert.equal(applyAction(s0, side(sq, type), 0).error, 'not-yours', `${type} ${sq}`);
     }
   }
+  for (const sq of [99, -1, 1.5, '9']) {
+    for (const type of ['build', 'sell', 'mortgage', 'unmortgage']) {
+      assert.equal(applyAction(s0, side(sq, type), 0).error, 'bad-square', `${type} ${sq}`);
+    }
+  }
+});
+
+test('a bare property cannot be mortgaged while a sibling in its set has buildings', () => {
+  const s0 = { ...createInitialState(), own: own([[6, 0], [8, 0], [9, 0]]), built: withBuilt([[6, '1'], [8, '1']]) };
+  assert.equal(applyAction(s0, side(9, 'mortgage'), 0).error, 'has-buildings');
+  const sold1 = ok(applyAction(s0, side(6, 'sell'), 0));
+  assert.equal(applyAction(sold1, side(9, 'mortgage'), 0).error, 'has-buildings');
+  const sold2 = ok(applyAction(sold1, side(8, 'sell'), 0));
+  assert.equal(ok(applyAction(sold2, side(9, 'mortgage'), 0)).mortg[9], '1');
+});
+
+test('stations and utilities mortgage fine with no set', () => {
+  const s0 = { ...createInitialState(), own: own([[5, 0], [12, 0]]) };
+  assert.equal(ok(applyAction(s0, side(5, 'mortgage'), 0)).cash[0], 1600);
+  assert.equal(ok(applyAction(s0, side(12, 'mortgage'), 0)).mortg[12], '1');
 });
 
 test('side actions are admitted only in roll, end or pay, for the actor', () => {

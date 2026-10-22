@@ -9,7 +9,7 @@
 
 import {
   GAME_ID, GAME_NAME, START_CASH, LJ_CARDS, JB_CARDS, MAX_LOG, SQUARES,
-  GO_PAY, JAIL_FINE, JAIL_SQUARE
+  GO_PAY, JAIL_FINE, JAIL_SQUARE, SETS
 } from './darlingco-board.js';
 import {
   BLANK_OWN, BLANK_BUILT, BLANK_MORTG, setChar, ownerOf, isMortgaged, rentFor,
@@ -336,7 +336,10 @@ function doSide(state, action, seat) {
     }
     case 'mortgage': {
       if (isMortgaged(state, sq)) return { error: 'already-mortgaged' };
-      if (housesOn(state, sq) > 0) return { error: 'has-buildings' };
+      // Official rule: every building in the colour set must go first.
+      // Stations and utilities have no set, so only the square itself counts.
+      const group = spec.set ? SETS[spec.set].squares : [sq];
+      if (group.some(q => housesOn(state, q) > 0)) return { error: 'has-buildings' };
       const next = addCash({ ...counted, mortg: setChar(state.mortg, sq, '1') }, seat, spec.mortgage);
       return { state: say(next, `${who} mortgages ${spec.name} for ${spec.mortgage}.`) };
     }

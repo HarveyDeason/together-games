@@ -11,7 +11,9 @@ import {
   GAME_ID, GAME_NAME, START_CASH, LJ_CARDS, JB_CARDS, MAX_LOG, SQUARES,
   GO_PAY, JAIL_FINE, JAIL_SQUARE
 } from './darlingco-board.js';
-import { BLANK_OWN, BLANK_BUILT, BLANK_MORTG } from './darlingco-state.js';
+import {
+  BLANK_OWN, BLANK_BUILT, BLANK_MORTG, setChar, ownerOf, isMortgaged, rentFor
+} from './darlingco-state.js';
 
 export const meta = { id: GAME_ID, name: GAME_NAME, seats: 2 };
 
@@ -90,7 +92,13 @@ export function logged(state, line) {
   return [...readLog(state), line].slice(-MAX_LOG);
 }
 
-const KNOWN_ACTIONS = ['roll', 'jail-pay', 'jail-card', 'end'];
+const KNOWN_ACTIONS = ['roll', 'jail-pay', 'jail-card', 'end', 'buy', 'decline', 'pay'];
+
+/** The one phase each action is admitted in. */
+const PHASE_OF = {
+  roll: 'roll', 'jail-pay': 'roll', 'jail-card': 'roll',
+  end: 'end', buy: 'buy', decline: 'buy', pay: 'pay'
+};
 
 const isDie = (d) => Number.isInteger(d) && d >= 1 && d <= 6;
 
@@ -144,6 +152,21 @@ export function landOn(state, seat, square) {
       // `pot` is NOT touched here: `pay` credits the pot when it discharges
       // any owedTo === -1 debt, so a bankruptcy never leaves unpaid money in it.
       return owe(say(state, `${who} owes ${sq.amount} for ${sq.name}.`), seat, sq.amount, -1);
+    case 'prop':
+    case 'stn':
+    case 'util': {
+      const owner = ownerOf(state, square);
+      if (owner < 0) {
+        return say({ ...state, phase: 'buy', pendingBuy: square },
+          `${who} lands on ${sq.name}, for sale at ${sq.price}.`);
+      }
+      // Your own square, or a mortgaged one, raises nothing at all.
+      if (owner === seat || isMortgaged(state, square)) {
+        return say(state, `${who} lands on ${sq.name}.`);
+      }
+      const rent = rentFor(state, square, state.die1 + state.die2);
+      return owe(say(state, `${who} owes ${rent} rent for ${sq.name}.`), seat, rent, owner);
+    }
     default:
       // go, jail (just visiting), and the kinds later tasks handle
       return say(state, `${who} lands on ${sq.name}.`);
@@ -228,6 +251,36 @@ function doJailCard(state, seat) {
   return { state: say(next, `Player ${seat + 1} uses a get-out-of-jail card.`) };
 }
 
+function doBuy(state, seat) {
+  const sq = state.pendingBuy;
+  const spec = SQUARES[sq];
+  if (state.cash[seat] < spec.price) return { error: 'cannot-afford' };
+  const next = addCash({
+    ...state, own: setChar(state.own, sq, String(seat)),
+    pendingBuy: -1, phase: 'end', moves: state.moves + 1
+  }, seat, -spec.price);
+  return { state: say(next, `Player ${seat + 1} buys ${spec.name} for ${spec.price}.`) };
+}
+
+function doDecline(state, seat) {
+  const next = { ...state, pendingBuy: -1, phase: 'end', moves: state.moves + 1 };
+  return { state: say(next, `Player ${seat + 1} passes on ${SQUARES[state.pendingBuy].name}.`) };
+}
+
+/** Settles the open debt. Money owed to the bank (taxes, fines) piles up in
+ *  the Free Parking pot; money owed to a player goes to that player. The
+ *  action returns to whoever's turn it is. */
+function doPay(state, seat) {
+  const { owed, owedTo } = state;
+  if (state.cash[seat] < owed) return { error: 'cannot-afford' };
+  let next = addCash(state, seat, -owed);
+  next = owedTo < 0 ? { ...next, pot: next.pot + owed } : addCash(next, owedTo, owed);
+  next = { ...next, owed: 0, owedTo: -1, phase: 'end', actor: state.turn, moves: state.moves + 1 };
+  return { state: say(next, owedTo < 0
+    ? `Player ${seat + 1} pays ${owed} into the pot.`
+    : `Player ${seat + 1} pays ${owed} to Player ${owedTo + 1}.`) };
+}
+
 function doEnd(state, seat) {
   const again = state.doubles > 0 && state.die1 === state.die2 && state.jail[seat] === 0;
   const turn = again ? state.turn : 1 - state.turn;
@@ -251,12 +304,14 @@ export function applyAction(state, action, seat) {
   if (seat !== state.actor) return { error: 'not-your-turn' };
   const type = action && action.type;
   if (!KNOWN_ACTIONS.includes(type)) return { error: 'unknown-action' };
-  const admitted = type === 'end' ? state.phase === 'end' : state.phase === 'roll';
-  if (!admitted) return { error: 'wrong-phase' };
+  if (state.phase !== PHASE_OF[type]) return { error: 'wrong-phase' };
   switch (type) {
     case 'roll': return doRoll(state, action, seat);
     case 'jail-pay': return doJailPay(state, seat);
     case 'jail-card': return doJailCard(state, seat);
+    case 'buy': return doBuy(state, seat);
+    case 'decline': return doDecline(state, seat);
+    case 'pay': return doPay(state, seat);
     default: return doEnd(state, seat);
   }
 }

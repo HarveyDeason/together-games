@@ -144,7 +144,7 @@ const at = (pos, extra = {}) => ({ ...createInitialState(), pos: [pos, 0], ...ex
 test('a roll moves you the sum of the dice', () => {
   const s = ok(roll(createInitialState(), 1, 2));
   assert.equal(s.pos[0], 3);
-  assert.equal(s.phase, 'end');
+  assert.equal(s.phase, 'buy');
   assert.equal(s.moves, 1);
   assert.equal(s.die1, 1);
   assert.equal(s.die2, 2);
@@ -195,7 +195,7 @@ test('a double lets you roll again', () => {
 
 test('a non-double hands the turn over on end', () => {
   let s = ok(roll(createInitialState(), 1, 2));
-  s = ok(applyAction(s, { type: 'end' }, 0));
+  s = ok(applyAction(ok(applyAction(s, { type: 'decline' }, 0)), { type: 'end' }, 0));
   assert.equal(s.turn, 1);
   assert.equal(s.actor, 1);
   assert.equal(s.phase, 'roll');
@@ -246,7 +246,7 @@ test('in jail, doubles release you and move you that roll', () => {
 });
 
 test('in jail, a double does not also earn another go', () => {
-  const s = ok(roll(at(10, { jail: [1, 0] }), 3, 3));
+  const s = ok(applyAction(ok(roll(at(10, { jail: [1, 0] }), 3, 3)), { type: 'decline' }, 0));
   assert.equal(s.doubles, 0);
   const e = ok(applyAction(s, { type: 'end' }, 0));
   assert.equal(e.turn, 1);
@@ -294,7 +294,7 @@ test('a solvent player on the third jail turn pays and moves', () => {
   const s = ok(roll(at(10, { jail: [3, 0], cash: [50, 1500] }), 1, 2));
   assert.equal(s.cash[0], 0);
   assert.equal(s.pos[0], 13);
-  assert.equal(s.phase, 'end');
+  assert.equal(s.phase, 'buy');
 });
 
 test('the jail counter steps from 2 to 3 and stays in jail', () => {
@@ -349,4 +349,169 @@ test('a roll with a seven on one die is refused', () => {
   assert.deepEqual(roll(createInitialState(), 0, 1), { error: 'bad-die' });
   assert.deepEqual(roll(createInitialState(), 1.5, 1), { error: 'bad-die' });
   assert.deepEqual(applyAction(createInitialState(), { type: 'roll' }, 0), { error: 'bad-die' });
+});
+
+// ---- Task 5: buying, rent and debts ----
+const own = (pairs) => {
+  let o = '.'.repeat(40);
+  for (const [sq, seat] of pairs) o = o.slice(0, sq) + seat + o.slice(sq + 1);
+  return o;
+};
+const act = (s, type, seat = s.actor) => applyAction(s, { type }, seat);
+// player 0 on 6 rolls 1+2 onto 9; the demand state puts 9 in player 1's hands
+const demand = () => ok(roll(at(6, { own: own([[9, 1]]) }), 1, 2));
+
+test('landing on an unowned property offers it for sale', () => {
+  const s = ok(roll(at(6), 1, 2));
+  assert.equal(s.phase, 'buy');
+  assert.equal(s.pendingBuy, 9);
+  assert.equal(s.owed, 0);
+  assert.equal(s.actor, 0);
+});
+
+test('buying takes the price and records the owner', () => {
+  const s = ok(act(ok(roll(at(6), 1, 2)), 'buy'));
+  assert.equal(s.cash[0], 1500 - 120);
+  assert.equal(s.own[9], '0');
+  assert.equal(s.pendingBuy, -1);
+  assert.equal(s.phase, 'end');
+  assert.equal(s.moves, 2);
+});
+
+test('buying what you cannot afford is refused', () => {
+  const offer = { ...ok(roll(at(6), 1, 2)), cash: [100, 1500] };
+  assert.deepEqual(act(offer, 'buy'), { error: 'cannot-afford' });
+});
+
+test('declining leaves it unowned and auctions nothing', () => {
+  const s = ok(act(ok(roll(at(6), 1, 2)), 'decline'));
+  assert.equal(s.own[9], '.');
+  assert.deepEqual(s.cash, [1500, 1500]);
+  assert.equal(s.pendingBuy, -1);
+  assert.equal(s.phase, 'end');
+  assert.equal(s.actor, 0);
+});
+
+test('stations and utilities are offered too', () => {
+  assert.equal(ok(roll(at(2), 1, 2)).pendingBuy, 5);
+  assert.equal(ok(roll(at(9), 1, 2)).pendingBuy, 12);
+});
+
+test('landing on the other player’s property demands rent', () => {
+  const s = demand();
+  assert.equal(s.phase, 'pay');
+  assert.equal(s.owed, 8);
+  assert.equal(s.owedTo, 1);
+  assert.equal(s.actor, 0);
+  assert.equal(s.turn, 0);
+});
+
+test('rent on a full set with nothing built is doubled', () => {
+  const s = ok(roll(at(6, { own: own([[6, 1], [8, 1], [9, 1]]) }), 1, 2));
+  assert.equal(s.owed, 16);
+});
+
+test('utility rent follows the dice', () => {
+  const s = ok(roll(at(9, { own: own([[12, 1]]) }), 1, 2));
+  assert.equal(s.owed, 12);
+});
+
+test('paying rent moves the money and ends the demand', () => {
+  const s = ok(act(demand(), 'pay'));
+  assert.deepEqual(s.cash, [1492, 1508]);
+  assert.equal(s.owed, 0);
+  assert.equal(s.owedTo, -1);
+  assert.equal(s.phase, 'end');
+  assert.equal(s.actor, 0);
+  assert.equal(s.pot, 0);
+});
+
+test('paying more than you hold is refused', () => {
+  const broke = { ...demand(), cash: [3, 1500] };
+  assert.deepEqual(act(broke, 'pay'), { error: 'cannot-afford' });
+});
+
+test('a tax square pays into the Free Parking pot', () => {
+  const s = ok(act(ok(roll(at(1), 1, 2)), 'pay'));
+  assert.equal(s.pot, 200);
+  assert.equal(s.cash[0], 1300);
+  assert.equal(s.phase, 'end');
+});
+
+test('a jail fine owed to the bank also feeds the pot', () => {
+  const owing = ok(roll({ ...at(10, { jail: [3, 0] }), cash: [20, 1500] }, 1, 2));
+  assert.equal(owing.phase, 'pay');
+  const s = ok(act({ ...owing, cash: [100, 1500] }, 'pay'));
+  assert.equal(s.pot, 50);
+  assert.equal(s.cash[0], 50);
+  assert.equal(s.actor, s.turn);
+});
+
+test('a debt to a player never touches the pot', () => {
+  assert.equal(ok(act(demand(), 'pay')).pot, 0);
+});
+
+test('paying a debt restores the action to the player whose turn it is', () => {
+  const odd = { ...demand(), turn: 1 };
+  assert.equal(ok(act(odd, 'pay')).actor, 1);
+});
+
+test('landing on your own property demands nothing', () => {
+  const s = ok(roll(at(6, { own: own([[9, 0]]) }), 1, 2));
+  assert.equal(s.phase, 'end');
+  assert.equal(s.owed, 0);
+  assert.equal(s.owedTo, -1);
+  assert.equal(s.pendingBuy, -1);
+});
+
+test('landing on a mortgaged property demands nothing', () => {
+  const mortg = '0'.repeat(9) + '1' + '0'.repeat(30);
+  const s = ok(roll(at(6, { own: own([[9, 1]]), mortg }), 1, 2));
+  assert.equal(s.phase, 'end');
+  assert.equal(s.owed, 0);
+  assert.equal(s.owedTo, -1);
+  assert.equal(s.actor, 0);
+});
+
+test('the other player cannot act while a rent demand is open', () => {
+  const s = demand();
+  assert.equal(applyAction(s, { type: 'roll', die1: 3, die2: 4 }, 1).error, 'not-your-turn');
+  assert.equal(act(s, 'pay', 1).error, 'not-your-turn');
+  assert.equal(act(s, 'end', 1).error, 'not-your-turn');
+});
+
+test('the debtor can act during the other player’s turn', () => {
+  const s = { ...demand(), turn: 1 };
+  assert.equal(s.actor, 0);
+  assert.equal(ok(act(s, 'pay', 0)).actor, 1);
+});
+
+test('nothing but pay is admitted while a demand is open', () => {
+  const s = demand();
+  for (const type of ['buy', 'decline', 'end', 'jail-pay', 'jail-card']) {
+    assert.equal(act(s, type).error, 'wrong-phase', type);
+  }
+  assert.equal(applyAction(s, { type: 'roll', die1: 1, die2: 2 }, 0).error, 'wrong-phase');
+});
+
+test('paying the same demand twice is refused the second time', () => {
+  const first = ok(act(demand(), 'pay'));
+  assert.equal(act(first, 'pay').error, 'wrong-phase');
+});
+
+test('buying the same square twice is refused the second time', () => {
+  const first = ok(act(ok(roll(at(6), 1, 2)), 'buy'));
+  assert.equal(act(first, 'buy').error, 'wrong-phase');
+  assert.equal(act(first, 'decline').error, 'wrong-phase');
+});
+
+test('buy, decline and pay do not mutate the state, count a move and log a line', () => {
+  const offer = ok(roll(at(6), 1, 2));
+  for (const [s, type] of [[offer, 'buy'], [offer, 'decline'], [demand(), 'pay']]) {
+    const before = JSON.stringify(s);
+    const n = ok(act(s, type));
+    assert.equal(JSON.stringify(s), before);
+    assert.equal(n.moves, s.moves + 1);
+    assert.notEqual(readLog(n).at(-1), readLog(s).at(-1));
+  }
 });

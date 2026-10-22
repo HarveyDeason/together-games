@@ -9,7 +9,7 @@
 
 import {
   GAME_ID, GAME_NAME, START_CASH, LJ_CARDS, JB_CARDS, MAX_LOG, SQUARES,
-  GO_PAY, JAIL_FINE, JAIL_SQUARE, SETS
+  GO_PAY, JAIL_FINE, JAIL_SQUARE, SETS, LJ_NAME, JB_NAME
 } from './darlingco-board.js';
 import {
   BLANK_OWN, BLANK_BUILT, BLANK_MORTG, setChar, ownerOf, isMortgaged, rentFor,
@@ -93,12 +93,12 @@ export function logged(state, line) {
   return [...readLog(state), line].slice(-MAX_LOG);
 }
 
-const KNOWN_ACTIONS = ['roll', 'jail-pay', 'jail-card', 'end', 'buy', 'decline', 'pay'];
+const KNOWN_ACTIONS = ['roll', 'jail-pay', 'jail-card', 'end', 'buy', 'decline', 'pay', 'card-ok'];
 
 /** The one phase each action is admitted in. */
 const PHASE_OF = {
   roll: 'roll', 'jail-pay': 'roll', 'jail-card': 'roll',
-  end: 'end', buy: 'buy', decline: 'buy', pay: 'pay'
+  end: 'end', buy: 'buy', decline: 'buy', pay: 'pay', 'card-ok': 'card'
 };
 
 const isDie = (d) => Number.isInteger(d) && d >= 1 && d <= 6;
@@ -137,8 +137,12 @@ export function sendToJail(state, seat) {
 
 /** The ONE place a landing is resolved. The caller has already put `phase` at
  *  'end'; a case overrides it only when the landing creates a decision (a buy
- *  offer, a debt, a card). Returns the new state. Tasks 5 and 7 add cases. */
-export function landOn(state, seat, square) {
+ *  offer, a debt, a card). Returns the new state.
+ *
+ *  `total` is the dice total any utility rent is computed from. It defaults to
+ *  the roll in the state, and a card move passes it explicitly: the roll that
+ *  brought the player to the card square is the roll the rules intend. */
+export function landOn(state, seat, square, total = state.die1 + state.die2) {
   const sq = SQUARES[square];
   const who = `Player ${seat + 1}`;
   switch (sq.kind) {
@@ -165,13 +169,97 @@ export function landOn(state, seat, square) {
       if (owner === seat || isMortgaged(state, square)) {
         return say(state, `${who} lands on ${sq.name}.`);
       }
-      const rent = rentFor(state, square, state.die1 + state.die2);
+      const rent = rentFor(state, square, total);
       return owe(say(state, `${who} owes ${rent} rent for ${sq.name}.`), seat, rent, owner);
     }
+    case 'chest':
+      return draw(state, seat, 'jb');
+    case 'chance':
+      return draw(state, seat, 'lj');
     default:
       // go, jail (just visiting), and the kinds later tasks handle
       return say(state, `${who} lands on ${sq.name}.`);
   }
+}
+
+/** Draws the next card of a deck ('lj' or 'jb') for `seat`: the card at the
+ *  cursor modulo the CURRENT deck length (the deck shrinks while someone holds
+ *  a get-out-of-jail card). The effect waits for `card-ok`; a get-out card is
+ *  taken out of the order now and tagged onto the player's outCards. */
+function draw(state, seat, deck) {
+  const lj = deck === 'lj';
+  const cards = lj ? LJ_CARDS : JB_CARDS;
+  const order = lj ? state.deckLJ : state.deckJB;
+  const cursor = lj ? state.curLJ : state.curJB;
+  const at = cursor % order.length;
+  const index = cards.findIndex(c => c.code === order[at]);
+  const card = cards[index];
+  const isOut = card.effect.k === 'out';
+  const newOrder = isOut ? order.slice(0, at) + order.slice(at + 1) : order;
+  let next = {
+    ...state,
+    phase: 'card',
+    pendingCard: index,
+    pendingDeck: deck,
+    ...(lj ? { deckLJ: newOrder, curLJ: cursor + 1 } : { deckJB: newOrder, curJB: cursor + 1 })
+  };
+  if (isOut) next.outCards = withAt(state.outCards, seat, state.outCards[seat] + deck);
+  return say(next, `Player ${seat + 1} draws from ${lj ? LJ_NAME : JB_NAME}: ${card.text}`);
+}
+
+/** Moves `seat` to square `to` (collecting GO only when `forward` and it
+ *  wraps), then resolves the landing with the dice total `total`. */
+function cardMove(state, seat, to, forward, total) {
+  const from = state.pos[seat];
+  let next = { ...state, pos: withAt(state.pos, seat, to), phase: 'end' };
+  if (forward && to < from) {
+    next = say(addCash(next, seat, GO_PAY), `Player ${seat + 1} passes GO and collects ${GO_PAY}.`);
+  }
+  return landOn(next, seat, to, total);
+}
+
+/** Applies a drawn card's effect. Exported for tests; `applyAction` reaches it
+ *  only through `card-ok`. The dice total is passed to the landing explicitly
+ *  so a card move can never price utility rent from a stale roll. */
+export function applyCard(state, seat, card) {
+  const who = `Player ${seat + 1}`;
+  const total = state.die1 + state.die2;
+  const e = card.effect;
+  const settled = { ...state, phase: 'end', pendingCard: -1, pendingDeck: '' };
+  switch (e.k) {
+    case 'cash':
+      if (e.amount >= 0) return say(addCash(settled, seat, e.amount), `${who} collects ${e.amount}.`);
+      return owe(say(settled, `${who} owes ${-e.amount}.`), seat, -e.amount, -1);
+    case 'perBuilding': {
+      let houses = 0;
+      let hotels = 0;
+      for (let q = 0; q < SQUARES.length; q++) {
+        if (ownerOf(state, q) !== seat) continue;
+        const n = housesOn(state, q);
+        if (n === 5) hotels++;
+        else houses += n;
+      }
+      const cost = houses * e.house + hotels * e.hotel;
+      if (cost === 0) return say(settled, `${who} has no buildings and pays nothing.`);
+      return owe(say(settled, `${who} owes ${cost} for repairs.`), seat, cost, -1);
+    }
+    case 'jail':
+      return say(sendToJail(settled, seat), `${who} goes to jail.`);
+    case 'move':
+      return cardMove(settled, seat, e.to, true, total);
+    case 'back': {
+      const to = (state.pos[seat] - e.n + SQUARES.length) % SQUARES.length;
+      return cardMove(say(settled, `${who} goes back ${e.n} spaces.`), seat, to, false, total);
+    }
+    default: // 'out': already in the player's hand
+      return say(settled, `${who} keeps a get-out-of-jail card.`);
+  }
+}
+
+function doCardOk(state, seat) {
+  const cards = state.pendingDeck === 'lj' ? LJ_CARDS : JB_CARDS;
+  const next = applyCard({ ...state, moves: state.moves + 1 }, seat, cards[state.pendingCard]);
+  return { state: next };
 }
 
 /** Moves `seat` forward `steps`, paying GO on the way, then resolves the
@@ -372,6 +460,7 @@ export function applyAction(state, action, seat) {
     case 'buy': return doBuy(state, seat);
     case 'decline': return doDecline(state, seat);
     case 'pay': return doPay(state, seat);
+    case 'card-ok': return doCardOk(state, seat);
     default: return doEnd(state, seat);
   }
 }

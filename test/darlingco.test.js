@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { LJ_CARDS, JB_CARDS, MAX_LOG, START_CASH } from '../src/games/darlingco-board.js';
 import { rentFor } from '../src/games/darlingco-state.js';
 import {
-  meta, createInitialState, getStatus, nextStarter, shuffleOrder, logged, readLog, applyAction, sendToJail
+  meta, createInitialState, getStatus, nextStarter, shuffleOrder, logged, readLog, applyAction, sendToJail, applyCard
 } from '../src/games/darlingco.js';
 
 const sorted = (s) => [...s].sort().join('');
@@ -186,7 +186,7 @@ test('landing exactly on GO pays two hundred', () => {
 });
 
 test('a double lets you roll again', () => {
-  let s = ok(roll(createInitialState(), 1, 1));
+  let s = ok(roll(createInitialState(), 5, 5));
   assert.equal(s.doubles, 1);
   s = ok(applyAction(s, { type: 'end' }, 0));
   assert.equal(s.turn, 0);
@@ -656,4 +656,261 @@ test('building and selling do not mutate the state', () => {
   ok(applyAction(s0, side(1, 'sell'), 0));
   ok(applyAction(s0, side(1, 'build'), 0));
   assert.equal(JSON.stringify(s0), before);
+});
+
+// ---- Task 7: the card decks -------------------------------------------------
+
+const ljIdx = (code) => LJ_CARDS.findIndex(c => c.code === code);
+const jbIdx = (code) => JB_CARDS.findIndex(c => c.code === code);
+const ALL_LJ = LJ_CARDS.map(c => c.code).join('');
+const ALL_JB = JB_CARDS.map(c => c.code).join('');
+const ownAt = (pairs) => pairs.reduce((s, [i, c]) => s.slice(0, i) + c + s.slice(i + 1), '.'.repeat(40));
+/** A game whose Lovely Jubbly order starts with `lj`. */
+const onLJ = (lj, extra = {}) => ({ ...createInitialState(), deckLJ: lj + ALL_LJ.replace(lj, ''), ...extra });
+/** Rolls 3+4 from GO onto Lovely Jubbly (square 7) with `lj` on top of the deck. */
+const drawLJ = (code, extra = {}) => ok(roll(onLJ(code, extra), 3, 4));
+/** Rolls 1+2 from square 14 onto Jiggly Boo (square 17) with `code` on top. */
+const drawJB = (code, extra = {}) =>
+  ok(roll({ ...createInitialState(), deckJB: code + ALL_JB.replace(code, ''), pos: [14, 0], ...extra }, 1, 2));
+const cardOk = (s, seat = s.actor) => applyAction(s, { type: 'card-ok' }, seat);
+
+test('landing on Lovely Jubbly draws the card at the cursor and shows it', () => {
+  const s = drawLJ('a');
+  assert.equal(s.phase, 'card');
+  assert.equal(s.pendingDeck, 'lj');
+  assert.equal(s.pendingCard, ljIdx('a'));
+  assert.equal(s.curLJ, 1);
+  assert.equal(s.curJB, 0);
+  const j = drawJB('3');
+  assert.equal(j.phase, 'card');
+  assert.equal(j.pendingDeck, 'jb');
+  assert.equal(j.pendingCard, jbIdx('3'));
+  assert.equal(j.curJB, 1);
+  assert.equal(j.curLJ, 0);
+});
+
+test('a card does nothing until it is acknowledged', () => {
+  const s = drawLJ('b');
+  assert.equal(s.cash[0], START_CASH);
+  assert.deepEqual(s.pos, [7, 0]);
+  assert.equal(applyAction(s, { type: 'roll', die1: 1, die2: 2 }, 0).error, 'wrong-phase');
+  assert.equal(applyAction(s, { type: 'end' }, 0).error, 'wrong-phase');
+  assert.equal(cardOk(s, 1).error, 'not-your-turn');
+  assert.equal(cardOk({ ...s, phase: 'over' }, 0).error, 'game-over');
+  assert.equal(cardOk(createInitialState()).error, 'wrong-phase');
+});
+
+test('acknowledging a cash card pays out', () => {
+  const s = ok(cardOk(drawLJ('b')));
+  assert.equal(s.cash[0], START_CASH + 150);
+  assert.equal(s.phase, 'end');
+  assert.equal(s.pendingCard, -1);
+  assert.equal(s.pendingDeck, '');
+  assert.equal(ok(cardOk(drawJB('0'))).cash[0], START_CASH + 200);
+});
+
+test('an accepted card action counts as a move and leaves a log line', () => {
+  const s = drawLJ('a');
+  const n = ok(cardOk(s));
+  assert.equal(n.moves, s.moves + 1);
+  assert.ok(readLog(n).length > 0);
+  assert.notEqual(readLog(n).at(-1), readLog(s).at(-1));
+});
+
+test('drawing and acknowledging do not mutate the state they were given', () => {
+  const before = onLJ('c');
+  const snap = JSON.stringify(before);
+  const drew = ok(roll(before, 3, 4));
+  assert.equal(JSON.stringify(before), snap);
+  const snap2 = JSON.stringify(drew);
+  ok(cardOk(drew));
+  assert.equal(JSON.stringify(drew), snap2);
+});
+
+test('a card that sends you to jail does not pay GO money', () => {
+  const s = ok(cardOk(drawLJ('9')));
+  assert.deepEqual(s.pos, [10, 0]);
+  assert.equal(s.jail[0], 1);
+  assert.equal(s.cash[0], START_CASH);
+  assert.equal(s.phase, 'end');
+});
+
+test('a jail card after a double zeroes the counter, so no extra go follows', () => {
+  const drew = ok(roll({ ...onLJ('9'), pos: [1, 0] }, 3, 3)); // 1 -> 7 on a double
+  assert.equal(drew.doubles, 1);
+  const s = ok(cardOk(drew));
+  assert.equal(s.doubles, 0);
+  assert.equal(ok(applyAction(s, { type: 'end' }, 0)).turn, 1);
+});
+
+test('a move card that passes GO collects, and one that does not, does not', () => {
+  const s = ok(cardOk(drawLJ('0')));
+  assert.deepEqual(s.pos, [0, 0]);
+  assert.equal(s.cash[0], START_CASH + 200);
+  const t = ok(cardOk(drawLJ('4'))); // 7 -> 8, forwards, no GO
+  assert.equal(t.pos[0], 8);
+  assert.equal(t.cash[0], START_CASH);
+  // Jiggly Boo 'Back to Keynsham High Street' from 17 passes GO on the way round.
+  const u = ok(cardOk(drawJB('b')));
+  assert.equal(u.pos[0], 1);
+  assert.equal(u.cash[0], START_CASH + 200);
+});
+
+test('a move card runs the landing: an unowned property is offered for sale', () => {
+  const s = ok(cardOk(drawLJ('4')));
+  assert.equal(s.phase, 'buy');
+  assert.equal(s.pendingBuy, 8);
+});
+
+test('a card that moves you to someone else’s property raises a rent demand', () => {
+  const s = ok(cardOk(drawLJ('4', { own: ownAt([[8, '1']]) })));
+  assert.equal(s.phase, 'pay');
+  assert.equal(s.owedTo, 1);
+  assert.equal(s.owed, 6);
+  assert.equal(s.actor, 0);
+});
+
+test('a card that moves you to your own property raises nothing', () => {
+  assert.equal(ok(cardOk(drawLJ('4', { own: ownAt([[8, '0']]) }))).phase, 'end');
+});
+
+test('a back card moves back and never collects GO', () => {
+  const s = ok(cardOk(drawLJ('8'))); // 7 back 5 = 2, a Jiggly Boo square
+  assert.equal(s.cash[0], START_CASH);
+  assert.equal(s.pos[0], 2);
+  const t = ok(cardOk(drawLJ('7'))); // 7 back 3 = 4, Excess Baggage
+  assert.equal(t.pos[0], 4);
+  assert.equal(t.phase, 'pay');
+  assert.equal(t.owed, 200);
+  assert.equal(t.owedTo, -1);
+  // 5 back across GO: from square 1 forwards 6 is 7, but start further on to land near 0
+  const u = ok(cardOk(drawLJ('8', { pos: [0, 0] })));
+  assert.equal(u.cash[0], START_CASH);
+});
+
+test('a back card can land on a card square and draw again', () => {
+  const s0 = { ...onLJ('7'), pos: [30, 0], deckJB: 'a' + ALL_JB.replace('a', '') };
+  const s = ok(cardOk(ok(roll(s0, 2, 4)))); // 30 -> 36 (LJ), back 3 -> 33 (JB)
+  assert.equal(s.pos[0], 33);
+  assert.equal(s.phase, 'card');
+  assert.equal(s.pendingDeck, 'jb');
+  assert.equal(s.pendingCard, jbIdx('a'));
+  assert.equal(s.cash[0], START_CASH);
+});
+
+test('a move card landing on a utility charges rent from the roll that brought you to the card', () => {
+  // No shipped card moves to a utility, so use a synthetic one: the engine must still be right.
+  // The roll that reached the card IS the roll the rent follows; stale dice must not leak in.
+  const card = { code: 'z', text: 'x', effect: { k: 'move', to: 12 } };
+  const one = ok(roll(onLJ('a', { own: ownAt([[12, '1']]), die1: 6, die2: 6 }), 3, 4));
+  assert.equal(one.die1 + one.die2, 7);
+  const s = applyCard(one, 0, card);
+  assert.equal(s.phase, 'pay');
+  assert.equal(s.owed, 7 * 4);
+  assert.equal(s.owedTo, 1);
+  const two = ok(roll(onLJ('a', { own: ownAt([[12, '1'], [28, '1']]), die1: 6, die2: 6 }), 3, 4));
+  assert.equal(applyCard(two, 0, card).owed, 70);
+});
+
+test('a card that costs money you can afford opens a debt that pays into the pot', () => {
+  const s = ok(cardOk(drawLJ('c')));
+  assert.equal(s.phase, 'pay');
+  assert.equal(s.owed, 15);
+  assert.equal(s.owedTo, -1);
+  assert.equal(s.cash[0], START_CASH);
+  assert.equal(s.pot, 0);
+  const paid = ok(applyAction(s, { type: 'pay' }, 0));
+  assert.equal(paid.pot, 15);
+  assert.equal(paid.cash[0], START_CASH - 15);
+  assert.equal(paid.phase, 'end');
+  assert.equal(paid.actor, paid.turn);
+});
+
+test('a card that costs money you do not have opens a debt you can sell against', () => {
+  const s = ok(cardOk(drawJB('8', { cash: [20, 1500], own: ownAt([[5, '0']]) })));
+  assert.equal(s.phase, 'pay');
+  assert.equal(s.owed, 100);
+  assert.equal(applyAction(s, { type: 'pay' }, 0).error, 'cannot-afford');
+  const sold = ok(applyAction(s, { type: 'mortgage', square: 5 }, 0));
+  assert.equal(sold.cash[0], 120);
+  assert.equal(ok(applyAction(sold, { type: 'pay' }, 0)).cash[0], 20);
+});
+
+test('a per-building card charges by houses and hotels, as a debt', () => {
+  const own = ownAt([[1, '0'], [3, '0']]);
+  const built = '0' + '3' + '0' + '5' + '0'.repeat(36);
+  const s = ok(cardOk(drawLJ('e', { own, built })));
+  assert.equal(s.phase, 'pay');
+  assert.equal(s.owed, 3 * 25 + 100);
+  assert.equal(s.owedTo, -1);
+  assert.equal(ok(cardOk(drawJB('d', { own, built }))).owed, 3 * 40 + 115);
+});
+
+test('a per-building card with no buildings costs nothing, and ignores the other player', () => {
+  const none = ok(cardOk(drawLJ('e')));
+  assert.equal(none.phase, 'end');
+  assert.equal(none.cash[0], START_CASH);
+  const theirs = ok(cardOk(drawLJ('e', { own: ownAt([[1, '1'], [3, '1']]), built: '0404' + '0'.repeat(36) })));
+  assert.equal(theirs.phase, 'end');
+});
+
+// Review Focus 4
+
+test('the cursor wraps round the end of the deck', () => {
+  const deck = onLJ('a').deckLJ;
+  assert.equal(drawLJ('a', { curLJ: 16 }).pendingCard, ljIdx(deck[0]));
+  assert.equal(drawLJ('a', { curLJ: 19 }).pendingCard, ljIdx(deck[3]));
+});
+
+test('the get-out-of-jail card leaves the deck when drawn', () => {
+  const s = drawLJ('f');
+  assert.equal(s.pendingCard, ljIdx('f'));
+  assert.equal(s.deckLJ.length, LJ_CARDS.length - 1);
+  assert.ok(!s.deckLJ.includes('f'));
+  assert.equal(s.outCards[0], 'lj');
+  const t = ok(cardOk(s));
+  assert.equal(t.outCards[0], 'lj');
+  assert.equal(t.phase, 'end');
+  assert.equal(t.cash[0], START_CASH);
+  const j = drawJB('f');
+  assert.equal(j.outCards[0], 'jb');
+  assert.ok(!j.deckJB.includes('f'));
+  assert.equal(j.deckLJ.length, LJ_CARDS.length);
+});
+
+test('using the get-out-of-jail card puts it back at the end of the deck', () => {
+  const s = ok(cardOk(drawLJ('f')));
+  const used = ok(applyAction({ ...s, jail: [1, 0], phase: 'roll' }, { type: 'jail-card' }, 0));
+  assert.equal(used.outCards[0], '');
+  assert.equal(used.deckLJ.at(-1), 'f');
+  assert.equal(sorted(used.deckLJ), sorted(ALL_LJ));
+});
+
+test('a wrapped cursor still finds a real card after the deck has shrunk', () => {
+  const s = ok(cardOk(drawLJ('f')));
+  assert.equal(s.deckLJ.length, 15);
+  for (const cur of [15, 16, 30, 31, 44, 1000]) {
+    const t = ok(roll({ ...s, phase: 'roll', pos: [0, 0], curLJ: cur, outCards: ['', ''] }, 3, 4));
+    assert.equal(t.phase, 'card');
+    assert.ok(t.pendingCard >= 0, `cursor ${cur}`);
+    assert.equal(t.pendingCard, ljIdx(s.deckLJ[cur % 15]), `cursor ${cur}`);
+  }
+});
+
+test('the two decks are drawn from independently', () => {
+  const s = drawLJ('a', { curJB: 5 });
+  assert.equal(s.curLJ, 1);
+  assert.equal(s.curJB, 5);
+  const j = drawJB('1', { curLJ: 4 });
+  assert.equal(j.curLJ, 4);
+  assert.equal(j.curJB, 1);
+});
+
+test('both out cards can be held at once and are returned in the order drawn', () => {
+  const a = ok(cardOk(drawLJ('f')));
+  const b = ok(cardOk(ok(roll({ ...a, phase: 'roll', pos: [14, 0], deckJB: 'f' + ALL_JB.replace('f', '') }, 1, 2))));
+  assert.equal(b.outCards[0], 'ljjb');
+  const used = ok(applyAction({ ...b, jail: [1, 0], phase: 'roll' }, { type: 'jail-card' }, 0));
+  assert.equal(used.outCards[0], 'jb');
+  assert.equal(used.deckLJ.at(-1), 'f');
 });

@@ -114,6 +114,14 @@ if (hasInvite) {
   document.getElementById('invite-line').hidden = false;
 }
 
+// Coming back from a game you just closed. Said once, on the way past, rather
+// than as an error — ending it was the point.
+if (new URLSearchParams(location.search).get('ended') === '1') {
+  const line = document.getElementById('invite-line');
+  line.textContent = 'That game is closed. Start a new room whenever you like.';
+  line.hidden = false;
+}
+
 const identity = getIdentity();
 if (identity) {
   if (hasInvite) location.replace(`room.html?r=${invitedTo}`);

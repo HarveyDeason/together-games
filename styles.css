@@ -515,3 +515,24 @@ body {
   border: 1px solid var(--line);
   font-size: 0.8rem;
 }
+
+/* --- Leaving, and ending ---------------------------------------------- */
+/* Two different things, and they must not look like each other. One keeps the
+   game, the other destroys it. */
+
+.leave-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.25rem;
+  margin-top: 1.5rem;
+}
+
+.leave-note {
+  margin: 0.5rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.link-danger { color: var(--seat0); }

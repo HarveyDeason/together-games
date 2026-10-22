@@ -58,7 +58,9 @@ export function describeRoom({ snapshot, myClientId, now, fallbackAt }) {
     return {
       available: false,
       ended: false,
-      gameName: 'Game',
+      // Null, not a guess: an empty read is not evidence about what the room
+      // was, and the lobby already knows what it listed it as.
+      gameName: null,
       statusLine: 'Not available',
       otherPresent: null,
       timeLabel: ''

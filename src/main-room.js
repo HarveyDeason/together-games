@@ -148,6 +148,9 @@ function showEnded() {
   scoreEl.textContent = '';
   rematchEl.hidden = true;
   pickerEl.hidden = true;
+  // Nothing left to press. A row of reaction buttons under "this game has
+  // ended" invites you to keep playing with a room that is closed.
+  document.getElementById('reaction-bar').hidden = true;
   leaveRowEl.hidden = true;
   leaveNoteEl.textContent = 'It is closed for both of you, and cannot be reopened.';
   forgetRoom(code);

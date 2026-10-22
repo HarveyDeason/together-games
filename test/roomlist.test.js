@@ -226,6 +226,9 @@ test('a room that reads back as missing shows as unavailable and stays tappable'
   assert.equal(row.hidden, false);
   assert.equal(row.dataset.status, 'Not available');
   assert.equal(row.dataset.presence, undefined);
+  // The row was listed as Tic Tac Toe; a read that came back empty is no reason
+  // to forget that.
+  assert.match(textOf(row), /Tic Tac Toe/);
 });
 
 test('a read that rejects does not stop the other rows resolving', async () => {

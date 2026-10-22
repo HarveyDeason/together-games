@@ -135,7 +135,7 @@ function buildRow(room, go) {
 function paint(row, description) {
   const { dot, name, status } = row.__parts;
 
-  name.textContent = description.gameName;
+  if (description.gameName != null) name.textContent = description.gameName;
 
   status.textContent = description.statusLine;
   status.hidden = false;

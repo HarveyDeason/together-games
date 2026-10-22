@@ -185,6 +185,13 @@ test('an empty snapshot reads as a room that is not available', () => {
   assert.equal(result.available, false);
 });
 
+test('an unavailable room makes no claim about which game it was', () => {
+  // A failed or empty read is not evidence. The lobby already knows what it
+  // listed the room as; overwriting that with a guess loses real information.
+  const result = describe({ snapshot: null });
+  assert.equal(result.gameName, null);
+});
+
 test('the game name comes from the game module', () => {
   const result = describe({ snapshot: snapshot({ players: bothPlayers, game: ticTacToe() }) });
   assert.equal(result.gameName, 'Tic Tac Toe');

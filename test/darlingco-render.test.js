@@ -660,3 +660,31 @@ test('reduced motion flicks no coin', () => {
     assert.equal(coinsIn(h).length, 0);
   }, { reduced: true });
 });
+
+test('a superseded chain does nothing when its timer fires', () => {
+  withTimers((t) => {
+    const h = mount(at([3, 0], { moves: 1 }), 1);
+    draw(h, at([12, 0], { moves: 2 }));
+    t.step(); t.step();                      // seat 0 now shown on 6, old hop queued
+    assert.equal(h.__dc.shown[0], 6);
+    // Newer state: seat 0 stays on 6, seat 1 walks 0 -> 3.
+    draw(h, at([6, 3], { moves: 3, actor: 1 }));
+    const hops = [];
+    while (t.step()) hops.push([...h.__dc.shown]);
+    for (const shown of hops) assert.equal(shown[0], 6, 'the old chain moved seat 0 after it was superseded');
+    assert.equal(hops.filter((x) => x[1] === 1 || x[1] === 2 || x[1] === 3).length >= 3, true);
+    assert.deepEqual(shownOf(h), [6, 3]);
+  });
+});
+
+test('a hop that throws still releases busy', () => {
+  withTimers((t) => {
+    const h = mount(at([3, 0], { moves: 1 }), 0);
+    const tile = h.__dc.tiles[4];
+    const real = tile.dcTokens;
+    tile.dcTokens = null;                    // paintTile throws when it reaches this tile
+    assert.throws(() => draw(h, at([8, 0], { moves: 2, phase: 'end', actor: 0 }), { mySeat: 0 }));
+    tile.dcTokens = real;
+    assert.equal(h.__dc.busy, false);
+  });
+});

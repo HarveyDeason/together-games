@@ -561,15 +561,22 @@ function animate(world) {
   world.busy = true;
   const hop = () => {
     if (superseded()) return;
-    for (const seat of [0, 1]) {
-      if (step[seat] < paths[seat].length) world.shown[seat] = paths[seat][step[seat]++];
-    }
-    if (step[0] < paths[0].length || step[1] < paths[1].length) {
-      paintTokens(world);
-      setTimeout(hop, STEP_MS);
-    } else {
-      // Landed: settle on the LATEST state, never the one this chain began with.
-      settle(world, true);
+    try {
+      for (const seat of [0, 1]) {
+        if (step[seat] < paths[seat].length) world.shown[seat] = paths[seat][step[seat]++];
+      }
+      if (step[0] < paths[0].length || step[1] < paths[1].length) {
+        paintTokens(world);
+        setTimeout(hop, STEP_MS);
+      } else {
+        // Landed: settle on the LATEST state, never the one this chain began with.
+        settle(world, true);
+      }
+    } catch (e) {
+      // Never strand the buttons disabled: a failed step ends the walk.
+      world.busy = false;
+      world.shown = [...world.state.pos];
+      throw e;
     }
   };
   hop();

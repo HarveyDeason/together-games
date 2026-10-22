@@ -36,7 +36,10 @@ export function isFresh({ activityAt, visitedAt, now }) {
   return now - newest < CUTOFF;
 }
 
-function gameNameOf(id) {
+/** An unknown or missing id still has to render as something: the lobby names
+ *  the game from the cached id before any read comes back, and a game this
+ *  build does not have is exactly what an old stored room looks like. */
+export function gameNameOf(id) {
   return GAMES[id]?.meta?.name ?? 'Game';
 }
 

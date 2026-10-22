@@ -1,6 +1,8 @@
 import { getIdentity, saveName } from './identity.js';
-import { createRoom, roomExists } from './room.js';
+import { createRoom, roomExists, readRoom } from './room.js';
 import { isValidCode, normaliseCode } from './roomcode.js';
+import { initRoomList } from './roomlist.js';
+import { db, ref, onValue } from './firebase.js';
 
 const nameStep = document.getElementById('name-step');
 const roomStep = document.getElementById('room-step');
@@ -14,11 +16,23 @@ function showError(message) {
   errorEl.textContent = message;
 }
 
+/** The real pair the room list runs on. Injected rather than imported by
+ *  roomlist.js, which has to stay loadable outside a browser. */
+function watchRoom(code, onChange) {
+  return onValue(ref(db, `rooms/${code}`), (snap) => onChange(snap.val()));
+}
+
 function showRoomStep(identity) {
   nameStep.hidden = true;
   roomStep.hidden = false;
   greeting.textContent = `Hello, ${identity.name}.`;
   currentName.textContent = identity.name;
+  initRoomList({
+    container: document.getElementById('rooms-list'),
+    identity,
+    read: readRoom,
+    watch: watchRoom
+  });
 }
 
 function showNameStep(identity) {

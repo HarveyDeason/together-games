@@ -432,3 +432,86 @@ body {
 }
 
 .sl-cam:active { transform: scale(0.96); }
+
+/* --- Your rooms ------------------------------------------------------- */
+/* A tight list, not cards: on a phone the point is to see several at once and
+   spot the live one, not to admire any single row. */
+
+.rooms {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 1.25rem;
+}
+
+.rooms:empty { display: none; }
+
+.roomcard {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: 100%;
+  padding: 0.8rem 0.5rem;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.roomcard:last-of-type { border-bottom: 0; }
+.roomcard:active { background: var(--surface); }
+
+/* Off the screen entirely when we do not know. An unlit dot is as much a claim
+   as a lit one. */
+.roomcard-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  flex: none;
+  background: var(--line);
+}
+
+.roomcard-dot[data-state="present"] {
+  background: var(--seat1);
+  box-shadow: 0 0 0.5rem var(--seat1);
+}
+
+.roomcard-main { flex: 1; min-width: 0; }
+
+.roomcard-title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.roomcard-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.roomcard-code {
+  color: var(--muted);
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+  flex: none;
+}
+
+.roomcard-status {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.roomcard-go {
+  flex: none;
+  padding: 0.35rem 0.8rem;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  font-size: 0.8rem;
+}

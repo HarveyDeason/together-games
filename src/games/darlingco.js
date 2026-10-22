@@ -12,7 +12,8 @@ import {
   GO_PAY, JAIL_FINE, JAIL_SQUARE
 } from './darlingco-board.js';
 import {
-  BLANK_OWN, BLANK_BUILT, BLANK_MORTG, setChar, ownerOf, isMortgaged, rentFor
+  BLANK_OWN, BLANK_BUILT, BLANK_MORTG, setChar, ownerOf, isMortgaged, rentFor,
+  housesOn, canBuild, canSell
 } from './darlingco-state.js';
 
 export const meta = { id: GAME_ID, name: GAME_NAME, seats: 2 };
@@ -297,12 +298,68 @@ function doEnd(state, seat) {
     : `Player ${turn + 1}'s turn.`) };
 }
 
+/** build / sell / mortgage / unmortgage: side activities, not turn steps.
+ *  They change cash and the 40-character strings only; phase, turn and actor
+ *  are untouched, so they work mid-demand ('pay') as well as 'roll' and 'end'. */
+const SIDE_ACTIONS = ['build', 'sell', 'mortgage', 'unmortgage'];
+const SIDE_PHASES = ['roll', 'end', 'pay'];
+
+/** Mortgage plus ten per cent, rounded up. Integer arithmetic on purpose:
+ *  Math.ceil(m * 1.1) overcharges by one whenever the float lands just above
+ *  an integer (50 -> 56, 100 -> 111). */
+const unmortgageCost = (mortgage) => Math.ceil(mortgage * 11 / 10);
+
+function doSide(state, action, seat) {
+  const sq = action.square;
+  if (!Number.isInteger(sq) || sq < 0 || sq >= SQUARES.length) return { error: 'bad-square' };
+  const spec = SQUARES[sq];
+  if (ownerOf(state, sq) !== seat) return { error: 'not-yours' };
+  const who = `Player ${seat + 1}`;
+  const counted = { ...state, moves: state.moves + 1 };
+
+  switch (action.type) {
+    case 'build': {
+      if (canBuild(state, seat, sq) !== true) return { error: 'cannot-build' };
+      if (state.cash[seat] < spec.house) return { error: 'cannot-afford' };
+      const n = housesOn(state, sq) + 1;
+      const next = addCash({ ...counted, built: setChar(state.built, sq, String(n)) }, seat, -spec.house);
+      return { state: say(next, n === 5
+        ? `${who} builds a hotel on ${spec.name} for ${spec.house}.`
+        : `${who} builds a house on ${spec.name} for ${spec.house}.`) };
+    }
+    case 'sell': {
+      if (canSell(state, seat, sq) !== true) return { error: 'cannot-sell' };
+      const back = Math.floor(spec.house / 2);
+      const n = housesOn(state, sq) - 1;
+      const next = addCash({ ...counted, built: setChar(state.built, sq, String(n)) }, seat, back);
+      return { state: say(next, `${who} sells a building on ${spec.name} for ${back}.`) };
+    }
+    case 'mortgage': {
+      if (isMortgaged(state, sq)) return { error: 'already-mortgaged' };
+      if (housesOn(state, sq) > 0) return { error: 'has-buildings' };
+      const next = addCash({ ...counted, mortg: setChar(state.mortg, sq, '1') }, seat, spec.mortgage);
+      return { state: say(next, `${who} mortgages ${spec.name} for ${spec.mortgage}.`) };
+    }
+    default: { // unmortgage
+      if (!isMortgaged(state, sq)) return { error: 'not-mortgaged' };
+      const cost = unmortgageCost(spec.mortgage);
+      if (state.cash[seat] < cost) return { error: 'cannot-afford' };
+      const next = addCash({ ...counted, mortg: setChar(state.mortg, sq, '0') }, seat, -cost);
+      return { state: say(next, `${who} lifts the mortgage on ${spec.name} for ${cost}.`) };
+    }
+  }
+}
+
 /** Guard order matters: it is what makes a double-tap or a transaction retry
  *  safe, because the second application is refused by the phase guard. */
 export function applyAction(state, action, seat) {
   if (state.phase === 'over') return { error: 'game-over' };
   if (seat !== state.actor) return { error: 'not-your-turn' };
   const type = action && action.type;
+  if (SIDE_ACTIONS.includes(type)) {
+    if (!SIDE_PHASES.includes(state.phase)) return { error: 'wrong-phase' };
+    return doSide(state, action, seat);
+  }
   if (!KNOWN_ACTIONS.includes(type)) return { error: 'unknown-action' };
   if (state.phase !== PHASE_OF[type]) return { error: 'wrong-phase' };
   switch (type) {

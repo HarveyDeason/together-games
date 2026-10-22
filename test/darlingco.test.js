@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { LJ_CARDS, JB_CARDS, MAX_LOG, START_CASH } from '../src/games/darlingco-board.js';
+import { rentFor } from '../src/games/darlingco-state.js';
 import {
   meta, createInitialState, getStatus, nextStarter, shuffleOrder, logged, readLog, applyAction, sendToJail
 } from '../src/games/darlingco.js';
@@ -514,4 +515,125 @@ test('buy, decline and pay do not mutate the state, count a move and log a line'
     assert.equal(n.moves, s.moves + 1);
     assert.notEqual(readLog(n).at(-1), readLog(s).at(-1));
   }
+});
+
+// ---- building, selling, mortgaging ----
+const setChars = (str, pairs) => {
+  let o = str;
+  for (const [sq, ch] of pairs) o = o.slice(0, sq) + ch + o.slice(sq + 1);
+  return o;
+};
+const side = (square, type) => ({ type, square });
+const homeSet = (extra = {}) => ({
+  ...createInitialState(), own: own([[1, 0], [3, 0]]), ...extra
+});
+const withBuilt = (pairs) => setChars('0'.repeat(40), pairs);
+
+test('building takes the house price and shows on the square', () => {
+  const s = ok(applyAction(homeSet(), side(1, 'build'), 0));
+  assert.equal(s.built[1], '1');
+  assert.equal(s.cash[0], 1450);
+  assert.equal(s.moves, 1);
+  assert.ok(readLog(s).length > 0);
+});
+
+test('the fifth building is a hotel', () => {
+  const s0 = homeSet({ built: withBuilt([[1, '4'], [3, '4']]) });
+  const s = ok(applyAction(s0, side(1, 'build'), 0));
+  assert.equal(s.built[1], '5');
+  assert.equal(applyAction(s, side(1, 'build'), 0).error, 'cannot-build');
+});
+
+test('building unevenly within a set is refused', () => {
+  const s0 = homeSet({ built: withBuilt([[1, '1']]) });
+  assert.equal(applyAction(s0, side(1, 'build'), 0).error, 'cannot-build');
+  assert.equal(applyAction(s0, side(3, 'build'), 0).error, undefined);
+});
+
+test('building on a set you do not completely own is refused', () => {
+  const s0 = homeSet({ own: own([[1, 0], [3, 1]]) });
+  assert.equal(applyAction(s0, side(1, 'build'), 0).error, 'cannot-build');
+});
+
+test('building you cannot afford is refused', () => {
+  const s0 = homeSet({ cash: [49, 1500] });
+  assert.equal(applyAction(s0, side(1, 'build'), 0).error, 'cannot-afford');
+});
+
+test('selling a house returns half what it cost, rounded down', () => {
+  const s0 = homeSet({ built: withBuilt([[1, '1'], [3, '1']]) });
+  const s = ok(applyAction(s0, side(1, 'sell'), 0));
+  assert.equal(s.built[1], '0');
+  assert.equal(s.cash[0], 1525);
+  assert.equal(applyAction(homeSet(), side(1, 'sell'), 0).error, 'cannot-sell');
+});
+
+test('mortgaging pays out and stops the rent', () => {
+  const s0 = { ...createInitialState(), own: own([[9, 0]]) };
+  const s = ok(applyAction(s0, side(9, 'mortgage'), 0));
+  assert.equal(s.mortg[9], '1');
+  assert.equal(s.cash[0], 1560);
+  assert.equal(rentFor(s, 9, 7), 0);
+  assert.equal(applyAction(s, side(9, 'mortgage'), 0).error, 'already-mortgaged');
+});
+
+test('mortgaging a square with a house on it is refused', () => {
+  const s0 = homeSet({ built: withBuilt([[1, '1'], [3, '1']]) });
+  assert.equal(applyAction(s0, side(1, 'mortgage'), 0).error, 'has-buildings');
+});
+
+test('unmortgaging costs the mortgage plus ten per cent, rounded up', () => {
+  const s0 = { ...createInitialState(), own: own([[9, 0], [6, 0]]), mortg: withBuilt([[9, '1'], [6, '1']]) };
+  const s = ok(applyAction(s0, side(9, 'unmortgage'), 0));
+  assert.equal(s.mortg[9], '0');
+  assert.equal(s.cash[0], 1500 - 66); // mortgage 60
+  const t = ok(applyAction(s0, side(6, 'unmortgage'), 0));
+  assert.equal(t.cash[0], 1500 - 55); // 50 + 10%; float Math.ceil(50 * 1.1) would wrongly give 56
+  const u = ok(applyAction({ ...s0, own: own([[37, 0]]), mortg: withBuilt([[37, '1']]) }, side(37, 'unmortgage'), 0));
+  assert.equal(u.cash[0], 1500 - 193); // mortgage 175 -> 192.5 rounded up
+  assert.equal(applyAction(homeSet(), side(1, 'unmortgage'), 0).error, 'not-mortgaged');
+  assert.equal(applyAction({ ...s0, cash: [65, 1500] }, side(9, 'unmortgage'), 0).error, 'cannot-afford');
+});
+
+test('you can mortgage while a rent demand is open', () => {
+  const d = { ...demand(), own: own([[9, 1], [6, 0]]) };
+  assert.equal(d.phase, 'pay');
+  const s = ok(applyAction(d, side(6, 'mortgage'), 0));
+  assert.equal(s.phase, 'pay');
+  assert.equal(s.owed, d.owed);
+  assert.equal(s.cash[0], d.cash[0] + 50);
+  assert.equal(ok(act(s, 'pay')).phase, 'end');
+});
+
+test('selling does not pass the turn', () => {
+  const s0 = homeSet({ built: withBuilt([[1, '1'], [3, '1']]) });
+  const s = ok(applyAction(s0, side(1, 'sell'), 0));
+  assert.equal(s.turn, s0.turn);
+  assert.equal(s.actor, s0.actor);
+  assert.equal(s.phase, s0.phase);
+});
+
+test('you cannot sell or mortgage what you do not own', () => {
+  const s0 = { ...createInitialState(), own: own([[9, 1]]) };
+  for (const sq of [9, 0, 2, 4, 5, 12, 99, -1, 1.5, '9']) {
+    for (const type of ['build', 'sell', 'mortgage', 'unmortgage']) {
+      assert.notEqual(applyAction(s0, side(sq, type), 0).error, undefined, `${type} ${sq}`);
+    }
+  }
+});
+
+test('side actions are admitted only in roll, end or pay, for the actor', () => {
+  const s0 = homeSet();
+  assert.equal(applyAction({ ...s0, phase: 'buy' }, side(1, 'build'), 0).error, 'wrong-phase');
+  assert.equal(applyAction(s0, side(1, 'build'), 1).error, 'not-your-turn');
+  assert.equal(applyAction({ ...s0, phase: 'over' }, side(1, 'build'), 0).error, 'game-over');
+  assert.equal(applyAction({ ...s0, phase: 'end' }, side(1, 'build'), 0).error, undefined);
+});
+
+test('building and selling do not mutate the state', () => {
+  const s0 = homeSet({ built: withBuilt([[1, '1'], [3, '1']]) });
+  const before = JSON.stringify(s0);
+  ok(applyAction(s0, side(1, 'sell'), 0));
+  ok(applyAction(s0, side(1, 'build'), 0));
+  assert.equal(JSON.stringify(s0), before);
 });

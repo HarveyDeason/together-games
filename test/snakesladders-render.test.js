@@ -122,6 +122,17 @@ import { render, createInitialState } from '../src/games/snakesladders.js';
 
 const NAMES = { 0: 'Harvey', 1: 'Shruti' };
 
+/** Wait for a CONDITION, not a duration: the animation is a chain of timers and
+ *  a fixed sleep loses the race on a loaded machine. Fails loudly on timeout. */
+async function until(cond, what, ceilingMs = 5000) {
+  const start = Date.now();
+  while (!cond()) {
+    if (Date.now() - start > ceilingMs) assert.fail(`timed out after ${ceilingMs}ms waiting for: ${what}`);
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+const walked = (host) => until(() => host.__sl.busy === false, 'the walk to settle');
+
 function container() {
   const doc = makeDoc();
   const host = doc.createElement('div');
@@ -198,7 +209,7 @@ test('the caption shows the joke at the foot of a ladder, not the empty square i
     die: 3, seat: 0, from: 1, via: 4, to: 14
   };
   render(climbed, host, { mySeat: 0, names: NAMES, onAction: () => {} });
-  await new Promise((r) => setTimeout(r, 900));   // the caption lands with the token
+  await walked(host);
   assert.equal(host.__sl.caption.textContent, SQUARE_TEXT[4]);
 });
 
@@ -209,7 +220,7 @@ test('the caption shows the landed square when no link was taken', async () => {
     die: 2, seat: 0, from: 15, via: null, to: 17
   };
   render(plain, host, { mySeat: 0, names: NAMES, onAction: () => {} });
-  await new Promise((r) => setTimeout(r, 600));
+  await walked(host);
   assert.equal(host.__sl.caption.textContent, SQUARE_TEXT[17]);
 });
 
@@ -250,7 +261,7 @@ test('a newer move supersedes one still animating', async () => {
   const second = moveState({ pos0: 6, pos1: 4, turn: 0, moves: 2, die: 4, seat: 1, from: 0, via: null, to: 4 });
   render(first, host, { mySeat: 0, names: NAMES, onAction: () => {} });
   render(second, host, { mySeat: 0, names: NAMES, onAction: () => {} });
-  await new Promise((r) => setTimeout(r, 900));
+  await walked(host);
   assert.deepEqual(host.__sl.shown, { 0: 6, 1: 4 });
   assert.ok(settled(host), 'the superseded chain must not leave the board busy');
 });
@@ -269,11 +280,11 @@ test('the caption clears when the square says nothing', async () => {
   const { host } = container();
   render(moveState({ pos0: 14, turn: 1, moves: 1, die: 3, seat: 0, from: 1, via: 4, to: 14 }),
     host, { mySeat: 0, names: NAMES, onAction: () => {} });
-  await new Promise((r) => setTimeout(r, 900));
+  await walked(host);
   assert.equal(host.__sl.caption.textContent, SQUARE_TEXT[4]);
   render(moveState({ pos0: 16, turn: 1, moves: 2, die: 2, seat: 0, from: 14, via: null, to: 16 }),
     host, { mySeat: 0, names: NAMES, onAction: () => {} });
-  await new Promise((r) => setTimeout(r, 900));
+  await walked(host);
   assert.equal(host.__sl.caption.textContent, '',
     'a stale joke must not be re-attributed to a later move');
 });
@@ -282,7 +293,7 @@ test('the caption says why an overshoot did not move you', async () => {
   const { host } = container();
   render(moveState({ pos0: 98, turn: 1, moves: 9, die: 4, seat: 0, from: 98, via: null, to: 98 }),
     host, { mySeat: 0, names: NAMES, onAction: () => {} });
-  await new Promise((r) => setTimeout(r, 400));
+  await walked(host);
   assert.match(host.__sl.caption.textContent, /exact/i);
 });
 

@@ -117,7 +117,7 @@ export function owe(state, seat, amount, toSeat) {
 }
 
 /** Sends `seat` to jail: no GO money, and no extra go for a double. */
-function sendToJail(state, seat) {
+export function sendToJail(state, seat) {
   return {
     ...state,
     pos: withAt(state.pos, seat, JAIL_SQUARE),
@@ -141,10 +141,9 @@ export function landOn(state, seat, square) {
         won > 0 ? `${who} lands on ${sq.name} and collects ${won}.` : `${who} lands on ${sq.name}.`);
     }
     case 'tax':
-      // The tax joins the pot now; the debt is settled by Task 5's `pay`, so a
-      // player who cannot afford it can still sell up.
-      return owe(say({ ...state, pot: state.pot + sq.amount }, `${who} owes ${sq.amount} for ${sq.name}.`),
-        seat, sq.amount, -1);
+      // `pot` is NOT touched here: `pay` credits the pot when it discharges
+      // any owedTo === -1 debt, so a bankruptcy never leaves unpaid money in it.
+      return owe(say(state, `${who} owes ${sq.amount} for ${sq.name}.`), seat, sq.amount, -1);
     default:
       // go, jail (just visiting), and the kinds later tasks handle
       return say(state, `${who} lands on ${sq.name}.`);
@@ -182,18 +181,14 @@ function doRoll(state, action, seat) {
     }
     // Third failed turn: the fine is not optional, and you move anyway.
     next = { ...next, jail: withAt(next.jail, seat, 0), doubles: 0 };
-    const affordable = next.cash[seat] >= JAIL_FINE;
-    if (affordable) next = addCash(next, seat, -JAIL_FINE);
-    next = say(next, `${who} pays the ${JAIL_FINE} fine and leaves jail.`);
-    next = moveAndLand(next, seat, die1 + die2);
-    if (!affordable) {
-      // Cannot cover it from cash, so it becomes a debt to the bank (added to
-      // a bank debt the landing opened). A rent debt to the other player is
-      // not merged; the fine is waived in that case.
-      if (next.phase === 'end') next = owe(next, seat, JAIL_FINE, -1);
-      else if (next.phase === 'pay' && next.owedTo === -1) next = { ...next, owed: next.owed + JAIL_FINE };
+    if (next.cash[seat] < JAIL_FINE) {
+      // Cannot cover it from cash: the fine becomes a bank debt (so they can
+      // sell up) and the roll is forfeited, so only one debt ever exists.
+      next = say(next, `${who} owes the ${JAIL_FINE} jail fine and does not move.`);
+      return { state: owe(next, seat, JAIL_FINE, -1) };
     }
-    return { state: next };
+    next = say(addCash(next, seat, -JAIL_FINE), `${who} pays the ${JAIL_FINE} fine and leaves jail.`);
+    return { state: moveAndLand(next, seat, die1 + die2) };
   }
 
   if (isDouble) {

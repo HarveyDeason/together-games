@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { LJ_CARDS, JB_CARDS, MAX_LOG, START_CASH } from '../src/games/darlingco-board.js';
 import {
-  meta, createInitialState, getStatus, nextStarter, shuffleOrder, logged, readLog, applyAction
+  meta, createInitialState, getStatus, nextStarter, shuffleOrder, logged, readLog, applyAction, sendToJail
 } from '../src/games/darlingco.js';
 
 const sorted = (s) => [...s].sort().join('');
@@ -164,6 +164,12 @@ test('applyAction does not mutate the state it was given', () => {
   const copy = JSON.parse(JSON.stringify(s));
   roll(s, 3, 4);
   assert.deepEqual(s, copy);
+  const j = at(10, { jail: [2, 0], outCards: ['lj', ''] });
+  const jcopy = JSON.parse(JSON.stringify(j));
+  applyAction(j, { type: 'jail-card' }, 0);
+  applyAction(j, { type: 'jail-pay' }, 0);
+  roll(j, 1, 2);
+  assert.deepEqual(j, jcopy);
 });
 
 test('passing GO pays two hundred', () => {
@@ -223,10 +229,10 @@ test('Free Parking hands over the whole pot and empties it', () => {
   assert.equal(s.pot, 0);
 });
 
-test('a tax square adds to the pot and opens a debt to the bank', () => {
+test('a tax square leaves the pot alone and opens a debt to the bank', () => {
   const s = ok(roll(at(1), 1, 2));
   assert.equal(s.pos[0], 4);
-  assert.equal(s.pot, 200);
+  assert.equal(s.pot, 0);
   assert.equal(s.owed, 200);
   assert.equal(s.owedTo, -1);
   assert.equal(s.phase, 'pay');
@@ -261,12 +267,55 @@ test('three failed turns in jail pay the fine and move you anyway', () => {
   assert.equal(s.pos[0], 13);
 });
 
-test('a third failed turn with no cash turns the fine into a debt', () => {
+test('a broke player on the third jail turn owes the fine to the bank and does not move', () => {
   const s = ok(roll(at(10, { jail: [3, 0], cash: [20, 1500] }), 1, 2));
   assert.equal(s.jail[0], 0);
-  assert.equal(s.pos[0], 13);
+  assert.equal(s.pos[0], 10);
+  assert.equal(s.cash[0], 20);
   assert.equal(s.phase, 'pay');
+  assert.equal(s.actor, 0);
   assert.equal(s.owed, 50);
+  assert.equal(s.owedTo, -1);
+  assert.equal(s.pot, 0);
+});
+
+test('no jail path carries two debts: only one creditor at a time', () => {
+  for (const cash of [0, 49, 50, 51, 400]) {
+    for (const [d1, d2] of [[1, 2], [3, 3], [6, 5]]) {
+      const r = roll(at(10, { jail: [3, 0], cash: [cash, 1500] }), d1, d2);
+      const s = ok(r);
+      if (s.phase === 'pay') assert.equal(s.owedTo, -1);
+      else assert.equal(s.owed, 0);
+    }
+  }
+});
+
+test('a solvent player on the third jail turn pays and moves', () => {
+  const s = ok(roll(at(10, { jail: [3, 0], cash: [50, 1500] }), 1, 2));
+  assert.equal(s.cash[0], 0);
+  assert.equal(s.pos[0], 13);
+  assert.equal(s.phase, 'end');
+});
+
+test('the jail counter steps from 2 to 3 and stays in jail', () => {
+  const s = ok(roll(at(10, { jail: [2, 0] }), 1, 2));
+  assert.equal(s.jail[0], 3);
+  assert.equal(s.pos[0], 10);
+  assert.equal(s.phase, 'end');
+  assert.equal(s.cash[0], 1500);
+});
+
+test('jail-pay and jail-card are refused outside the roll phase', () => {
+  const pay = at(10, { jail: [1, 0], phase: 'pay', owed: 50, owedTo: -1, outCards: ['lj', ''] });
+  assert.deepEqual(applyAction(pay, { type: 'jail-pay' }, 0), { error: 'wrong-phase' });
+  assert.deepEqual(applyAction(pay, { type: 'jail-card' }, 0), { error: 'wrong-phase' });
+});
+
+test('sendToJail zeroes doubles and moves to the jail square', () => {
+  const s = sendToJail({ ...createInitialState(), doubles: 2 }, 1);
+  assert.equal(s.pos[1], 10);
+  assert.equal(s.jail[1], 1);
+  assert.equal(s.doubles, 0);
 });
 
 test('paying the fine releases you before you roll', () => {

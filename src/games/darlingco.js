@@ -8,7 +8,8 @@
 //    always read the log through readLog
 
 import {
-  GAME_ID, GAME_NAME, START_CASH, LJ_CARDS, JB_CARDS, MAX_LOG
+  GAME_ID, GAME_NAME, START_CASH, LJ_CARDS, JB_CARDS, MAX_LOG, SQUARES,
+  GO_PAY, JAIL_FINE, JAIL_SQUARE
 } from './darlingco-board.js';
 import { BLANK_OWN, BLANK_BUILT, BLANK_MORTG } from './darlingco-state.js';
 
@@ -89,8 +90,180 @@ export function logged(state, line) {
   return [...readLog(state), line].slice(-MAX_LOG);
 }
 
+const KNOWN_ACTIONS = ['roll', 'jail-pay', 'jail-card', 'end'];
+
+const isDie = (d) => Number.isInteger(d) && d >= 1 && d <= 6;
+
+/** A copy of `arr` with index `i` set to `v`. */
+function withAt(arr, i, v) {
+  const copy = [...arr];
+  copy[i] = v;
+  return copy;
+}
+
+function addCash(state, seat, delta) {
+  return { ...state, cash: withAt(state.cash, seat, state.cash[seat] + delta) };
+}
+
+/** `state` with `line` on its log. */
+function say(state, line) {
+  return { ...state, log: logged(state, line) };
+}
+
+/** Opens a debt: `seat` must settle `amount` to `toSeat` (-1 for the bank)
+ *  before anything else happens. Task 5's `pay` action discharges it. */
+export function owe(state, seat, amount, toSeat) {
+  return { ...state, owed: amount, owedTo: toSeat, phase: 'pay', actor: seat };
+}
+
+/** Sends `seat` to jail: no GO money, and no extra go for a double. */
+function sendToJail(state, seat) {
+  return {
+    ...state,
+    pos: withAt(state.pos, seat, JAIL_SQUARE),
+    jail: withAt(state.jail, seat, 1),
+    doubles: 0
+  };
+}
+
+/** The ONE place a landing is resolved. The caller has already put `phase` at
+ *  'end'; a case overrides it only when the landing creates a decision (a buy
+ *  offer, a debt, a card). Returns the new state. Tasks 5 and 7 add cases. */
+export function landOn(state, seat, square) {
+  const sq = SQUARES[square];
+  const who = `Player ${seat + 1}`;
+  switch (sq.kind) {
+    case 'gotojail':
+      return say(sendToJail(state, seat), `${who} goes to jail.`);
+    case 'parking': {
+      const won = state.pot;
+      return say({ ...addCash(state, seat, won), pot: 0 },
+        won > 0 ? `${who} lands on ${sq.name} and collects ${won}.` : `${who} lands on ${sq.name}.`);
+    }
+    case 'tax':
+      // The tax joins the pot now; the debt is settled by Task 5's `pay`, so a
+      // player who cannot afford it can still sell up.
+      return owe(say({ ...state, pot: state.pot + sq.amount }, `${who} owes ${sq.amount} for ${sq.name}.`),
+        seat, sq.amount, -1);
+    default:
+      // go, jail (just visiting), and the kinds later tasks handle
+      return say(state, `${who} lands on ${sq.name}.`);
+  }
+}
+
+/** Moves `seat` forward `steps`, paying GO on the way, then resolves the
+ *  landing. */
+function moveAndLand(state, seat, steps) {
+  const from = state.pos[seat];
+  const to = (from + steps) % SQUARES.length;
+  let next = { ...state, pos: withAt(state.pos, seat, to), phase: 'end' };
+  if (to < from) {
+    next = say(addCash(next, seat, GO_PAY), `Player ${seat + 1} passes GO and collects ${GO_PAY}.`);
+  }
+  return landOn(next, seat, to);
+}
+
+function doRoll(state, action, seat) {
+  const { die1, die2 } = action;
+  if (!isDie(die1) || !isDie(die2)) return { error: 'bad-die' };
+  const who = `Player ${seat + 1}`;
+  const isDouble = die1 === die2;
+  let next = say({ ...state, die1, die2, moves: state.moves + 1 }, `${who} rolls ${die1} and ${die2}.`);
+
+  if (state.jail[seat] > 0) {
+    if (isDouble) {
+      next = say({ ...next, jail: withAt(next.jail, seat, 0), doubles: 0 }, `${who} rolls a double and is free.`);
+      return { state: moveAndLand(next, seat, die1 + die2) };
+    }
+    const turns = state.jail[seat] + 1;
+    if (turns <= 3) {
+      next = { ...next, jail: withAt(next.jail, seat, turns), doubles: 0, phase: 'end' };
+      return { state: say(next, `${who} stays in jail.`) };
+    }
+    // Third failed turn: the fine is not optional, and you move anyway.
+    next = { ...next, jail: withAt(next.jail, seat, 0), doubles: 0 };
+    const affordable = next.cash[seat] >= JAIL_FINE;
+    if (affordable) next = addCash(next, seat, -JAIL_FINE);
+    next = say(next, `${who} pays the ${JAIL_FINE} fine and leaves jail.`);
+    next = moveAndLand(next, seat, die1 + die2);
+    if (!affordable) {
+      // Cannot cover it from cash, so it becomes a debt to the bank (added to
+      // a bank debt the landing opened). A rent debt to the other player is
+      // not merged; the fine is waived in that case.
+      if (next.phase === 'end') next = owe(next, seat, JAIL_FINE, -1);
+      else if (next.phase === 'pay' && next.owedTo === -1) next = { ...next, owed: next.owed + JAIL_FINE };
+    }
+    return { state: next };
+  }
+
+  if (isDouble) {
+    if (state.doubles + 1 >= 3) {
+      next = { ...sendToJail(next, seat), phase: 'end' };
+      return { state: say(next, `${who} rolls three doubles and goes to jail.`) };
+    }
+    next = { ...next, doubles: state.doubles + 1 };
+  } else {
+    next = { ...next, doubles: 0 };
+  }
+  return { state: moveAndLand(next, seat, die1 + die2) };
+}
+
+function doJailPay(state, seat) {
+  if (state.jail[seat] === 0) return { error: 'not-in-jail' };
+  if (state.cash[seat] < JAIL_FINE) return { error: 'cannot-afford' };
+  const next = addCash({ ...state, jail: withAt(state.jail, seat, 0), moves: state.moves + 1 }, seat, -JAIL_FINE);
+  return { state: say(next, `Player ${seat + 1} pays the ${JAIL_FINE} fine and is free.`) };
+}
+
+function doJailCard(state, seat) {
+  if (state.jail[seat] === 0) return { error: 'not-in-jail' };
+  const held = state.outCards[seat];
+  if (!held) return { error: 'no-card' };
+  const tag = held.slice(0, 2);
+  const cards = tag === 'lj' ? LJ_CARDS : JB_CARDS;
+  const code = cards.find(c => c.effect.k === 'out').code;
+  const next = {
+    ...state,
+    outCards: withAt(state.outCards, seat, held.slice(2)),
+    jail: withAt(state.jail, seat, 0),
+    moves: state.moves + 1
+  };
+  if (tag === 'lj') next.deckLJ = state.deckLJ + code;
+  else next.deckJB = state.deckJB + code;
+  return { state: say(next, `Player ${seat + 1} uses a get-out-of-jail card.`) };
+}
+
+function doEnd(state, seat) {
+  const again = state.doubles > 0 && state.die1 === state.die2 && state.jail[seat] === 0;
+  const turn = again ? state.turn : 1 - state.turn;
+  const next = {
+    ...state,
+    turn,
+    actor: turn,
+    phase: 'roll',
+    doubles: again ? state.doubles : 0,
+    moves: state.moves + 1
+  };
+  return { state: say(next, again
+    ? `Player ${seat + 1} rolled a double and goes again.`
+    : `Player ${turn + 1}'s turn.`) };
+}
+
+/** Guard order matters: it is what makes a double-tap or a transaction retry
+ *  safe, because the second application is refused by the phase guard. */
 export function applyAction(state, action, seat) {
-  return { error: 'unknown-action' };
+  if (state.phase === 'over') return { error: 'game-over' };
+  if (seat !== state.actor) return { error: 'not-your-turn' };
+  const type = action && action.type;
+  if (!KNOWN_ACTIONS.includes(type)) return { error: 'unknown-action' };
+  const admitted = type === 'end' ? state.phase === 'end' : state.phase === 'roll';
+  if (!admitted) return { error: 'wrong-phase' };
+  switch (type) {
+    case 'roll': return doRoll(state, action, seat);
+    case 'jail-pay': return doJailPay(state, seat);
+    case 'jail-card': return doJailCard(state, seat);
+    default: return doEnd(state, seat);
+  }
 }
 
 export function render() {

@@ -86,8 +86,8 @@ function ownProp(state, seat, sq) {
 
 /** true if `seat` may add a house (or hotel) to `sq`, else a short reason. */
 export function canBuild(state, seat, sq) {
-  const own = ownProp(state, seat, sq);
-  if (own !== true) return own;
+  const problem = ownProp(state, seat, sq);
+  if (problem !== true) return problem;
   const set = SETS[SQUARES[sq].set].squares;
   if (!ownsFullSet(state, seat, SQUARES[sq].set)) return 'You need the whole set';
   if (set.some(q => isMortgaged(state, q))) return 'Un-mortgage the whole set first';
@@ -99,8 +99,8 @@ export function canBuild(state, seat, sq) {
 
 /** true if `seat` may take a house (or hotel) off `sq`, else a short reason. */
 export function canSell(state, seat, sq) {
-  const own = ownProp(state, seat, sq);
-  if (own !== true) return own;
+  const problem = ownProp(state, seat, sq);
+  if (problem !== true) return problem;
   const mine = housesOn(state, sq);
   if (mine === 0) return 'Nothing built there';
   const set = SETS[SQUARES[sq].set].squares;

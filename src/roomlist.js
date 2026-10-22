@@ -1,4 +1,4 @@
-import { listRooms, cacheRoom } from './myrooms.js';
+import { listRooms, cacheRoom, forgetRoom } from './myrooms.js';
 import { describeRoom, isFresh, gameNameOf } from './roomstatus.js';
 
 /** The list of rooms you have been in.
@@ -21,26 +21,40 @@ export function initRoomList({
   identity,
   read,
   watch,
+  onReconnect = null,
   now = Date.now,
   go = (url) => { location.href = url; }
 }) {
   const clock = typeof now === 'function' ? now : () => now;
   const rooms = listRooms();
 
-  container.innerHTML = '';
-  if (rooms.length === 0) return Promise.resolve();
-
   const unsubscribes = [];
+  // `stopped` as well as unsubscribing: the lobby re-mounts ("Not Harvey?" ->
+  // Continue calls showRoomStep again), and a read still in flight would
+  // otherwise come back after the container was emptied and attach a watcher
+  // that repaints a detached row for the life of the page.
+  let stopped = false;
+  const stop = () => {
+    stopped = true;
+    for (const off of unsubscribes) off();
+    unsubscribes.length = 0;
+  };
 
-  const reads = rooms.map((room) => {
-    const row = buildRow(room, go);
+  container.innerHTML = '';
+  if (rooms.length === 0) {
+    // A stop() on this path too. A caller that has to ask whether it got one
+    // will one day forget to.
+    const empty = Promise.resolve();
+    empty.stop = stop;
+    return empty;
+  }
 
-    // Rooms the cache already believes are stale start hidden, so the common
-    // case paints instantly and a dead room never flashes up. The read can
-    // still bring one back.
-    row.hidden = !isFresh({ activityAt: room.activityAt, visitedAt: room.visitedAt, now: clock() });
-    container.append(row);
+  // Rooms whose read rejected, so a reconnect can try them again. A rejection
+  // is not evidence about the room, but it is also not permanent, and without
+  // this the row stays statusless for the life of the page.
+  const outstanding = new Map();
 
+  const load = (room, row) => {
     const apply = (snapshot) => {
       const description = describeRoom({
         snapshot,
@@ -54,6 +68,9 @@ export function initRoomList({
 
     return read(room.code)
       .then((snapshot) => {
+        outstanding.delete(room.code);
+        if (stopped) return;
+
         if (!snapshot) {
           // The room is gone from the database. Say so and leave it tappable
           // rather than deciding on the player's behalf that it is rubbish.
@@ -67,7 +84,18 @@ export function initRoomList({
         const fresh = isFresh({ activityAt, visitedAt: room.visitedAt, now: clock() });
         const description = apply(snapshot);
 
-        if (!fresh || description.ended) {
+        if (description.ended) {
+          // Dropped from storage, not just hidden. There is no un-end, so the
+          // answer can never change — keeping the entry buys nothing and costs
+          // a read on every lobby visit until the seven days run out. A room
+          // merely gone stale is NOT forgotten: that cutoff is two-sided and
+          // heals the moment somebody plays.
+          row.hidden = true;
+          forgetRoom(room.code);
+          return;
+        }
+
+        if (!fresh) {
           row.hidden = true;
           return;
         }
@@ -76,16 +104,48 @@ export function initRoomList({
         unsubscribes.push(watch(room.code, (next) => {
           const update = apply(next);
           row.hidden = update.ended;
+          // She can end it while you are looking at the lobby.
+          if (update.ended) forgetRoom(room.code);
         }));
       })
       .catch(() => {
         // A failed read is not evidence about the room. Leave the row as it is:
-        // no status, still tappable, and the share link still works.
+        // no status, still tappable, and the share link still works. Remember
+        // it, though, so the connection coming back puts it right.
+        outstanding.set(room.code, row);
       });
+  };
+
+  const reads = rooms.map((room) => {
+    const row = buildRow(room, go);
+
+    // Rooms the cache already believes are stale start hidden, so the common
+    // case paints instantly and a dead room never flashes up. The read can
+    // still bring one back.
+    row.hidden = !isFresh({ activityAt: room.activityAt, visitedAt: room.visitedAt, now: clock() });
+    container.append(row);
+
+    return load(room, row);
   });
 
+  // Offline, a row says nothing — the spec's call, and the right one: an unlit
+  // dot and a stale status line are both claims. But silence must not outlive
+  // the outage, so the reads that failed are retried the moment the connection
+  // is back. Only those: re-reading a row that answered would repaint it under
+  // a thumb already travelling towards it.
+  if (onReconnect) {
+    unsubscribes.push(onReconnect((connected) => {
+      if (!connected || stopped || outstanding.size === 0) return;
+      const retries = [...outstanding].map(([code, row]) => {
+        const room = rooms.find((entry) => entry.code === code);
+        return load(room, row);
+      });
+      return Promise.all(retries);
+    }));
+  }
+
   const done = Promise.all(reads);
-  done.stop = () => { for (const off of unsubscribes) off(); };
+  done.stop = stop;
   return done;
 }
 

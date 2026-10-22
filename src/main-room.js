@@ -306,7 +306,11 @@ async function start() {
   leaveRowEl.hidden = false;
   leaveNoteEl.hidden = false;
 
-  rememberRoom(code, gameId);
+  // No game id: at this point `gameId` is still DEFAULT_GAME, because the game
+  // listener below has not fired yet. Passing it would write "tictactoe" over a
+  // Snakes & Ladders room. The listener calls cacheRoom with the real id a
+  // moment later; until then the list says nothing rather than something wrong.
+  rememberRoom(code);
   markActivity(code);
 
   // The other player can close the room while you are looking at the board.
@@ -355,10 +359,13 @@ async function start() {
     }
 
     const nextId = GAMES[node.id] ? node.id : DEFAULT_GAME;
+    // Outside the change check on purpose. rememberRoom deliberately stores no
+    // game id, so this is the only thing that ever fills one in — and inside
+    // the check it would never run for a room that is already on the default
+    // game, leaving its lobby row named "Game" for good.
+    cacheRoom(code, { gameId: nextId });
     if (nextId !== gameId) {
       gameId = nextId;
-      // So the lobby row names the right game before any read comes back.
-      cacheRoom(code, { gameId });
       game = getGame(gameId);
       boardEl.innerHTML = '';
       delete boardEl.__sl;          // drop the previous game's cached scene

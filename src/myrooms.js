@@ -46,7 +46,13 @@ function update(code, change) {
 }
 
 /** Called when a join succeeds, so both the create path and the shared-link
- *  path populate the list without either knowing about it. */
+ *  path populate the list without either knowing about it.
+ *
+ *  `gameId` is optional, and omitting it is the honest thing to do: joining
+ *  happens before the game node has been read, so the caller does not know
+ *  which game the room holds. An omitted id leaves whatever is already known
+ *  alone — the lobby names the game from this value, and overwriting a known
+ *  answer with a guess is worse than having none. cacheRoom fills it in. */
 export function rememberRoom(code, gameId) {
   const now = Date.now();
   const rooms = read();
@@ -54,7 +60,7 @@ export function rememberRoom(code, gameId) {
 
   if (existing) {
     existing.visitedAt = now;
-    existing.gameId = gameId;
+    if (gameId != null) existing.gameId = gameId;
     write(rooms);
     return;
   }

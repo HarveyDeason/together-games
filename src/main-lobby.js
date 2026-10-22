@@ -2,7 +2,7 @@ import { getIdentity, saveName } from './identity.js';
 import { createRoom, roomExists, readRoom } from './room.js';
 import { isValidCode, normaliseCode } from './roomcode.js';
 import { initRoomList } from './roomlist.js';
-import { db, ref, onValue } from './firebase.js';
+import { db, ref, onValue, onConnectionChange } from './firebase.js';
 
 const nameStep = document.getElementById('name-step');
 const roomStep = document.getElementById('room-step');
@@ -22,16 +22,23 @@ function watchRoom(code, onChange) {
   return onValue(ref(db, `rooms/${code}`), (snap) => onChange(snap.val()));
 }
 
+// The lobby re-mounts: "Not <name>?" -> Continue runs showRoomStep a second
+// time. Without stopping the first list, its watchers keep firing against rows
+// that are no longer in the document.
+let roomList = null;
+
 function showRoomStep(identity) {
   nameStep.hidden = true;
   roomStep.hidden = false;
   greeting.textContent = `Hello, ${identity.name}.`;
   currentName.textContent = identity.name;
-  initRoomList({
+  if (roomList) roomList.stop();
+  roomList = initRoomList({
     container: document.getElementById('rooms-list'),
     identity,
     read: readRoom,
-    watch: watchRoom
+    watch: watchRoom,
+    onReconnect: onConnectionChange
   });
 }
 

@@ -55,9 +55,18 @@ export function markActivity(code) {
  *
  *  This lives in `meta` and not in `game` on purpose: Rematch replaces the
  *  whole `game` node, so an ended flag stored there would be silently wiped by
- *  a button either player can press. */
+ *  a button either player can press.
+ *
+ *  Ending counts as activity, so the same write stamps it — one write rather
+ *  than two, and both keys are already allowed under `meta`. Nothing visible
+ *  turns on it today, because an ended room is never shown. It matters the
+ *  moment anything reads the room back without that assumption, and a room
+ *  whose last recorded activity predates its own ending is simply wrong. */
 export function endRoom(code) {
-  return update(ref(db, `rooms/${code}/meta`), { endedAt: serverTimestamp() });
+  return update(ref(db, `rooms/${code}/meta`), {
+    endedAt: serverTimestamp(),
+    lastActivityAt: serverTimestamp()
+  });
 }
 
 export async function isRoomEnded(code) {

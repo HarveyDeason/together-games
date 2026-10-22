@@ -55,6 +55,28 @@ test('within the week it reads as the day of the week', () => {
   assert.equal(relativeTime(NOW - 4 * DAY, NOW), 'Sunday');
 });
 
+test('the day before today reads as yesterday, not as its weekday name', () => {
+  // NOW is a Thursday lunchtime; 30 hours earlier is Wednesday morning. Naming
+  // the weekday is correct but needlessly hard to read for the one day that has
+  // a word of its own.
+  assert.equal(relativeTime(NOW - 30 * HOUR, NOW), 'yesterday');
+});
+
+test('six calendar days back still reads as its weekday name', () => {
+  // The last day on which a weekday name is unambiguous: six days before a
+  // Thursday is a Friday, and no other day inside the window is also a Friday.
+  assert.equal(relativeTime(NOW - 6 * DAY, NOW), 'Friday');
+});
+
+test("seven calendar days back does not reuse today's own weekday name", () => {
+  // 6d23h is still inside the seven-day cutoff, but it falls on the previous
+  // Thursday — so the weekday name would be the same word as today, and
+  // "Thursday" would mean "a week ago". That is the one thing it must not say.
+  const label = relativeTime(NOW - 6 * DAY - 23 * HOUR, NOW);
+  assert.notEqual(label, 'Thursday');
+  assert.equal(label, 'a week ago');
+});
+
 test('a time in the future reads as just now, never as a negative age', () => {
   // The phone that moved is not the phone that reads. A few minutes of clock
   // skew between Keynsham and Nagpur must not render "in 3 minutes".

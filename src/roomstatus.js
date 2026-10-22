@@ -7,11 +7,29 @@ export const CUTOFF = 7 * DAY;
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
+/** Whole calendar days between two instants, counted by local midnights.
+ *
+ *  Not elapsed / DAY: "yesterday" means the day before today, not 24 hours ago,
+ *  and a label computed from elapsed time calls 11pm-to-1am the same day.
+ *  Rounding absorbs the 23- and 25-hour days a clock change produces. */
+function calendarDaysBetween(then, now) {
+  const midnight = (ms) => {
+    const date = new Date(ms);
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  };
+  return Math.round((midnight(now) - midnight(then)) / DAY);
+}
+
 /** How long ago, in as few words as fit on a phone row.
  *
  *  A future time reads as "just now" rather than as a negative age. The phone
  *  that moved is not the phone that reads, and a few minutes of clock drift
- *  between two countries would otherwise render "in 3 minutes". */
+ *  between two countries would otherwise render "in 3 minutes".
+ *
+ *  Weekday names are only used where they are unambiguous: two to six calendar
+ *  days back. Seven is still inside the cutoff but lands on today's own
+ *  weekday, so "Thursday" would mean "a week ago" — the one thing this label
+ *  must never say. That day gets the words instead. */
 export function relativeTime(then, now) {
   if (then == null) return '';
 
@@ -19,8 +37,12 @@ export function relativeTime(then, now) {
   if (elapsed < MINUTE) return 'just now';
   if (elapsed < HOUR) return `${Math.floor(elapsed / MINUTE)} min`;
   if (elapsed < DAY) return `${Math.floor(elapsed / HOUR)} hr`;
-  if (elapsed < CUTOFF) return WEEKDAYS[new Date(then).getDay()];
-  return 'a while ago';
+  if (elapsed >= CUTOFF) return 'a while ago';
+
+  const days = calendarDaysBetween(then, now);
+  if (days <= 1) return 'yesterday';
+  if (days <= 6) return WEEKDAYS[new Date(then).getDay()];
+  return 'a week ago';
 }
 
 /** Should this room still be on your list?

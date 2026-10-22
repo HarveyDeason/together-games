@@ -56,6 +56,27 @@ test('re-joining a room does not duplicate it and refreshes the visit', () => {
   assert.equal(rooms[0].visitedAt, 5000);
 });
 
+test('a room remembered without a game id claims nothing about the game', () => {
+  // The join happens before any read of the game node, so the caller genuinely
+  // does not know yet. Writing a guess means a Snakes & Ladders room sits in
+  // storage as Tic Tac Toe until a read corrects it.
+  at(1000, () => rememberRoom('ABCD'));
+
+  const [room] = listRooms();
+  assert.equal(room.gameId, undefined);
+});
+
+test('re-joining without a game id keeps the one already known', () => {
+  // The lobby names the game from this value before any read comes back. A
+  // re-join that does not know the game must not wipe an answer we have.
+  at(1000, () => rememberRoom('ABCD', 'snakesladders'));
+  at(5000, () => rememberRoom('ABCD'));
+
+  const [room] = listRooms();
+  assert.equal(room.gameId, 'snakesladders');
+  assert.equal(room.visitedAt, 5000, 'the visit is still recorded');
+});
+
 test('recording a visit refreshes the visit time and nothing else', () => {
   at(1000, () => rememberRoom('ABCD', 'tictactoe'));
   at(9000, () => recordVisit('ABCD'));

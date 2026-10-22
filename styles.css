@@ -780,3 +780,56 @@ body {
 .dc-btns-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.25rem; }
 .dc-btns-grid .btn.dc-btn { min-height: 2.1rem; padding: 0.3rem 0.4rem; font-size: clamp(0.62rem, 2.8vw, 0.78rem); }
 .dc-sheet { justify-content: flex-start; }
+
+/* ---- Darling & Co.: things that move ------------------------------------
+   Out on the board, never in the centre. Quick and light; the script only adds
+   these classes when motion is allowed, and the query below is the backstop. */
+.dc-tok { animation: dc-hop 180ms ease-out; }
+@keyframes dc-hop {
+  0% { transform: translateY(0) scale(1); }
+  45% { transform: translateY(-3px) scale(1.35); }
+  100% { transform: translateY(0) scale(1); }
+}
+
+.dc-tile.dc-pop .dc-houses { animation: dc-pop 420ms cubic-bezier(0.3, 1.6, 0.5, 1); }
+@keyframes dc-pop {
+  0% { transform: scale(0) translateY(40%); opacity: 0; }
+  60% { transform: scale(1.7); opacity: 1; }
+  100% { transform: scale(1); }
+}
+
+.dc-bar { position: relative; }
+.dc-coin {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  z-index: 2;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 0.75rem;
+  font-weight: 700;
+  pointer-events: none;
+  white-space: nowrap;
+  transform: translate(0, -50%);
+  animation: dc-flick-right 650ms ease-in-out forwards;
+}
+.dc-coin[data-to="0"] { left: auto; right: 0; animation-name: dc-flick-left; }
+@keyframes dc-flick-right {
+  0% { left: 8%; opacity: 0; transform: translate(0, -50%) scale(0.6); }
+  20% { opacity: 1; transform: translate(0, -110%) scale(1.1); }
+  80% { opacity: 1; }
+  100% { left: 40%; opacity: 0; transform: translate(0, -50%) scale(0.8); }
+}
+@keyframes dc-flick-left {
+  0% { right: 40%; opacity: 0; transform: translate(0, -50%) scale(0.6); }
+  20% { opacity: 1; transform: translate(0, -110%) scale(1.1); }
+  80% { opacity: 1; }
+  100% { right: 70%; opacity: 0; transform: translate(0, -50%) scale(0.8); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dc-tok, .dc-tile.dc-pop .dc-houses, .dc-coin { animation: none; }
+  .dc-coin { display: none; }
+}

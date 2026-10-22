@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { gridCell, edgeOf, buildBoard, paintTile, decisionFor, feedLines, propertyFor } from '../src/games/darlingco-render.js';
+import { gridCell, edgeOf, buildBoard, paintTile, decisionFor, feedLines, propertyFor, walkPath } from '../src/games/darlingco-render.js';
 import { createInitialState, render, applyAction } from '../src/games/darlingco.js';
 import { setChar } from '../src/games/darlingco-state.js';
 import { SQUARES, SETS } from '../src/games/darlingco-board.js';
@@ -14,7 +14,8 @@ function makeEl(tag) {
     set innerHTML(v) { if (v === '') el.children = []; },
     get innerHTML() { return ''; },
     setAttribute(k, v) { el.attrs[k] = v; },
-    appendChild(c) { el.children.push(c); return c; }
+    appendChild(c) { el.children.push(c); c.parent = el; return c; },
+    remove() { if (el.parent) el.parent.children = el.parent.children.filter((c) => c !== el); }
   };
   el.classList = { add: (c) => el.classes.add(c), remove: (c) => el.classes.delete(c), contains: (c) => el.classes.has(c) };
   return el;
@@ -460,4 +461,202 @@ test('tally UI in the DOM: the offerer gets no cancel, the other seat gets Accep
   const labels1 = buttonsIn(theirs).map((b) => b.textContent);
   assert.ok(labels1.includes('Accept') && labels1.includes('Decline'));
   assert.ok(!labels1.some((l) => /offer to tally/i.test(l)));
+});
+
+// ---- things that move -------------------------------------------------------
+// Timers are replaced by a queue the test drives by hand, so nothing here
+// sleeps for a duration and then asserts: each step is run to completion.
+function withTimers(fn, { reduced = false } = {}) {
+  const realSet = globalThis.setTimeout, realMedia = globalThis.matchMedia;
+  const queue = [];
+  globalThis.setTimeout = (f) => { queue.push(f); return queue.length; };
+  if (reduced) globalThis.matchMedia = () => ({ matches: true });
+  const timers = {
+    pending: () => queue.length,
+    step() { const f = queue.shift(); if (f) f(); return !!f; },
+    flush() { let n = 0; while (queue.length && n++ < 5000) queue.shift()(); assert.ok(n < 5000, 'timers never drained'); }
+  };
+  try { return fn(timers); } finally { globalThis.setTimeout = realSet; globalThis.matchMedia = realMedia; }
+}
+const at = (pos, extra = {}) => withState({ pos, ...extra });
+const shownOf = (h) => [...h.__dc.shown];
+const tileOfTok = (h, seat) => h.__dc.tiles.findIndex((t) => t.children.some((c) => c.children.includes(t.dcTokens[seat])));
+const draw = (h, state, extra = {}) =>
+  render(state, h, { mySeat: 1, names: ['Ann', 'Bo'], onAction: () => {}, ...extra });
+const coinsIn = (h) => all(h).filter((n) => n.classes.has('dc-coin'));
+
+test('walkPath lists every square between from and to, wrapping past the corner', () => {
+  assert.deepEqual(walkPath(3, 7), [4, 5, 6, 7]);
+  assert.deepEqual(walkPath(38, 2), [39, 0, 1, 2]);
+  assert.deepEqual(walkPath(5, 5), []);
+});
+
+test('a long jump (jail, a card) is not walked', () => {
+  assert.deepEqual(walkPath(30, 10), []);
+  assert.deepEqual(walkPath(7, 4), []);
+});
+
+test('the first render places tokens without walking', () => {
+  withTimers((t) => {
+    const h = mount(at([20, 0], { moves: 4 }), 1);
+    assert.equal(t.pending(), 0);
+    assert.deepEqual(shownOf(h), [20, 0]);
+    assert.equal(h.__dc.busy, false);
+  });
+});
+
+test('the walk passes through every square between from and to', () => {
+  withTimers((t) => {
+    const h = mount(at([3, 0], { moves: 1 }), 1);
+    draw(h, at([8, 0], { moves: 2 }));
+    const seen = [h.__dc.shown[0]];
+    assert.equal(h.__dc.busy, true);
+    while (t.step()) seen.push(h.__dc.shown[0]);
+    assert.deepEqual([...new Set(seen)], [4, 5, 6, 7, 8]);
+    assert.equal(h.__dc.busy, false);
+    assert.equal(tileOfTok(h, 0), 8);
+  });
+});
+
+test('buttons stay disabled while a token walks, then come back', () => {
+  withTimers((t) => {
+    const endBtns = (h) => buttonsIn(h).filter((b) => /end turn/i.test(b.textContent));
+    const h = mount(at([3, 0], { moves: 1 }), 0);
+    draw(h, at([8, 0], { moves: 2, phase: 'end', actor: 0 }), { mySeat: 0 });
+    assert.ok(endBtns(h).length > 0 && endBtns(h).every((b) => b.disabled));
+    t.flush();
+    assert.ok(endBtns(h).every((b) => !b.disabled));
+  });
+});
+
+test('reduced motion settles the tokens immediately', () => {
+  withTimers((t) => {
+    const h = mount(at([3, 0], { moves: 1 }), 1);
+    draw(h, at([8, 0], { moves: 2 }));
+    assert.equal(t.pending(), 0);
+    assert.deepEqual(shownOf(h), [8, 0]);
+    assert.equal(h.__dc.busy, false);
+  }, { reduced: true });
+});
+
+test('without setTimeout the tokens settle immediately', () => {
+  const real = globalThis.setTimeout;
+  try {
+    const h = mount(at([3, 0], { moves: 1 }), 1);
+    globalThis.setTimeout = undefined;
+    draw(h, at([8, 0], { moves: 2 }));
+    assert.deepEqual(shownOf(h), [8, 0]);
+    assert.equal(h.__dc.busy, false);
+  } finally { globalThis.setTimeout = real; }
+});
+
+test('a repeated state does not start a second animation', () => {
+  withTimers((t) => {
+    const h = mount(at([3, 0], { moves: 1 }), 1);
+    const move = at([8, 0], { moves: 2 });
+    draw(h, move);
+    const gen = h.__dc.generation, queued = t.pending();
+    t.step();
+    const midway = shownOf(h);
+    // The score write re-delivers the same state, as a fresh object, mid-walk.
+    draw(h, { ...move, scored: true });
+    assert.equal(h.__dc.generation, gen);
+    assert.equal(t.pending(), queued, 'no second chain');
+    assert.deepEqual(shownOf(h), midway, 'tokens did not snap or move back');
+    t.flush();
+    assert.deepEqual(shownOf(h), [8, 0]);
+    // And once it has landed, a re-delivery is still inert.
+    draw(h, { ...move, scored: true });
+    assert.equal(h.__dc.generation, gen);
+    assert.equal(t.pending(), 0);
+  });
+});
+
+test('a newer state supersedes an animation already running', () => {
+  withTimers((t) => {
+    const h = mount(at([3, 0], { moves: 1 }), 1);
+    draw(h, at([12, 0], { moves: 2 }));
+    t.step(); t.step();
+    const first = h.__dc.generation;
+    draw(h, at([12, 6], { moves: 3, actor: 1 }));
+    assert.equal(h.__dc.generation, first + 1);
+    t.flush();
+    assert.deepEqual(shownOf(h), [12, 6]);
+    assert.equal(tileOfTok(h, 0), 12);
+    assert.equal(tileOfTok(h, 1), 6);
+    assert.equal(h.__dc.busy, false);
+  });
+});
+
+test('the board is built once and reused on the next render', () => {
+  withTimers((t) => {
+    const h = mount(at([3, 0], { moves: 1 }), 1);
+    const tiles = [...h.__dc.tiles], root = h.children[0];
+    draw(h, at([8, 0], { moves: 2 }));
+    t.flush();
+    assert.equal(h.children.length, 1);
+    assert.equal(h.children[0], root);
+    assert.ok(h.__dc.tiles.every((x, i) => x === tiles[i]));
+  });
+});
+
+test('a house that is built pops, and does not pop again on a repeat', () => {
+  withTimers((t) => {
+    const sq = setSquares[0];
+    const base = { ...ownSet(0), moves: 5, phase: 'end', actor: 0 };
+    const h = mount(base, 0);
+    assert.equal(h.__dc.tiles[sq].classes.has('dc-pop'), false);
+    const built = applyAction(base, { type: 'build', square: sq }, 0).state;
+    draw(h, built, { mySeat: 0 });
+    assert.equal(h.__dc.tiles[sq].classes.has('dc-pop'), true);
+    t.flush();
+    assert.equal(h.__dc.tiles[sq].classes.has('dc-pop'), false, 'the pop clears itself');
+    draw(h, { ...built, scored: true }, { mySeat: 0 });
+    assert.equal(h.__dc.tiles[sq].classes.has('dc-pop'), false);
+  });
+});
+
+test('a pop survives the next paint (paintTile keeps other classes)', () => {
+  withTimers(() => {
+    const sq = setSquares[0];
+    const base = { ...ownSet(0), moves: 5, phase: 'end', actor: 0 };
+    const h = mount(base, 0);
+    draw(h, applyAction(base, { type: 'build', square: sq }, 0).state, { mySeat: 0 });
+    paintTile(h.__dc.tiles[sq], base, sq);
+    assert.equal(h.__dc.tiles[sq].classes.has('dc-pop'), true);
+  });
+});
+
+test('paying a debt flicks money toward whoever is owed', () => {
+  withTimers((t) => {
+    const owing = { ...fresh(), moves: 6, phase: 'pay', actor: 0, owed: 120, owedTo: 1, cash: [800, 500] };
+    const h = mount(owing, 0);
+    const paid = applyAction(owing, { type: 'pay' }, 0).state;
+    draw(h, paid, { mySeat: 0 });
+    assert.equal(coinsIn(h).length, 1);
+    assert.equal(coinsIn(h)[0].dataset.to, '1');
+    assert.ok(coinsIn(h)[0].textContent.includes('120'));
+    draw(h, { ...paid, scored: true }, { mySeat: 0 });
+    assert.equal(coinsIn(h).length, 1, 'a repeat flicks nothing more');
+    t.flush();
+    assert.equal(coinsIn(h).length, 0, 'the coin removes itself');
+  });
+});
+
+test('paying the Free Parking pot flicks no coin to a player', () => {
+  withTimers(() => {
+    const owing = { ...fresh(), moves: 6, phase: 'pay', actor: 0, owed: 50, owedTo: -1, cash: [800, 500] };
+    const h = mount(owing, 0);
+    draw(h, applyAction(owing, { type: 'pay' }, 0).state, { mySeat: 0 });
+    assert.equal(coinsIn(h).length, 0);
+  });
+});
+
+test('reduced motion flicks no coin', () => {
+  withTimers(() => {
+    const owing = { ...fresh(), moves: 6, phase: 'pay', actor: 0, owed: 120, owedTo: 1, cash: [800, 500] };
+    const h = mount(owing, 0);
+    draw(h, applyAction(owing, { type: 'pay' }, 0).state, { mySeat: 0 });
+    assert.equal(coinsIn(h).length, 0);
+  }, { reduced: true });
 });

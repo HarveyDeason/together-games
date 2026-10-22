@@ -295,6 +295,30 @@ export function propertyFor(state, mySeat, sq) {
   };
 }
 
+// ---- things that move -------------------------------------------------------
+// Tokens walk square by square, a built house pops, and money flicks toward
+// whoever is owed. All of it happens out on the board, never in the centre.
+// The discipline is Snakes & Ladders': every chain carries a generation and a
+// superseded one stops; everything reads the latest state off the world; a
+// re-delivered state starts nothing.
+
+const STEP_MS = 90;     // one square
+const POP_MS = 420;
+const COIN_MS = 650;
+const MAX_WALK = 12;    // beyond this a move is a jump (jail, a card), not a walk
+
+const prefersReducedMotion = () =>
+  typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+const motionOn = () => !prefersReducedMotion() && typeof setTimeout === 'function';
+
+/** The squares a token steps on going from `from` to `to`, forward round the
+ *  ring. Empty when it did not move, or moved too far to be a walk. */
+export function walkPath(from, to) {
+  const n = (to - from + 40) % 40;
+  if (n === 0 || n > MAX_WALK) return [];
+  return Array.from({ length: n }, (_, k) => (from + k + 1) % 40);
+}
+
 // ---- drawing ---------------------------------------------------------------
 
 const FACES = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
@@ -306,7 +330,7 @@ const FACES = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
 function actionButton(world, spec, buildAction, className) {
   const b = el(world.doc, 'button', className || `btn dc-btn dc-btn-${spec.kind || 'secondary'}`, spec.label);
   b.type = 'button';
-  b.disabled = !!spec.disabled || world.pending;
+  b.disabled = !!spec.disabled || world.pending || world.busy;
   if (spec.why) b.setAttribute('title', spec.why);
   b.addEventListener('click', () => {
     if (b.disabled) return;
@@ -357,8 +381,9 @@ function buildWorld(doc, host) {
   host.appendChild(root);
 
   const world = {
-    doc, root, chips, potChip, tiles, dice, feed, sheet, decision, room,
-    selected: -1, pending: false, state: null, mySeat: null, names: [], onAction: () => {}
+    doc, root, bar, chips, potChip, tiles, dice, feed, sheet, decision, room,
+    selected: -1, pending: false, busy: false, generation: 0, animatedKey: null,
+    shown: null, builtSeen: null, state: null, mySeat: null, names: [], onAction: () => {}
   };
   tiles.forEach((tile, i) => {
     tile.addEventListener('click', () => {
@@ -434,8 +459,11 @@ function paint(world) {
   }
   world.potChip.textContent = `Free Parking  ${state.pot}`;
 
+  // Tokens are drawn where the walk has got to, not where the state says they
+  // end up: the state, with the positions shown so far.
+  const view = world.shown ? { ...state, pos: world.shown } : state;
   world.tiles.forEach((tile, i) => {
-    paintTile(tile, state, i);
+    paintTile(tile, view, i);
     if (i === world.selected) tile.classList.add('is-picked');
     else tile.classList.remove('is-picked');
   });
@@ -459,9 +487,100 @@ export function renderBoard(state, host, { mySeat, names, onAction }) {
     world = buildWorld(host.ownerDocument, host);
     host.__dc = world;
   }
+  const prev = world.state;
   world.state = state;
   world.mySeat = mySeat === undefined ? null : mySeat;
   world.names = names || [];
   world.onAction = onAction;
+  noteChanges(world, prev);
+  animate(world);
   paint(world);
+}
+
+/** The cheap one-shot flourishes. Each compares against what was last seen, so
+ *  a re-delivered state (the score write after a win) triggers nothing. */
+function noteChanges(world, prev) {
+  const s = world.state;
+  const built = world.tiles.map((_, i) => housesOn(s, i));
+  const seen = world.builtSeen;
+  world.builtSeen = built;
+  if (seen && motionOn()) {
+    built.forEach((n, i) => { if (n > seen[i]) pop(world.tiles[i]); });
+  }
+  // A debt just paid to the other player (not to the Free Parking pot).
+  if (prev && motionOn() && prev.phase === 'pay' && prev.owedTo >= 0 && s.moves > prev.moves
+    && s.cash[prev.owedTo] > prev.cash[prev.owedTo]) {
+    flick(world, 1 - prev.owedTo, prev.owedTo, prev.owed);
+  }
+}
+
+function pop(tile) {
+  tile.classList.add('dc-pop');
+  setTimeout(() => tile.classList.remove('dc-pop'), POP_MS);
+}
+
+function flick(world, from, to, amount) {
+  const coin = el(world.doc, 'span', 'dc-coin', `+${amount}`);
+  coin.dataset.from = String(from);
+  coin.dataset.to = String(to);
+  coin.setAttribute('aria-hidden', 'true');
+  world.bar.appendChild(coin);
+  setTimeout(() => { if (typeof coin.remove === 'function') coin.remove(); }, COIN_MS);
+}
+
+function settle(world, repaint) {
+  world.shown = [...world.state.pos];
+  world.busy = false;
+  if (repaint) paint(world);
+}
+
+/** Walk the moving token(s) from where they are SHOWN to where the state says,
+ *  one square per tick. Keyed on moves and the actor, so a state delivered
+ *  twice (the room listens to the whole game node, and a `game/scored` write
+ *  after a win re-delivers it) starts nothing: a chain already running carries
+ *  on and settles on whatever the latest state is. A new key bumps the
+ *  generation, which stops the old chain at its next tick. */
+function animate(world) {
+  const s = world.state;
+  const key = `${s.moves}:${s.actor}`;
+  if (!world.shown) { settle(world, false); world.animatedKey = key; return; }
+  if (world.animatedKey === key) {
+    if (!world.busy) settle(world, false);
+    return;
+  }
+  world.animatedKey = key;
+  const generation = ++world.generation;
+  const superseded = () => world.generation !== generation;
+
+  const paths = [0, 1].map((seat) => (motionOn() ? walkPath(world.shown[seat], s.pos[seat]) : []));
+  if (!paths[0].length && !paths[1].length) { settle(world, false); return; }
+
+  // A seat that is not walking (or jumps) is simply where the state says.
+  for (const seat of [0, 1]) if (!paths[seat].length) world.shown[seat] = s.pos[seat];
+  const step = [0, 0];
+  world.busy = true;
+  const hop = () => {
+    if (superseded()) return;
+    for (const seat of [0, 1]) {
+      if (step[seat] < paths[seat].length) world.shown[seat] = paths[seat][step[seat]++];
+    }
+    if (step[0] < paths[0].length || step[1] < paths[1].length) {
+      paintTokens(world);
+      setTimeout(hop, STEP_MS);
+    } else {
+      // Landed: settle on the LATEST state, never the one this chain began with.
+      settle(world, true);
+    }
+  };
+  hop();
+}
+
+/** Between steps only the tokens change; repaint just the tiles that hold one
+ *  (or held one) rather than all forty. */
+function paintTokens(world) {
+  const view = { ...world.state, pos: world.shown };
+  world.tiles.forEach((tile, i) => {
+    const has = tile.dcTokens.some((t) => Array.from(tile.children).some((c) => Array.from(c.children).includes(t)));
+    if (has || view.pos.includes(i)) paintTile(tile, view, i);
+  });
 }

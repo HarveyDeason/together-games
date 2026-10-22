@@ -421,3 +421,43 @@ test('a board left behind by another game is rebuilt', () => {
   assert.equal(h.children.length, 1);
   assert.notEqual(h.children[0], stale);
 });
+
+// ---- names at display time (the stored log stays name-free) ---------------
+test('feed lines name both players, every occurrence', () => {
+  const names = ['Zed', 'Quill'];
+  const log = ['Player 1 declares bankruptcy. Player 2 wins.', 'Tallied up: Player 2 is ahead, 1820 to 1353.',
+    'Player 1 pays 35 to Player 2.'];
+  const out = feedLines(withState({ log }), 3, names);
+  assert.deepEqual(out, [
+    `${names[0]} declares bankruptcy. ${names[1]} wins.`,
+    `Tallied up: ${names[1]} is ahead, 1820 to 1353.`,
+    `${names[0]} pays 35 to ${names[1]}.`
+  ]);
+  assert.equal(withState({ log }).log[0], log[0]);   // stored log untouched
+});
+
+test('a missing or blank name falls back to Player N', () => {
+  const log = ['Player 1 pays 5 to Player 2.'];
+  assert.deepEqual(feedLines(withState({ log }), 1, ['', undefined]), ['Player 1 pays 5 to Player 2.']);
+  assert.deepEqual(feedLines(withState({ log }), 1, ['  ', 'Quill']), ['Player 1 pays 5 to Quill.']);
+  assert.deepEqual(feedLines(withState({ log }), 1), log);
+  assert.deepEqual(feedLines(withState({ log }), 1, ['Player 2', 'X']), ['Player 2 pays 5 to X.']);
+});
+
+test('the rendered feed shows the names', () => {
+  const h = mount(withState({ log: ['Player 2 offers to tally up and call it.'] }), 0);
+  assert.ok(text(h).includes('Bo offers to tally up'));
+  assert.ok(!text(h).includes('Player 2 offers'));
+});
+
+test('tally UI in the DOM: the offerer gets no cancel, the other seat gets Accept and Decline', () => {
+  const offered = withState({ settleOffer: 0 });
+  const mine = mount(offered, 0);
+  const labels0 = buttonsIn(mine).map((b) => b.textContent);
+  assert.ok(!labels0.some((l) => /accept|decline|cancel|withdraw|offer/i.test(l)));
+  assert.ok(text(mine).includes('offered to tally up'));
+  const theirs = mount(offered, 1);
+  const labels1 = buttonsIn(theirs).map((b) => b.textContent);
+  assert.ok(labels1.includes('Accept') && labels1.includes('Decline'));
+  assert.ok(!labels1.some((l) => /offer to tally/i.test(l)));
+});

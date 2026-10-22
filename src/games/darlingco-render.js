@@ -125,9 +125,16 @@ const SIDE_PHASES = ['roll', 'end', 'pay'];
 const seatName = (names, seat) => (names && names[seat]) || `Player ${seat + 1}`;
 
 /** The last `n` log lines, oldest first. Reads through readLog: Firebase
- *  drops an empty array, so a fresh game's log arrives undefined. */
-export function feedLines(state, n = FEED_LINES) {
-  return readLog(state).slice(-n);
+ *  drops an empty array, so a fresh game's log arrives undefined. The stored
+ *  log is name-free ("Player 1"); names are substituted here, at display
+ *  time, in one pass so a name that itself contains "Player 2" is untouched.
+ *  A missing or blank name falls back to "Player N". */
+export function feedLines(state, n = FEED_LINES, names) {
+  return readLog(state).slice(-n).map((line) =>
+    line.replace(/Player ([12])\b/g, (_m, d) => {
+      const name = names && typeof names[Number(d) - 1] === 'string' ? names[Number(d) - 1].trim() : '';
+      return name || `Player ${d}`;
+    }));
 }
 
 function cardOf(state) {
@@ -257,8 +264,7 @@ export function propertyFor(state, mySeat, sq) {
   const cash = state.cash[mySeat];
 
   let gate = '';
-  if (state.phase === 'over') gate = 'The game is over';
-  else if (!SIDE_PHASES.includes(state.phase)) gate = 'Finish the decision first';
+  if (!SIDE_PHASES.includes(state.phase)) gate = 'Finish the decision first';
   else if (state.actor !== mySeat) gate = 'Not your move';
 
   const reason = (ok) => gate || (ok === true ? '' : ok);
@@ -437,7 +443,7 @@ function paint(world) {
   world.dice.textContent = state.die1 > 0 ? `${FACES[state.die1 - 1]} ${FACES[state.die2 - 1]}` : '';
 
   clear(world.feed);
-  for (const line of feedLines(state)) world.feed.appendChild(el(world.doc, 'li', 'dc-line', line));
+  for (const line of feedLines(state, FEED_LINES, names)) world.feed.appendChild(el(world.doc, 'li', 'dc-line', line));
 
   paintSheet(world);
   world.feed.hidden = !world.sheet.hidden;

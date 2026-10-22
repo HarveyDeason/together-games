@@ -783,8 +783,9 @@ test('a back card moves back and never collects GO', () => {
   assert.equal(t.phase, 'pay');
   assert.equal(t.owed, 200);
   assert.equal(t.owedTo, -1);
-  // 5 back across GO: from square 1 forwards 6 is 7, but start further on to land near 0
-  const u = ok(cardOk(drawLJ('8', { pos: [0, 0] })));
+  // No shipped back card sits near GO, so cross it with a synthetic one: 2 back 5 is 37.
+  const u = applyCard({ ...createInitialState(), pos: [2, 0] }, 0, { effect: { k: 'back', n: 5 } });
+  assert.equal(u.pos[0], 37);
   assert.equal(u.cash[0], START_CASH);
 });
 

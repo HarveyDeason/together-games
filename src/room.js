@@ -1,4 +1,7 @@
-import { db, ref, get, set, remove, onValue, runTransaction, onDisconnect, onConnectionChange } from './firebase.js';
+import {
+  db, ref, get, set, update, remove, onValue,
+  runTransaction, onDisconnect, onConnectionChange, serverTimestamp
+} from './firebase.js';
 import { randomCode } from './roomcode.js';
 
 const MAX_CODE_ATTEMPTS = 5;
@@ -22,9 +25,54 @@ export async function roomExists(code) {
   return snap.exists();
 }
 
+/** The whole room, read once.
+ *
+ *  The lobby needs this rather than a subscription: it has to judge the
+ *  seven-day cutoff against what the database actually says, and it cannot do
+ *  that from a cached value without hiding a game that came back to life while
+ *  nobody was looking. */
+export async function readRoom(code) {
+  const snap = await get(ref(db, `rooms/${code}`));
+  return snap.exists() ? snap.val() : null;
+}
+
+/** Stamps when the game was last played, on the SERVER's clock.
+ *
+ *  Never Date.now(): the phone that moves is not the phone that reads, and two
+ *  devices a few minutes apart would render "in 3 minutes" — or, worse, shift
+ *  the seven-day cutoff by days.
+ *
+ *  This is a separate write rather than part of the game transaction, because a
+ *  sentinel inside runTransaction does not survive the retry. It is allowed to
+ *  fail silently: a missed stamp only makes a row look older than it is, and
+ *  the cutoff's other half — when you last opened the room — keeps it alive. */
+export function markActivity(code) {
+  return update(ref(db, `rooms/${code}/meta`), { lastActivityAt: serverTimestamp() })
+    .catch(() => {});
+}
+
+/** Closes a room for good, for both players. There is no un-end.
+ *
+ *  This lives in `meta` and not in `game` on purpose: Rematch replaces the
+ *  whole `game` node, so an ended flag stored there would be silently wiped by
+ *  a button either player can press. */
+export function endRoom(code) {
+  return update(ref(db, `rooms/${code}/meta`), { endedAt: serverTimestamp() });
+}
+
+export async function isRoomEnded(code) {
+  const snap = await get(ref(db, `rooms/${code}/meta/endedAt`));
+  return snap.exists();
+}
+
 /** Claims seat 0 or 1. Re-joining a room you are already in returns your
  *  existing seat rather than consuming a second one. */
 export async function joinRoom(code, identity) {
+  // Checked before the seat transaction, and before anything records that you
+  // were here. Without it, tapping a months-old WhatsApp link would quietly
+  // resurrect a deliberately ended game and put it back on both lists.
+  if (await isRoomEnded(code)) throw new Error('room-ended');
+
   const result = await runTransaction(ref(db, `rooms/${code}/players`), (players) => {
     const current = players || {};
     if (current[identity.clientId]) {

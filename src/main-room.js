@@ -1,6 +1,7 @@
 import { db, ref, onValue, runTransaction, onConnectionChange } from './firebase.js';
 import { getIdentity } from './identity.js';
-import { joinRoom, trackPresence } from './room.js';
+import { joinRoom, trackPresence, markActivity, endRoom } from './room.js';
+import { rememberRoom, recordVisit, cacheRoom, forgetRoom } from './myrooms.js';
 import { normaliseCode, isValidCode } from './roomcode.js';
 import { GAMES, getGame, DEFAULT_GAME } from './games/registry.js';
 import { initChat } from './chat.js';
@@ -15,6 +16,9 @@ const opponentEl = document.getElementById('opponent');
 const bannerEl = document.getElementById('banner');
 const scoreEl = document.getElementById('score-line');
 const pickerEl = document.getElementById('game-picker');
+const leaveRowEl = document.getElementById('leave-row');
+const leaveNoteEl = document.getElementById('leave-note');
+const backHomeEl = document.getElementById('back-home');
 
 const code = normaliseCode(new URLSearchParams(location.search).get('r'));
 const identity = getIdentity();
@@ -34,6 +38,7 @@ let gameId = DEFAULT_GAME;
 let game = getGame(DEFAULT_GAME);
 let state = null;
 let online = true;
+let ended = false;
 
 function showBanner(text) {
   bannerEl.textContent = text;
@@ -65,6 +70,7 @@ function updateOpponent() {
 }
 
 function renderScores() {
+  if (ended) return;
   if (mySeat === null) return;
   const names = namesBySeat();
   const otherSeat = mySeat === 0 ? 1 : 0;
@@ -80,6 +86,11 @@ function renderScores() {
 }
 
 function draw() {
+  // An ended room is never drawn again, by any route. The connection listener
+  // calls draw() on every reconnect — routine on a phone that locks or loses
+  // signal — and without this it would repaint a live board, re-offer Rematch
+  // and accept moves on a game that was closed for good.
+  if (ended) return;
   if (!state) return;
   const status = game.getStatus(state);
   const names = namesBySeat();
@@ -104,6 +115,10 @@ function draw() {
 /** All game writes go through a transaction, so two simultaneous taps
  *  resolve cleanly instead of overwriting each other. */
 async function submitAction(action) {
+  // A game transaction cannot see meta/endedAt from inside itself, so the local
+  // flag is the only check available — and it is the one that matters, since a
+  // move landing in a closed room would be written for both players.
+  if (ended) return;
   let rejected = false;
   // Transact on the whole node and read the module from `current.id`. Using the
   // local `game` meant a tap landing in the window between the other player
@@ -125,7 +140,36 @@ async function submitAction(action) {
       [{ transform: 'translateX(-4px)' }, { transform: 'translateX(4px)' }, { transform: 'translateX(0)' }],
       { duration: 160, iterations: 2 }
     );
+    return;
   }
+  // Only a move that actually landed counts as the room being alive.
+  markActivity(code);
+}
+
+/** Everything that makes the room look over.
+ *
+ *  Reached two ways: arriving at an already-ended room, and the other player
+ *  ending it while you are looking at the board. Both have to leave the same
+ *  screen behind, with nothing left to press. */
+function showEnded() {
+  ended = true;
+  state = null;        // nothing left for a stray draw() to repaint
+  boardEl.innerHTML = '';
+  delete boardEl.__sl;
+  turnEl.textContent = 'This game has ended.';
+  scoreEl.textContent = '';
+  rematchEl.hidden = true;
+  pickerEl.hidden = true;
+  // Nothing left to press. A row of reaction buttons under "this game has
+  // ended" invites you to keep playing with a room that is closed.
+  document.getElementById('reaction-bar').hidden = true;
+  leaveRowEl.hidden = true;
+  leaveNoteEl.hidden = false;
+  leaveNoteEl.textContent = 'It is closed for both of you, and cannot be reopened.';
+  // Somebody arriving on an old link has no other way out: the invite path uses
+  // location.replace, so Back goes to wherever the link came from.
+  backHomeEl.hidden = false;
+  forgetRoom(code);
 }
 
 rematchEl.addEventListener('click', async () => {
@@ -141,8 +185,40 @@ rematchEl.addEventListener('click', async () => {
       if (mod.getStatus(current.state).phase === 'playing') return;
       return { id: current.id, state: mod.createInitialState({ first: mod.nextStarter(current.state) }) };
     });
+    markActivity(code);
   } catch {
     showBanner('Could not start a new game. Check your connection.');
+  }
+});
+
+/** Leaving on purpose.
+ *
+ *  Mechanically this is almost nothing — closing the tab does the same. Its job
+ *  is to say so. Nothing on this site has ever told you a game survives being
+ *  walked away from, and that doubt is what stops two people starting a long
+ *  game at 10pm. */
+backHomeEl.addEventListener('click', () => { location.href = 'index.html'; });
+
+document.getElementById('save-leave').addEventListener('click', () => {
+  recordVisit(code);
+  location.href = 'index.html';
+});
+
+document.getElementById('end-game').addEventListener('click', async () => {
+  const confirmed = confirm(
+    'End this game for good?\n\n'
+    + 'It closes for both of you and cannot be reopened.\n\n'
+    + 'If you just want to stop for now and carry on later, use Save & leave instead — '
+    + 'the game keeps itself.'
+  );
+  if (!confirmed) return;
+
+  try {
+    await endRoom(code);
+    forgetRoom(code);
+    location.href = 'index.html?ended=1';
+  } catch {
+    showBanner('Could not end the game. Check your connection.');
   }
 });
 
@@ -213,11 +289,30 @@ async function start() {
   try {
     ({ seat: mySeat } = await joinRoom(code, identity));
   } catch (error) {
+    if (error.message === 'room-ended') {
+      // Deliberately before rememberRoom: an old shared link must not put a
+      // closed game back on anybody's list.
+      showEnded();
+      showBanner('This game has ended.');
+      return;
+    }
     showBanner(error.message === 'room-full'
       ? 'This room already has two players.'
       : 'Could not join this room.');
     return;
   }
+
+  // Only now: a client that never got a seat has no business ending the game.
+  leaveRowEl.hidden = false;
+  leaveNoteEl.hidden = false;
+
+  rememberRoom(code, gameId);
+  markActivity(code);
+
+  // The other player can close the room while you are looking at the board.
+  onValue(ref(db, `rooms/${code}/meta/endedAt`), (snap) => {
+    if (snap.exists() && !ended) showEnded();
+  });
 
   onValue(ref(db, `rooms/${code}/players`), (snap) => {
     players = snap.val() || {};
@@ -248,6 +343,7 @@ async function start() {
   // window where the id names one game and the state belongs to another, and
   // the other phone throws rendering it.
   onValue(ref(db, `rooms/${code}/game`), async (snap) => {
+    if (ended) return;   // never lay a fresh board out on a closed room
     const node = snap.val();
 
     if (!node?.state) {
@@ -261,6 +357,8 @@ async function start() {
     const nextId = GAMES[node.id] ? node.id : DEFAULT_GAME;
     if (nextId !== gameId) {
       gameId = nextId;
+      // So the lobby row names the right game before any read comes back.
+      cacheRoom(code, { gameId });
       game = getGame(gameId);
       boardEl.innerHTML = '';
       delete boardEl.__sl;          // drop the previous game's cached scene

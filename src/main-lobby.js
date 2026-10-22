@@ -1,6 +1,8 @@
 import { getIdentity, saveName } from './identity.js';
-import { createRoom, roomExists } from './room.js';
+import { createRoom, roomExists, readRoom } from './room.js';
 import { isValidCode, normaliseCode } from './roomcode.js';
+import { initRoomList } from './roomlist.js';
+import { db, ref, onValue } from './firebase.js';
 
 const nameStep = document.getElementById('name-step');
 const roomStep = document.getElementById('room-step');
@@ -14,11 +16,23 @@ function showError(message) {
   errorEl.textContent = message;
 }
 
+/** The real pair the room list runs on. Injected rather than imported by
+ *  roomlist.js, which has to stay loadable outside a browser. */
+function watchRoom(code, onChange) {
+  return onValue(ref(db, `rooms/${code}`), (snap) => onChange(snap.val()));
+}
+
 function showRoomStep(identity) {
   nameStep.hidden = true;
   roomStep.hidden = false;
   greeting.textContent = `Hello, ${identity.name}.`;
   currentName.textContent = identity.name;
+  initRoomList({
+    container: document.getElementById('rooms-list'),
+    identity,
+    read: readRoom,
+    watch: watchRoom
+  });
 }
 
 function showNameStep(identity) {
@@ -98,6 +112,14 @@ if (hasInvite) {
   document.getElementById('invite-line').textContent =
     `You have been invited to room ${invitedTo}.`;
   document.getElementById('invite-line').hidden = false;
+}
+
+// Coming back from a game you just closed. Said once, on the way past, rather
+// than as an error — ending it was the point.
+if (new URLSearchParams(location.search).get('ended') === '1') {
+  const line = document.getElementById('invite-line');
+  line.textContent = 'That game is closed. Start a new room whenever you like.';
+  line.hidden = false;
 }
 
 const identity = getIdentity();

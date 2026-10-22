@@ -13,6 +13,12 @@
           "currentGame": {
             ".validate": "newData.isString() && newData.val().length <= 32"
           },
+          "lastActivityAt": {
+            ".validate": "newData.isNumber()"
+          },
+          "endedAt": {
+            ".validate": "newData.isNumber()"
+          },
           "$other": {
             ".validate": false
           }

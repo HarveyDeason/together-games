@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { LJ_CARDS, JB_CARDS, MAX_LOG, START_CASH } from '../src/games/darlingco-board.js';
-import { rentFor } from '../src/games/darlingco-state.js';
+import { rentFor, netWorth } from '../src/games/darlingco-state.js';
 import {
   meta, createInitialState, getStatus, nextStarter, shuffleOrder, logged, readLog, applyAction, sendToJail, applyCard
 } from '../src/games/darlingco.js';
@@ -939,4 +939,126 @@ test('applyCard prices a utility from the total it is given, not from the dice i
   const stale = { ...createInitialState(), pos: [7, 0], die1: 6, die2: 6, phase: 'card', own: ownAt([[12, '1']]) };
   assert.equal(applyCard(stale, 0, card, 7).owed, 28);
   assert.equal(applyCard(stale, 0, card).owed, 48); // default is the state's own roll
+});
+
+// ---- Task 8: ending it ----
+const tally = (s, type, seat) => applyAction(s, { type }, seat);
+const richer = () => ({ ...createInitialState(), cash: [900, 1500] });
+
+test('declaring bankruptcy ends the game and the other player wins', () => {
+  const before = demand();
+  const s = ok(act(before, 'bankrupt'));
+  assert.equal(s.phase, 'over');
+  assert.equal(s.over, 'bankrupt');
+  assert.equal(s.winner, 1 - before.actor);
+  assert.equal(getStatus(s).phase, 'won');
+  assert.equal(getStatus(s).winner, 1 - before.actor);
+  assert.equal(s.moves, before.moves + 1);
+  assert.match(readLog(s).at(-1), /bankrupt/i);
+  assert.equal(before.phase, 'pay'); // input not mutated
+});
+
+test('bankruptcy is only available while you owe money', () => {
+  const s = createInitialState();
+  assert.equal(act(s, 'bankrupt').error, 'wrong-phase');
+  assert.equal(act({ ...s, phase: 'end' }, 'bankrupt').error, 'wrong-phase');
+  const d = demand();
+  assert.equal(act(d, 'bankrupt', 1 - d.actor).error, 'not-your-turn');
+});
+
+test('the engine never declares bankruptcy for you', () => {
+  // owes far more than cash plus everything they own: still just in 'pay'
+  const owing = { ...demand(), cash: [0, 0], owed: 5000, own: own([[1, 0], [3, 0]]) };
+  assert.equal(act(owing, 'pay').error, 'cannot-afford');
+  assert.equal(owing.phase, 'pay');
+  assert.equal(owing.over, '');
+  assert.equal(owing.winner, -1);
+  assert.equal(getStatus(owing).phase, 'playing');
+  // selling up does not trip it either
+  const still = ok(applyAction(owing, { type: 'mortgage', square: 1 }, owing.actor));
+  assert.equal(still.phase, 'pay');
+  assert.equal(still.over, '');
+});
+
+test('either player can offer to tally up, at any point', () => {
+  for (const phase of ['roll', 'end', 'buy', 'pay', 'card']) {
+    for (const seat of [0, 1]) {
+      const s = ok(tally({ ...createInitialState(), phase }, 'offer-tally', seat));
+      assert.equal(s.settleOffer, seat);
+      assert.equal(s.moves, 1);
+      assert.equal(readLog(s).length, 1);
+    }
+  }
+});
+
+test('an offer does not pause the game', () => {
+  const before = demand();
+  const s = ok(tally(before, 'offer-tally', 1 - before.actor));
+  assert.equal(s.actor, before.actor);
+  assert.equal(s.turn, before.turn);
+  assert.equal(s.phase, before.phase);
+  assert.equal(before.settleOffer, -1);
+  assert.equal(ok(act(s, 'pay')).settleOffer, 1 - before.actor);
+});
+
+test('you cannot accept your own offer', () => {
+  const s = ok(tally(createInitialState(), 'offer-tally', 0));
+  assert.equal(tally(s, 'accept-tally', 0).error, 'own-offer');
+  assert.equal(tally(s, 'decline-tally', 0).error, 'own-offer');
+  assert.equal(tally(createInitialState(), 'accept-tally', 1).error, 'no-offer');
+  assert.equal(tally(createInitialState(), 'decline-tally', 1).error, 'no-offer');
+});
+
+test('accepting ends the game and the bigger pile wins', () => {
+  const s = ok(tally(ok(tally(richer(), 'offer-tally', 0)), 'accept-tally', 1));
+  assert.equal(s.phase, 'over');
+  assert.equal(s.over, 'tally');
+  assert.equal(s.winner, 1);
+  assert.equal(getStatus(s).phase, 'won');
+  // property counts, not just cash
+  const prop = { ...richer(), own: own([[39, 0], [37, 0]]) };
+  assert.ok(netWorth(prop, 0) > netWorth(prop, 1));
+  const w = ok(tally(ok(tally(prop, 'offer-tally', 1)), 'accept-tally', 0));
+  assert.equal(w.winner, 0);
+});
+
+test('an exactly level tally is a draw', () => {
+  const s = ok(tally(ok(tally(createInitialState(), 'offer-tally', 1)), 'accept-tally', 0));
+  assert.equal(s.winner, -1);
+  assert.equal(s.over, 'tally');
+  assert.equal(getStatus(s).phase, 'draw');
+});
+
+test('the other player can decline, and the game carries on', () => {
+  const offered = ok(tally(createInitialState(), 'offer-tally', 0));
+  const s = ok(tally(offered, 'decline-tally', 1));
+  assert.equal(s.settleOffer, -1);
+  assert.equal(s.phase, 'roll');
+  assert.equal(s.moves, 2);
+  assert.equal(ok(tally(s, 'offer-tally', 0)).settleOffer, 0);
+});
+
+test('offering twice is refused', () => {
+  const offered = ok(tally(createInitialState(), 'offer-tally', 0));
+  assert.equal(tally(offered, 'offer-tally', 0).error, 'already-offered');
+  assert.equal(tally(offered, 'offer-tally', 1).error, 'offer-standing');
+});
+
+test('nothing can be done once the game is over', () => {
+  const over = ok(tally(ok(tally(createInitialState(), 'offer-tally', 0)), 'accept-tally', 1));
+  for (const type of ['offer-tally', 'accept-tally', 'decline-tally', 'bankrupt', 'roll']) {
+    for (const seat of [0, 1]) assert.equal(tally(over, type, seat).error, 'game-over');
+  }
+});
+
+test('tally actions refuse a seat that is not at the table', () => {
+  assert.equal(tally(createInitialState(), 'offer-tally', 2).error, 'not-your-turn');
+  assert.equal(tally(createInitialState(), 'offer-tally', undefined).error, 'not-your-turn');
+});
+
+test('the tally exemption does not open up ordinary actions to the off-turn seat', () => {
+  const s = createInitialState();
+  assert.equal(act(s, 'roll', 1 - s.actor).error, 'not-your-turn');
+  assert.equal(act(s, 'bankrupt', 1 - s.actor).error, 'not-your-turn');
+  assert.equal(applyAction(s, { type: 'build', square: 1 }, 1 - s.actor).error, 'not-your-turn');
 });

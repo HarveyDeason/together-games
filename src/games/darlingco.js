@@ -13,7 +13,7 @@ import {
 } from './darlingco-board.js';
 import {
   BLANK_OWN, BLANK_BUILT, BLANK_MORTG, setChar, ownerOf, isMortgaged, rentFor,
-  housesOn, canBuild, canSell
+  housesOn, canBuild, canSell, netWorth
 } from './darlingco-state.js';
 
 export const meta = { id: GAME_ID, name: GAME_NAME, seats: 2 };
@@ -93,11 +93,11 @@ export function logged(state, line) {
   return [...readLog(state), line].slice(-MAX_LOG);
 }
 
-const KNOWN_ACTIONS = ['roll', 'jail-pay', 'jail-card', 'end', 'buy', 'decline', 'pay', 'card-ok'];
+const KNOWN_ACTIONS = ['roll', 'jail-pay', 'jail-card', 'end', 'buy', 'decline', 'pay', 'card-ok', 'bankrupt'];
 
 /** The one phase each action is admitted in. */
 const PHASE_OF = {
-  roll: 'roll', 'jail-pay': 'roll', 'jail-card': 'roll',
+  roll: 'roll', 'jail-pay': 'roll', 'jail-card': 'roll', bankrupt: 'pay',
   end: 'end', buy: 'buy', decline: 'buy', pay: 'pay', 'card-ok': 'card'
 };
 
@@ -442,12 +442,49 @@ function doSide(state, action, seat) {
   }
 }
 
+/** The tally actions belong to whoever is at the table, not to the actor:
+ *  either seat may offer at any time, and the answer comes from the seat that
+ *  did not offer. applyAction routes these ahead of the actor guard, and only
+ *  these; every other action still meets 'not-your-turn'. */
+const TALLY_ACTIONS = ['offer-tally', 'accept-tally', 'decline-tally'];
+
+function doTally(state, type, seat) {
+  if (seat !== 0 && seat !== 1) return { error: 'not-your-turn' };
+  const who = `Player ${seat + 1}`;
+  const counted = { ...state, moves: state.moves + 1 };
+  if (type === 'offer-tally') {
+    if (state.settleOffer === seat) return { error: 'already-offered' };
+    if (state.settleOffer !== -1) return { error: 'offer-standing' };
+    return { state: say({ ...counted, settleOffer: seat }, `${who} offers to tally up and call it.`) };
+  }
+  if (state.settleOffer === -1) return { error: 'no-offer' };
+  if (state.settleOffer === seat) return { error: 'own-offer' };
+  if (type === 'decline-tally') {
+    return { state: say({ ...counted, settleOffer: -1 }, `${who} declines to tally up. Play on.`) };
+  }
+  const mine = netWorth(state, seat);
+  const theirs = netWorth(state, 1 - seat);
+  const winner = mine === theirs ? -1 : (mine > theirs ? seat : 1 - seat);
+  const end = { ...counted, phase: 'over', over: 'tally', winner };
+  return { state: say(end, winner === -1
+    ? `Tallied up: ${mine} each. A draw.`
+    : `Tallied up: Player ${winner + 1} is ahead, ${Math.max(mine, theirs)} to ${Math.min(mine, theirs)}.`) };
+}
+
+/** Bankruptcy is declared, never computed: nothing here or in 'pay' ever
+ *  decides that a player cannot settle. Only this action ends the game so. */
+function doBankrupt(state, seat) {
+  const end = { ...state, moves: state.moves + 1, phase: 'over', over: 'bankrupt', winner: 1 - seat };
+  return { state: say(end, `Player ${seat + 1} declares bankruptcy. Player ${2 - seat} wins.`) };
+}
+
 /** Guard order matters: it is what makes a double-tap or a transaction retry
  *  safe, because the second application is refused by the phase guard. */
 export function applyAction(state, action, seat) {
   if (state.phase === 'over') return { error: 'game-over' };
-  if (seat !== state.actor) return { error: 'not-your-turn' };
   const type = action && action.type;
+  if (TALLY_ACTIONS.includes(type)) return doTally(state, type, seat);
+  if (seat !== state.actor) return { error: 'not-your-turn' };
   if (SIDE_ACTIONS.includes(type)) {
     if (!SIDE_PHASES.includes(state.phase)) return { error: 'wrong-phase' };
     return doSide(state, action, seat);
@@ -462,6 +499,7 @@ export function applyAction(state, action, seat) {
     case 'decline': return doDecline(state, seat);
     case 'pay': return doPay(state, seat);
     case 'card-ok': return doCardOk(state, seat);
+    case 'bankrupt': return doBankrupt(state, seat);
     default: return doEnd(state, seat);
   }
 }

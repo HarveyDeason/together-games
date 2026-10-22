@@ -196,12 +196,14 @@ function draw(state, seat, deck) {
   const card = cards[index];
   const isOut = card.effect.k === 'out';
   const newOrder = isOut ? order.slice(0, at) + order.slice(at + 1) : order;
+  // A removed card leaves its slot to the next one, so the cursor stays put.
+  const after = isOut ? cursor : cursor + 1;
   let next = {
     ...state,
     phase: 'card',
     pendingCard: index,
     pendingDeck: deck,
-    ...(lj ? { deckLJ: newOrder, curLJ: cursor + 1 } : { deckJB: newOrder, curJB: cursor + 1 })
+    ...(lj ? { deckLJ: newOrder, curLJ: after } : { deckJB: newOrder, curJB: after })
   };
   if (isOut) next.outCards = withAt(state.outCards, seat, state.outCards[seat] + deck);
   return say(next, `Player ${seat + 1} draws from ${lj ? LJ_NAME : JB_NAME}: ${card.text}`);
@@ -219,11 +221,10 @@ function cardMove(state, seat, to, forward, total) {
 }
 
 /** Applies a drawn card's effect. Exported for tests; `applyAction` reaches it
- *  only through `card-ok`. The dice total is passed to the landing explicitly
+ *  only through `card-ok`. `total` (default: the roll in the state) is passed to the landing explicitly
  *  so a card move can never price utility rent from a stale roll. */
-export function applyCard(state, seat, card) {
+export function applyCard(state, seat, card, total = state.die1 + state.die2) {
   const who = `Player ${seat + 1}`;
-  const total = state.die1 + state.die2;
   const e = card.effect;
   const settled = { ...state, phase: 'end', pendingCard: -1, pendingDeck: '' };
   switch (e.k) {

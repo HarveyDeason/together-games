@@ -915,3 +915,28 @@ test('both out cards can be held at once and are returned in the order drawn', (
   assert.equal(used.outCards[0], 'jb');
   assert.equal(used.deckLJ.at(-1), 'f');
 });
+
+test('drawing the out card does not skip the card that follows it', () => {
+  const order = onLJ('a').deckLJ;
+  const withOut = 'b' + 'f' + 'c' + order.replace(/[bfc]/g, '');
+  const first = ok(roll({ ...onLJ('a'), deckLJ: withOut, curLJ: 1 }, 3, 4)); // draws 'f'
+  assert.equal(first.pendingCard, ljIdx('f'));
+  assert.equal(first.curLJ, 1);
+  const again = ok(roll({ ...ok(cardOk(first)), phase: 'roll', pos: [0, 0] }, 3, 4));
+  assert.equal(again.pendingCard, ljIdx('c'));
+});
+
+test('drawing the out card from the last slot wraps to the first', () => {
+  const order = onLJ('a').deckLJ.replace('f', '') + 'f';
+  const s = ok(roll({ ...onLJ('a'), deckLJ: order, curLJ: 15 }, 3, 4));
+  assert.equal(s.pendingCard, ljIdx('f'));
+  const again = ok(roll({ ...ok(cardOk(s)), phase: 'roll', pos: [0, 0] }, 3, 4));
+  assert.equal(again.pendingCard, ljIdx(order[0]));
+});
+
+test('applyCard prices a utility from the total it is given, not from the dice in the state', () => {
+  const card = { code: 'z', text: 'x', effect: { k: 'move', to: 12 } };
+  const stale = { ...createInitialState(), pos: [7, 0], die1: 6, die2: 6, phase: 'card', own: ownAt([[12, '1']]) };
+  assert.equal(applyCard(stale, 0, card, 7).owed, 28);
+  assert.equal(applyCard(stale, 0, card).owed, 48); // default is the state's own roll
+});

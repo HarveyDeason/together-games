@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { LJ_CARDS, JB_CARDS, MAX_LOG, MAX_LOG_LINE, START_CASH } from '../src/games/darlingco-board.js';
+import { LJ_CARDS, JB_CARDS, MAX_LOG, MAX_LOG_LINE, START_CASH, JAIL_FINE } from '../src/games/darlingco-board.js';
 import { rentFor, netWorth } from '../src/games/darlingco-state.js';
 import {
   meta, createInitialState, getStatus, nextStarter, shuffleOrder, logged, readLog, applyAction, sendToJail, applyCard
@@ -1093,4 +1093,28 @@ test('an over-long log line is cut to the limit and ends in an ellipsis', () => 
   assert.equal(long.length, MAX_LOG_LINE);
   assert.ok(long.endsWith('…'));
   assert.equal(logged(createInitialState(), 'x'.repeat(MAX_LOG_LINE)).at(-1).length, MAX_LOG_LINE);
+});
+
+// ---- jail fines feed the Free Parking pot, on every path ----
+
+test('jail-pay by a solvent player moves the fine from cash into the pot', () => {
+  const before = at(10, { jail: [2, 0], pot: 30 });
+  const s = ok(applyAction(before, { type: 'jail-pay' }, 0));
+  assert.equal(s.cash[0], before.cash[0] - JAIL_FINE);
+  assert.equal(s.pot, 30 + JAIL_FINE);
+});
+
+test('the forced third-turn fine by a solvent player moves it into the pot', () => {
+  const before = at(10, { jail: [3, 0], pot: 30 });
+  const s = ok(roll(before, 1, 2));
+  assert.equal(s.cash[0], before.cash[0] - JAIL_FINE);
+  assert.equal(s.pot, 30 + JAIL_FINE);
+});
+
+test('the insolvent third-turn fine reaches the pot exactly once, when the debt is paid', () => {
+  const owing = ok(roll(at(10, { jail: [3, 0], cash: [20, 1500], pot: 30 }), 1, 2));
+  assert.equal(owing.pot, 30);                       // nothing credited while it is only owed
+  const funded = { ...owing, cash: [owing.cash[0] + JAIL_FINE, owing.cash[1]] };
+  const paid = ok(applyAction(funded, { type: 'pay' }, 0));
+  assert.equal(paid.pot, 30 + JAIL_FINE);            // once, not twice
 });

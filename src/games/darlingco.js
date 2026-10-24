@@ -302,7 +302,8 @@ function doRoll(state, action, seat) {
       next = say(next, `${who} owes the ${JAIL_FINE} jail fine and does not move.`);
       return { state: owe(next, seat, JAIL_FINE, -1) };
     }
-    next = say(addCash(next, seat, -JAIL_FINE), `${who} pays the ${JAIL_FINE} fine and leaves jail.`);
+    // A fine is a fine: it piles up in the Free Parking pot like a tax does.
+    next = say({ ...addCash(next, seat, -JAIL_FINE), pot: next.pot + JAIL_FINE }, `${who} pays the ${JAIL_FINE} fine and leaves jail.`);
     return { state: moveAndLand(next, seat, die1 + die2) };
   }
 
@@ -321,7 +322,9 @@ function doRoll(state, action, seat) {
 function doJailPay(state, seat) {
   if (state.jail[seat] === 0) return { error: 'not-in-jail' };
   if (state.cash[seat] < JAIL_FINE) return { error: 'cannot-afford' };
-  const next = addCash({ ...state, jail: withAt(state.jail, seat, 0), moves: state.moves + 1 }, seat, -JAIL_FINE);
+  const next = addCash({
+    ...state, jail: withAt(state.jail, seat, 0), pot: state.pot + JAIL_FINE, moves: state.moves + 1
+  }, seat, -JAIL_FINE);
   return { state: say(next, `Player ${seat + 1} pays the ${JAIL_FINE} fine and is free.`) };
 }
 

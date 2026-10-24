@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { LJ_CARDS, JB_CARDS, MAX_LOG, MAX_LOG_LINE, START_CASH, JAIL_FINE } from '../src/games/darlingco-board.js';
+import { SQUARES, LJ_CARDS, JB_CARDS, MAX_LOG, MAX_LOG_LINE, START_CASH, JAIL_FINE } from '../src/games/darlingco-board.js';
 import { rentFor, netWorth } from '../src/games/darlingco-state.js';
 import {
   meta, createInitialState, getStatus, nextStarter, shuffleOrder, logged, readLog, applyAction, sendToJail, applyCard
@@ -413,6 +413,16 @@ test('rent on a full set with nothing built is doubled', () => {
   assert.equal(s.owed, 16);
 });
 
+test('building on a sibling does not change the doubled rent on a bare lot in the same set', () => {
+  const bare = SQUARES[9].rent[0];
+  const base = { ...createInitialState(), own: own([[6, 1], [8, 1], [9, 1]]) };
+  assert.equal(rentFor(base, 9, 0), bare * 2);
+  const built = { ...base, built: withBuilt([[6, '1']]) };
+  assert.equal(rentFor(built, 9, 0), bare * 2);
+  assert.equal(rentFor(built, 8, 0), SQUARES[8].rent[0] * 2);
+  assert.equal(rentFor(built, 6, 0), SQUARES[6].rent[1]);
+});
+
 test('utility rent follows the dice', () => {
   const s = ok(roll(at(9, { own: own([[12, 1]]) }), 1, 2));
   assert.equal(s.owed, 12);
@@ -800,17 +810,17 @@ test('a back card can land on a card square and draw again', () => {
   assert.equal(s.cash[0], START_CASH);
 });
 
-test('a move card landing on a utility charges rent from the roll that brought you to the card', () => {
+test('a move card landing on a utility charges utility rent from the roll that reached the card', () => {
   // No shipped card moves to a utility, so use a synthetic one: the engine must still be right.
-  // The roll that reached the card IS the roll the rent follows; stale dice must not leak in.
+  // The roll that reached the card IS the roll the rent follows.
   const card = { code: 'z', text: 'x', effect: { k: 'move', to: 12 } };
-  const one = ok(roll(onLJ('a', { own: ownAt([[12, '1']]), die1: 6, die2: 6 }), 3, 4));
+  const one = ok(roll(onLJ('a', { own: ownAt([[12, '1']]) }), 3, 4));
   assert.equal(one.die1 + one.die2, 7);
   const s = applyCard(one, 0, card);
   assert.equal(s.phase, 'pay');
   assert.equal(s.owed, 7 * 4);
   assert.equal(s.owedTo, 1);
-  const two = ok(roll(onLJ('a', { own: ownAt([[12, '1'], [28, '1']]), die1: 6, die2: 6 }), 3, 4));
+  const two = ok(roll(onLJ('a', { own: ownAt([[12, '1'], [28, '1']]) }), 3, 4));
   assert.equal(applyCard(two, 0, card).owed, 70);
 });
 
@@ -1071,6 +1081,23 @@ const rulesLogCap = () => {
   const v = rules.rules.rooms.$code.game.state.log.$index['.validate'];
   return Number(/length <= (\d+)/.exec(v)[1]);
 };
+
+test('the pendingCard cap in firebase-rules.json admits every card index in both decks', () => {
+  const rules = JSON.parse(readFileSync(new URL('../firebase-rules.json', import.meta.url), 'utf8'));
+  const v = rules.rules.rooms.$code.game.state.pendingCard['.validate'];
+  const cap = Number(/<= (\d+)/.exec(v)[1]);
+  assert.ok(cap >= Math.max(LJ_CARDS.length, JB_CARDS.length) - 1, `cap ${cap}`);
+});
+
+test('the board arithmetic: mortgage is half price and rents strictly rise', () => {
+  const ownable = SQUARES.filter(q => q.price !== undefined);
+  assert.ok(ownable.length >= 28);
+  for (const q of ownable) assert.equal(q.mortgage, q.price / 2, q.name);
+  for (const q of SQUARES.filter(q => q.kind === 'prop')) {
+    assert.equal(q.rent.length, 6, q.name);
+    for (let i = 1; i < 6; i++) assert.ok(q.rent[i] > q.rent[i - 1], `${q.name} rent[${i}]`);
+  }
+});
 
 test('the engine line limit sits below the log cap in firebase-rules.json', () => {
   assert.ok(MAX_LOG_LINE < rulesLogCap());

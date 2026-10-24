@@ -82,8 +82,8 @@ test('a bare property in a complete set rents double', () => {
 test('one house beats the doubled bare rent', () => {
   const st = mk({ own: own([1, 3]), built: { 1: 1 } });
   assert.equal(rentFor(st, 1, 7), SQUARES[1].rent[1]);
-  // the sibling is bare but something is built in the set, so no doubling
-  assert.equal(rentFor(st, 3, 7), SQUARES[3].rent[0]);
+  // the sibling is still unimproved in a fully owned set, so its bare rent stays doubled
+  assert.equal(rentFor(st, 3, 7), SQUARES[3].rent[0] * 2);
 });
 
 test('a hotel rents rent[5]', () => {

@@ -61,8 +61,7 @@ export function rentFor(state, sq, diceTotal) {
   if (s.kind !== 'prop') return 0;
   const n = housesOn(state, sq);
   if (n > 0) return s.rent[n];
-  const nothingBuilt = SETS[s.set].squares.every(q => housesOn(state, q) === 0);
-  return ownsFullSet(state, owner, s.set) && nothingBuilt ? s.rent[0] * 2 : s.rent[0];
+  return ownsFullSet(state, owner, s.set) ? s.rent[0] * 2 : s.rent[0];
 }
 
 /** Cash, plus price (or mortgage value if mortgaged) of holdings, plus buildings at cost. */

@@ -124,6 +124,13 @@ const SIDE_PHASES = ['roll', 'end', 'pay'];
 
 const seatName = (names, seat) => (names && names[seat]) || `Player ${seat + 1}`;
 
+/** The two halves of a player's chip. They are separate so a long name can be
+ *  cut short with an ellipsis while the money, which is the point of the chip,
+ *  is never the part that gets cut. */
+export function chipParts(names, seat, mySeat, cash) {
+  return { name: `${seatName(names, seat)}${seat === mySeat ? ' (you)' : ''}`, cash: String(cash) };
+}
+
 /** The last `n` log lines, oldest first. Reads through readLog: Firebase
  *  drops an empty array, so a fresh game's log arrives undefined. The stored
  *  log is name-free ("Player 1"); names are substituted here, at display
@@ -453,11 +460,16 @@ function paint(world) {
   const { state, mySeat, names } = world;
   for (const seat of [0, 1]) {
     const chip = world.chips[seat];
-    chip.textContent = `${seatName(names, seat)}${seat === mySeat ? ' (you)' : ''}  ${state.cash[seat]}`;
+    const parts = chipParts(names, seat, mySeat, state.cash[seat]);
+    clear(chip);
+    chip.appendChild(el(world.doc, 'span', 'dc-chip-name', parts.name));
+    chip.appendChild(el(world.doc, 'span', 'dc-chip-cash', parts.cash));
     if (state.phase !== 'over' && state.actor === seat) chip.classList.add('is-turn');
     else chip.classList.remove('is-turn');
   }
-  world.potChip.textContent = `Free Parking  ${state.pot}`;
+  clear(world.potChip);
+  world.potChip.appendChild(el(world.doc, 'span', 'dc-chip-name', 'Free Parking'));
+  world.potChip.appendChild(el(world.doc, 'span', 'dc-chip-cash', String(state.pot)));
 
   // Tokens are drawn where the walk has got to, not where the state says they
   // end up: the state, with the positions shown so far.

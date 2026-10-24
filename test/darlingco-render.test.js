@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { gridCell, edgeOf, buildBoard, paintTile, decisionFor, feedLines, propertyFor, walkPath } from '../src/games/darlingco-render.js';
+import { gridCell, edgeOf, buildBoard, paintTile, decisionFor, feedLines, propertyFor, walkPath, chipParts } from '../src/games/darlingco-render.js';
 import { createInitialState, render, applyAction } from '../src/games/darlingco.js';
 import { setChar } from '../src/games/darlingco-state.js';
 import { SQUARES, SETS } from '../src/games/darlingco-board.js';
@@ -687,4 +687,11 @@ test('a hop that throws still releases busy', () => {
     tile.dcTokens = real;
     assert.equal(h.__dc.busy, false);
   });
+});
+
+test("chipParts keeps the name and the money apart, and marks your own chip", () => {
+  const names = ["A very long player name indeed", "Shruti"];
+  assert.deepEqual(chipParts(names, 0, 0, 1500), { name: "A very long player name indeed (you)", cash: "1500" });
+  assert.deepEqual(chipParts(names, 1, 0, 44), { name: "Shruti", cash: "44" });
+  assert.deepEqual(chipParts(undefined, 1, 1, 0), { name: "Player 2 (you)", cash: "0" });
 });

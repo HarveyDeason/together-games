@@ -696,8 +696,13 @@ body {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
+  display: flex;
+  gap: 0.4em;
+  align-items: baseline;
 }
+/* The name gives way; the money never does. */
+.dc-chip-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.dc-chip-cash { flex: 0 0 auto; font-weight: 700; }
 .dc-chip.s0 { border-left: 4px solid var(--seat0); }
 .dc-chip.s1 { border-left: 4px solid var(--seat1); }
 .dc-chip.is-turn { border-color: var(--accent); }

@@ -1665,3 +1665,65 @@ test('a malformed bid is refused and the standing bid is untouched', () => {
   assert.equal(a.aucBid, 100);
   assert.equal(a.aucBy, 1);
 });
+
+test('you can mortgage and sell mid-auction to raise a bid', () => {
+  const a = auction(31, { own: owned({ 21: 1, 23: 1 }).own, cash: [1500, 100], actor: 1, turn: 0 });
+  const raised = ok(act(a, { type: 'mortgage', square: 21 }, 1));
+  assert.ok(raised.cash[1] > 100);
+  assert.equal(raised.phase, 'auction');
+  assert.equal(raised.actor, 1);
+  assert.equal(ok(act(raised, { type: 'bid', amount: 200 }, 1)).aucBid, 200);
+});
+
+test('you cannot build or lift a mortgage mid-auction, which would undercut your own bid', () => {
+  // Bid everything, then build: the pass would hand you a lot you cannot pay for.
+  const full = { 21: 0, 23: 0, 24: 0 };
+  let a = auction(31, { own: owned(full).own, cash: [1500, 1600], actor: 0 });
+  a = ok(act(a, { type: 'bid', amount: 1500 }, 0));
+  assert.equal(a.actor, 1);
+  a = ok(act(a, { type: 'bid', amount: 1510 }, 1));          // back to seat 0
+  assert.equal(act(a, { type: 'build', square: 21 }, 0).error, 'wrong-phase');
+  const m = { ...a, mortg: setChar(a.mortg, 23, '1') };
+  assert.equal(act(m, { type: 'unmortgage', square: 23 }, 0).error, 'wrong-phase');
+});
+
+test('build and unmortgage still work in the phases they always did', () => {
+  const full = { 21: 0, 23: 0, 24: 0 };
+  for (const phase of ['roll', 'end', 'pay']) {
+    const s = { ...owned(full), cash: [1500, 1500], phase, actor: 0, turn: 0 };
+    assert.equal(ok(act(s, { type: 'build', square: 21 }, 0)).built[21], '1');
+  }
+});
+
+test('a deal cannot be accepted while an auction is live, but can be offered', () => {
+  let a = auction(31, { own: owned({ 24: 1 }).own, cash: [1500, 1500], actor: 1, turn: 0 });
+  a = ok(act(a, { type: 'trade-offer', props: propsOf({ 24: [0, false] }), cash: 200, outs0: 0, outs1: 0 }, 0));
+  assert.equal(act(a, { type: 'trade-accept', id: 't0' }, 1).error, 'auction-live');
+  const countered = ok(act(a, { ...counterTerms({ 24: [0, false] }, 300), type: 'trade-counter', id: 't0' }, 1));
+  assert.equal(readTrades(countered).t0.cash, 300);
+  assert.equal(ok(act(countered, { type: 'trade-cancel', id: 't0' }, 1)).tradeSeq, countered.tradeSeq);
+});
+
+test('the deal can be accepted the moment the auction finishes', () => {
+  let a = auction(31, { own: owned({ 24: 1 }).own, cash: [1500, 1500], actor: 1, turn: 0 });
+  a = ok(act(a, { type: 'trade-offer', props: propsOf({ 24: [0, false] }), cash: 200, outs0: 0, outs1: 0 }, 0));
+  a = ok(act(a, { type: 'pass' }, 1));
+  a = ok(act(a, { type: 'pass' }, 0));
+  assert.equal(a.phase, 'end');
+  assert.equal(ownerOf(ok(act(a, { type: 'trade-accept', id: 't0' }, 1)), 24), 0);
+});
+
+test('ending the game clears every live deal and closes any auction', () => {
+  for (const ender of [
+    (s) => act(s, { type: 'bankrupt' }, s.actor),
+    (s) => act(act(s, { type: 'offer-tally' }, 0).state, { type: 'accept-tally' }, 1)
+  ]) {
+    let s = auction(31, { own: owned({ 24: 1 }).own, cash: [1500, 1500], phase: 'pay', actor: 0, turn: 0, owed: 50, owedTo: -1 });
+    s = ok(act(s, { type: 'trade-offer', props: propsOf({ 24: [0, false] }), cash: 200, outs0: 0, outs1: 0 }, 0));
+    const over = ok(ender(s));
+    assert.equal(over.phase, 'over');
+    assert.deepEqual(readTrades(over), {});
+    assert.equal(over.aucSq, -1);
+    assert.equal(over.aucBy, -1);
+  }
+});

@@ -460,7 +460,23 @@ function doEnd(state, seat) {
  *  They change cash and the 40-character strings only; phase, turn and actor
  *  are untouched, so they work mid-demand ('pay') as well as 'roll' and 'end'. */
 const SIDE_ACTIONS = ['build', 'sell', 'mortgage', 'unmortgage'];
-const SIDE_PHASES = ['roll', 'end', 'pay'];
+const SIDE_PHASES = ['roll', 'end', 'pay', 'auction'];
+
+/** The only side actions an auction admits: the ones that raise cash.
+ *  A standing bid is the one unpaid promise in the game, checked against the
+ *  bidder's cash only when it is made. Letting build or unmortgage through
+ *  would let a player bid everything and then spend it, and the other
+ *  player's pass would hand them a lot they cannot pay for.
+ *  Why a bid stays affordable until it wins: side actions need
+ *  seat === state.actor, and the actor alternates during an auction, so each
+ *  player can only raise cash on their own bidding turn. Nothing that spends
+ *  or moves cash (build, unmortgage, trade-accept) runs while it is live, so
+ *  nothing can reduce the bidder's cash between the bid and the close. */
+const RAISE_ACTIONS = ['sell', 'mortgage'];
+
+/** Ending the game leaves nothing dangling in the saved state. `trades: {}`
+ *  is the honest local value; the database drops it and readTrades copes. */
+const clearedForEnd = (state) => ({ ...state, trades: {}, aucSq: -1, aucBid: 0, aucBy: -1, aucPass: 0 });
 
 /** Mortgage plus ten per cent, rounded up. Integer arithmetic on purpose:
  *  Math.ceil(m * 1.1) overcharges by one whenever the float lands just above
@@ -534,7 +550,7 @@ function doTally(state, type, seat) {
   const mine = netWorth(state, seat);
   const theirs = netWorth(state, 1 - seat);
   const winner = mine === theirs ? -1 : (mine > theirs ? seat : 1 - seat);
-  const end = { ...counted, phase: 'over', over: 'tally', winner };
+  const end = { ...clearedForEnd(counted), phase: 'over', over: 'tally', winner };
   return { state: say(end, winner === -1
     ? `Tallied up: ${mine} each. A draw.`
     : `Tallied up: Player ${winner + 1} is ahead, ${Math.max(mine, theirs)} to ${Math.min(mine, theirs)}.`) };
@@ -612,6 +628,7 @@ function doTrade(state, action, seat) {
   switch (action.type) {
     case 'trade-accept': { // only the seat being asked; the terms are checked again, as the board may have moved on
       if (deal.awaits !== seat) return { error: 'not-your-trade' };
+      if (state.phase === 'auction') return { error: 'auction-live' }; // a deal moves cash: see RAISE_ACTIONS
       const problem = dealProblem(state, deal);
       if (problem) return { error: problem };
       let next = say({ ...applyDeal(state, deal), moves: state.moves + 1, trades: rest }, `${who} accepts the deal.`);
@@ -641,7 +658,7 @@ function doTrade(state, action, seat) {
 /** Bankruptcy is declared, never computed: nothing here or in 'pay' ever
  *  decides that a player cannot settle. Only this action ends the game so. */
 function doBankrupt(state, seat) {
-  const end = { ...state, moves: state.moves + 1, phase: 'over', over: 'bankrupt', winner: 1 - seat };
+  const end = { ...clearedForEnd(state), moves: state.moves + 1, phase: 'over', over: 'bankrupt', winner: 1 - seat };
   return { state: say(end, `Player ${seat + 1} declares bankruptcy. Player ${2 - seat} wins.`) };
 }
 
@@ -655,6 +672,7 @@ export function applyAction(state, action, seat) {
   if (seat !== state.actor) return { error: 'not-your-turn' };
   if (SIDE_ACTIONS.includes(type)) {
     if (!SIDE_PHASES.includes(state.phase)) return { error: 'wrong-phase' };
+    if (state.phase === 'auction' && !RAISE_ACTIONS.includes(type)) return { error: 'wrong-phase' };
     return doSide(state, action, seat);
   }
   if (!KNOWN_ACTIONS.includes(type)) return { error: 'unknown-action' };

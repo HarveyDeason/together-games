@@ -528,6 +528,8 @@ export function applyDeal(state, trade) {
   cash[payer] -= amount;
   cash[1 - payer] += amount;
   const [h0, h1] = state.outCards;
+  // A hand is a string of two-character deck tags, so n cards is 2n characters
+  // (dealProblem measures holdings as length / 2: change a tag's length in both).
   const cut0 = trade.outs0 * 2, cut1 = trade.outs1 * 2;
   const outCards = [h0.slice(cut0) + h1.slice(0, cut1), h1.slice(cut1) + h0.slice(0, cut0)];
   return { ...state, own, cash, outCards };

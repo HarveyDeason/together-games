@@ -1480,12 +1480,25 @@ test('a seat holding both cards can hand over one, or both', () => {
 });
 
 test('the biggest deal imaginable still logs inside the line cap', () => {
-  // A line over the cap is rejected by the database SILENTLY.
-  const longest = SQUARES.reduce((a, q) => (q.price !== undefined && q.name.length > a.length ? q.name : a), '');
-  const sides = [0, 1].map(seat => dealSummary({
-    props: BLANK_PROPS, cash: seat === 1 ? MAX_DEAL_CASH : 0, outs0: 2, outs1: 2, awaits: 1
-  }, seat));
-  for (const line of [`Player 1 gets ${longest} and £${MAX_DEAL_CASH} and 2 get-out cards.`, ...sides.map(x => `Player 1 gets ${x}.`)]) {
+  // A line over the cap is rejected by the database SILENTLY. Every line here
+  // is composed from dealSummary on a real deal, as the accept case writes it.
+  const buyable = SQUARES.map((q, i) => [q, i]).filter(([q]) => q.price !== undefined);
+  const [, longestSq] = buyable.reduce((a, c) => (c[0].name.length > a[0].name.length ? c : a));
+  const lineFor = (deal, seat) => `Player ${seat + 1} gets ${dealSummary(deal, seat)}.`;
+  const single = {
+    props: setChar(BLANK_PROPS, longestSq, dealChar(1, false)),
+    cash: MAX_DEAL_CASH, outs0: 2, outs1: 2, awaits: 1
+  };
+  // Every purchasable square in play, alternating sides, with cash and cards each way.
+  let props = BLANK_PROPS;
+  buyable.forEach(([, i], n) => { props = setChar(props, i, dealChar(n % 2, false)); });
+  const many = { props, cash: MAX_DEAL_CASH, outs0: 2, outs1: 2, awaits: 1 };
+
+  assert.ok(lineFor(single, 1).includes(SQUARES[longestSq].name));
+  assert.match(lineFor(many, 0), /\d+ places/);
+  assert.match(lineFor(many, 1), /\d+ places/);
+  for (const deal of [single, many]) for (const seat of [0, 1]) {
+    const line = lineFor(deal, seat);
     assert.ok(line.length <= MAX_LOG_LINE, `${line.length}: ${line}`);
   }
 });

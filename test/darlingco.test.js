@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { SQUARES, LJ_CARDS, JB_CARDS, MAX_LOG, MAX_LOG_LINE, START_CASH, JAIL_FINE, MAX_TRADES, MAX_DEAL_CASH } from '../src/games/darlingco-board.js';
+import { SQUARES, LJ_CARDS, JB_CARDS, MAX_LOG, MAX_LOG_LINE, START_CASH, JAIL_FINE, MAX_TRADES, MAX_DEAL_CASH, MIN_BID, BID_STEP } from '../src/games/darlingco-board.js';
 import { rentFor, netWorth, setChar, dealChar, ownerOf, isMortgaged, BLANK_OWN, BLANK_MORTG, BLANK_PROPS } from '../src/games/darlingco-state.js';
 import {
   meta, createInitialState, getStatus, nextStarter, shuffleOrder, logged, readLog, readTrades, applyAction, sendToJail, applyCard, dealSummary
@@ -197,7 +197,8 @@ test('a double lets you roll again', () => {
 
 test('a non-double hands the turn over on end', () => {
   let s = ok(roll(createInitialState(), 1, 2));
-  s = ok(applyAction(ok(applyAction(s, { type: 'decline' }, 0)), { type: 'end' }, 0));
+  s = ok(applyAction(ok(applyAction(s, { type: 'decline' }, 0)), { type: 'pass' }, 1));
+  s = ok(applyAction(ok(applyAction(s, { type: 'pass' }, 0)), { type: 'end' }, 0));
   assert.equal(s.turn, 1);
   assert.equal(s.actor, 1);
   assert.equal(s.phase, 'roll');
@@ -248,7 +249,8 @@ test('in jail, doubles release you and move you that roll', () => {
 });
 
 test('in jail, a double does not also earn another go', () => {
-  const s = ok(applyAction(ok(roll(at(10, { jail: [1, 0] }), 3, 3)), { type: 'decline' }, 0));
+  let s = ok(applyAction(ok(roll(at(10, { jail: [1, 0] }), 3, 3)), { type: 'decline' }, 0));
+  s = ok(applyAction(ok(applyAction(s, { type: 'pass' }, 1)), { type: 'pass' }, 0));
   assert.equal(s.doubles, 0);
   const e = ok(applyAction(s, { type: 'end' }, 0));
   assert.equal(e.turn, 1);
@@ -385,13 +387,13 @@ test('buying what you cannot afford is refused', () => {
   assert.deepEqual(act(offer, 'buy'), { error: 'cannot-afford' });
 });
 
-test('declining leaves it unowned and auctions nothing', () => {
+test('declining leaves it unowned and sends it to auction, opened by the other player', () => {
   const s = ok(act(ok(roll(at(6), 1, 2)), 'decline'));
   assert.equal(s.own[9], '.');
   assert.deepEqual(s.cash, [1500, 1500]);
   assert.equal(s.pendingBuy, -1);
-  assert.equal(s.phase, 'end');
-  assert.equal(s.actor, 0);
+  assert.equal(s.phase, 'auction');
+  assert.equal(s.actor, 1);
 });
 
 test('stations and utilities are offered too', () => {
@@ -1526,4 +1528,123 @@ test('accepting counts a move too, keeping tradeSeq under moves', () => {
   const done = ok(act(offered, { type: 'trade-accept', id: 't0' }, 1));
   assert.equal(done.moves, offered.moves + 1);
   assert.ok(done.tradeSeq <= done.moves);
+});
+
+// ---- Task 6: the auction ----
+const auction = (square, over = {}) =>
+  ({ ...createInitialState(), phase: 'auction', aucSq: square, aucBid: 0, aucBy: -1, aucPass: 0, ...over });
+
+test('declining an unowned property opens an auction the other player starts', () => {
+  const s = { ...at(24, {}), phase: 'buy', pendingBuy: 24, actor: 0, turn: 0 };
+  const a = ok(act(s, { type: 'decline' }, 0));
+  assert.equal(a.phase, 'auction');
+  assert.equal(a.aucSq, 24);
+  assert.equal(a.aucBid, 0);
+  assert.equal(a.aucBy, -1);
+  assert.equal(a.actor, 1);
+  assert.equal(a.pendingBuy, -1);
+  assert.equal(a.turn, 0);
+});
+
+test('a bid must beat the standing bid by a step, and the minimum opening bid is ten', () => {
+  const a = auction(24, { cash: [1500, 1500], actor: 1 });
+  assert.equal(act(a, { type: 'bid', amount: MIN_BID - BID_STEP }, 1).error, 'bad-bid');
+  const first = ok(act(a, { type: 'bid', amount: MIN_BID }, 1));
+  assert.equal(first.aucBid, MIN_BID);
+  assert.equal(first.aucBy, 1);
+  assert.equal(first.actor, 0);
+  assert.equal(act(first, { type: 'bid', amount: MIN_BID }, 0).error, 'bad-bid');
+  assert.equal(ok(act(first, { type: 'bid', amount: MIN_BID + BID_STEP }, 0)).aucBid, MIN_BID + BID_STEP);
+});
+
+test('you cannot bid more than you are holding', () => {
+  const a = auction(24, { cash: [1500, 100], actor: 1 });
+  assert.equal(act(a, { type: 'bid', amount: 200 }, 1).error, 'cannot-afford');
+  assert.equal(ok(act(a, { type: 'bid', amount: 100 }, 1)).aucBid, 100);
+});
+
+test('passing on a standing bid ends the auction and the bidder buys at their bid', () => {
+  let a = auction(24, { cash: [1500, 1500], actor: 1, turn: 0 });
+  a = ok(act(a, { type: 'bid', amount: 60 }, 1));
+  const done = ok(act(a, { type: 'pass' }, 0));
+  assert.equal(ownerOf(done, 24), 1);
+  assert.deepEqual(done.cash, [1500, 1440]);
+  assert.equal(done.phase, 'end');
+  assert.equal(done.actor, 0);
+  assert.equal(done.aucSq, -1);
+});
+
+test('the auction price goes to the bank, never to the Free Parking pot', () => {
+  let a = auction(24, { cash: [1500, 1500], actor: 1, pot: 90 });
+  a = ok(act(a, { type: 'bid', amount: 60 }, 1));
+  assert.equal(ok(act(a, { type: 'pass' }, 0)).pot, 90);
+});
+
+test('the player who declined can win the lot cheap', () => {
+  // The whole point of passing on something you want.
+  let s = { ...at(24, { cash: [1500, 1500] }), phase: 'buy', pendingBuy: 24, actor: 0, turn: 0 };
+  s = ok(act(s, { type: 'decline' }, 0));
+  s = ok(act(s, { type: 'pass' }, 1));              // she will not open
+  assert.equal(s.phase, 'auction');
+  assert.equal(s.actor, 0);
+  s = ok(act(s, { type: 'bid', amount: MIN_BID }, 0));
+  const done = ok(act(s, { type: 'pass' }, 1));
+  assert.equal(ownerOf(done, 24), 0);
+  assert.equal(done.cash[0], 1500 - MIN_BID);
+});
+
+test('when neither of them bids the property stays unowned', () => {
+  let a = auction(24, { actor: 1, turn: 0 });
+  a = ok(act(a, { type: 'pass' }, 1));
+  assert.equal(a.phase, 'auction');
+  assert.equal(a.aucPass, 1);
+  assert.equal(a.actor, 0);
+  const done = ok(act(a, { type: 'pass' }, 0));
+  assert.equal(ownerOf(done, 24), -1);
+  assert.equal(done.phase, 'end');
+  assert.equal(done.actor, done.turn);
+  assert.match(readLog(done).at(-1), /stays unsold/);
+});
+
+test('a pass count is reset by a bid, so a pass after bidding always ends it', () => {
+  let a = auction(24, { cash: [1500, 1500], actor: 1, turn: 0 });
+  a = ok(act(a, { type: 'pass' }, 1));
+  a = ok(act(a, { type: 'bid', amount: 50 }, 0));
+  assert.equal(a.aucPass, 0);
+  const done = ok(act(a, { type: 'pass' }, 1));
+  assert.equal(ownerOf(done, 24), 0);
+});
+
+test('only the seat being asked may bid or pass, and only in an auction', () => {
+  const a = auction(24, { cash: [1500, 1500], actor: 1 });
+  assert.equal(act(a, { type: 'bid', amount: 50 }, 0).error, 'not-your-turn');
+  assert.equal(act(a, { type: 'pass' }, 0).error, 'not-your-turn');
+  const s = createInitialState();
+  assert.equal(act(s, { type: 'bid', amount: 50 }, s.actor).error, 'wrong-phase');
+  assert.equal(act(s, { type: 'pass' }, s.actor).error, 'wrong-phase');
+});
+
+test('a double-tapped bid is refused by the guard, not applied twice', () => {
+  const a = auction(24, { cash: [1500, 1500], actor: 1 });
+  const once = ok(act(a, { type: 'bid', amount: 60 }, 1));
+  assert.equal(act(once, { type: 'bid', amount: 60 }, 1).error, 'not-your-turn');
+  assert.equal(once.aucBid, 60);
+});
+
+test('declining a property somebody owns does not open an auction', () => {
+  // decline only ever reaches an unowned square, but the guard should not assume it.
+  const s = { ...owned({ 24: 1 }), phase: 'buy', pendingBuy: 24, actor: 0, turn: 0 };
+  const next = ok(act(s, { type: 'decline' }, 0));
+  assert.equal(next.phase, 'end');
+  assert.equal(next.aucSq, -1);
+});
+
+test('a malformed bid is refused and the standing bid is untouched', () => {
+  let a = auction(24, { cash: [1500, 1500], actor: 1 });
+  a = ok(act(a, { type: 'bid', amount: 100 }, 1));
+  for (const amount of [-10, 0, 1.5, NaN, Infinity, '200', null, undefined, 105, 100, 99, MAX_DEAL_CASH + 10]) {
+    assert.equal(act(a, { type: 'bid', amount }, 0).error, 'bad-bid', String(amount));
+  }
+  assert.equal(a.aucBid, 100);
+  assert.equal(a.aucBy, 1);
 });

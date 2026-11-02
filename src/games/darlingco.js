@@ -11,7 +11,8 @@
 
 import {
   GAME_ID, GAME_NAME, START_CASH, LJ_CARDS, JB_CARDS, MAX_LOG, MAX_LOG_LINE, SQUARES,
-  GO_PAY, JAIL_FINE, JAIL_SQUARE, SETS, LJ_NAME, JB_NAME, MAX_TRADES
+  GO_PAY, JAIL_FINE, JAIL_SQUARE, SETS, LJ_NAME, JB_NAME, MAX_TRADES,
+  MIN_BID, BID_STEP, MAX_DEAL_CASH
 } from './darlingco-board.js';
 import {
   BLANK_OWN, BLANK_BUILT, BLANK_MORTG, setChar, ownerOf, isMortgaged, rentFor,
@@ -109,12 +110,13 @@ export function logged(state, line) {
   return [...readLog(state), fit].slice(-MAX_LOG);
 }
 
-const KNOWN_ACTIONS = ['roll', 'jail-pay', 'jail-card', 'end', 'buy', 'decline', 'pay', 'card-ok', 'bankrupt'];
+const KNOWN_ACTIONS = ['roll', 'jail-pay', 'jail-card', 'end', 'buy', 'decline', 'pay', 'card-ok', 'bankrupt', 'bid', 'pass'];
 
 /** The one phase each action is admitted in. */
 const PHASE_OF = {
   roll: 'roll', 'jail-pay': 'roll', 'jail-card': 'roll', bankrupt: 'pay',
-  end: 'end', buy: 'buy', decline: 'buy', pay: 'pay', 'card-ok': 'card'
+  end: 'end', buy: 'buy', decline: 'buy', pay: 'pay', 'card-ok': 'card',
+  bid: 'auction', pass: 'auction'
 };
 
 const isDie = (d) => Number.isInteger(d) && d >= 1 && d <= 6;
@@ -371,9 +373,57 @@ function doBuy(state, seat) {
   return { state: say(next, `Player ${seat + 1} buys ${spec.name} for ${spec.price}.`) };
 }
 
+/** Passing on a property sends it to auction. The player who did NOT land on
+ *  it opens the bidding: the decliner has had their say, and still gets to bid
+ *  after, so passing on something you want is a gamble rather than a tax. */
 function doDecline(state, seat) {
-  const next = { ...state, pendingBuy: -1, phase: 'end', moves: state.moves + 1 };
-  return { state: say(next, `Player ${seat + 1} passes on ${SQUARES[state.pendingBuy].name}.`) };
+  const sq = state.pendingBuy;
+  const base = { ...state, pendingBuy: -1, moves: state.moves + 1 };
+  // Only ever reached on an unowned square, but do not trust the caller.
+  if (ownerOf(state, sq) !== -1) {
+    return { state: say({ ...base, phase: 'end' }, `Player ${seat + 1} passes on ${SQUARES[sq].name}.`) };
+  }
+  const next = { ...base, phase: 'auction', actor: 1 - seat, aucSq: sq, aucBid: 0, aucBy: -1, aucPass: 0 };
+  return { state: say(next, `Player ${seat + 1} passes on ${SQUARES[sq].name}. It goes to auction.`) };
+}
+
+/** Every auction key back to rest, so a stale aucBy can never look like a live
+ *  auction. The turn carries on with whoever's it was. */
+function closeAuction(state) {
+  return { ...state, aucSq: -1, aucBid: 0, aucBy: -1, aucPass: 0, phase: 'end', actor: state.turn };
+}
+
+function doBid(state, action, seat) {
+  const amount = action.amount;
+  const min = state.aucBy < 0 ? MIN_BID : state.aucBid + BID_STEP;
+  if (!Number.isSafeInteger(amount) || amount % BID_STEP !== 0 || amount < min || amount > MAX_DEAL_CASH) {
+    return { error: 'bad-bid' };
+  }
+  if (amount > state.cash[seat]) return { error: 'cannot-afford' };
+  // A bid wipes any earlier pass, so a later pass reads as "I will not top
+  // that" and not as "nobody bid".
+  const next = { ...state, aucBid: amount, aucBy: seat, aucPass: 0, actor: 1 - seat, moves: state.moves + 1 };
+  return { state: say(next, `Player ${seat + 1} bids ${amount}.`) };
+}
+
+/** `pass` means two things. With a bid standing it ends the auction and the
+ *  bidder buys at their bid (to the bank, not the pot: a purchase is not a
+ *  fine). With none standing it only hands the chance to the other player,
+ *  and a second such pass (aucPass) leaves the property unsold. */
+function doPass(state, seat) {
+  const sq = state.aucSq;
+  const name = SQUARES[sq].name;
+  const moved = { ...state, moves: state.moves + 1 };
+  if (state.aucBy >= 0) {
+    const winner = state.aucBy;
+    const bought = addCash({ ...moved, own: setChar(state.own, sq, String(winner)) }, winner, -state.aucBid);
+    return { state: say(closeAuction(bought), `Player ${winner + 1} wins ${name} at auction for ${state.aucBid}.`) };
+  }
+  if (state.aucPass === 0) {
+    const next = { ...moved, aucPass: 1, actor: 1 - seat };
+    return { state: say(next, `Player ${seat + 1} does not open the bidding.`) };
+  }
+  return { state: say(closeAuction(moved), `Nobody bids. ${name} stays unsold.`) };
 }
 
 /** Settles the open debt. Money owed to the bank (taxes, fines) piles up in
@@ -616,6 +666,8 @@ export function applyAction(state, action, seat) {
     case 'buy': return doBuy(state, seat);
     case 'decline': return doDecline(state, seat);
     case 'pay': return doPay(state, seat);
+    case 'bid': return doBid(state, action, seat);
+    case 'pass': return doPass(state, seat);
     case 'card-ok': return doCardOk(state, seat);
     case 'bankrupt': return doBankrupt(state, seat);
     default: return doEnd(state, seat);

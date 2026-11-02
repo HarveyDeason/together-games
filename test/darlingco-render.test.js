@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { gridCell, edgeOf, buildBoard, paintTile, decisionFor, feedLines, propertyFor, cardFor, walkPath, chipParts, tradeStrips, canOpenDeal, stripsShown, STRIP_CAP, DEALS_OPEN } from '../src/games/darlingco-render.js';
+import { gridCell, edgeOf, buildBoard, paintTile, decisionFor, feedLines, propertyFor, cardFor, walkPath, chipParts, tradeStrips, canOpenDeal, stripsShown, STRIP_CAP, DEALS_OPEN,
+  dealSheetFor, dealReviewFor, nudgeCash, toggleChip, draftFromDeal, tidyDraft } from '../src/games/darlingco-render.js';
 import { readFileSync } from 'node:fs';
 import { createInitialState, render, applyAction } from '../src/games/darlingco.js';
-import { setChar, BLANK_PROPS, dealChar } from '../src/games/darlingco-state.js';
+import { setChar, BLANK_PROPS, BLANK_BUILT, dealChar, dealDest } from '../src/games/darlingco-state.js';
 import { SQUARES, SETS, STATION_RENT } from '../src/games/darlingco-board.js';
 
 // Minimal DOM stub, same reasoning as tictactoe-render.test.js: no jsdom.
@@ -902,14 +903,15 @@ test('every enabled strip button is accepted by the engine, and every disabled o
   const noCard = { ...owned({ 24: 1 }), cash: [1500, 1500], tradeSeq: 1,
     trades: { t0: { props: setChar(BLANK_PROPS, 24, dealChar(0, false)), cash: 200, outs0: 1, outs1: 0, awaits: 1 } } };
   // Both seats' buttons per case, with the enabled/disabled split each must have. Counter
-  // sends nothing (it opens the sheet), so it is checked as disabled-with-reason, not sent.
+  // opens the builder and sends nothing itself, so it is checked against the engine with the
+  // one counter that is legal whenever any is: a plain pound from the seat that is answering.
   const cases = [
-    ['a live deal', offered, 3, 1],
-    ['an auction running', inAuction(offered), 2, 2],
-    ['the offerer cannot pay', { ...offered, cash: [10, 1500] }, 2, 2],
+    ['a live deal', offered, 4, 0],
+    ['an auction running', inAuction(offered), 3, 1],
+    ['the offerer cannot pay', { ...offered, cash: [10, 1500] }, 3, 1],
     ['the property has moved', { ...offered, own: setChar(offered.own, 24, '0') }, 2, 0],
-    ['houses on the set', { ...offered, built: setChar(offered.built, 21, '1') }, 2, 2],
-    ['a card that is gone', noCard, 2, 2],
+    ['houses on the set', { ...offered, built: setChar(offered.built, 21, '1') }, 3, 1],
+    ['a card that is gone', noCard, 3, 1],
     ['the game is over', { ...offered, phase: 'over' }, 0, 4]
   ];
   for (const [name, state, wantEnabled, wantDisabled] of cases) {
@@ -917,12 +919,10 @@ test('every enabled strip button is accepted by the engine, and every disabled o
     for (const seat of [0, 1]) {
       for (const b of tradeStrips(state, seat, [])[0].buttons) {
         if (b.disabled) assertDisabledWithReason(b);
-        if (b.opens) {   // the counter opens the deal sheet; it sends nothing itself
-          assert.equal(b.disabled, true, `${name}: counter`);
-          disabled++;
-          continue;
-        }
-        const r = applyAction(state, b.action, seat);
+        const action = b.opens
+          ? { type: 'trade-counter', id: b.id, props: BLANK_PROPS, cash: 1, outs0: 0, outs1: 0 }
+          : b.action;
+        const r = applyAction(state, action, seat);
         if (b.disabled) { assert.ok(r.error, `${name}: ${b.type} should be refused`); disabled++; }
         else { assert.equal(r.error, undefined, `${name}: ${b.type}: ${r.error}`); enabled++; }
       }
@@ -1011,17 +1011,26 @@ test('a strip is one line: a single button keyed by deal id, with no buttons of 
   assert.deepEqual(tradeStrips(s, 1, [])[0].buttons.map(b => b.type).sort(), ['trade-accept', 'trade-counter', 'trade-decline']);
 });
 
-test('until the deal sheet exists a strip is disabled with a reason, and tapping it does nothing', () => {
+test('tapping a strip opens that deal for review, and sends nothing', () => {
   const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));
-  assertDisabledWithReason({ type: 'strip', ...tradeStrips(s, 1, [])[0].tap });
+  assert.equal(tradeStrips(s, 1, [])[0].tap.disabled, false);
   const sent = [];
   const h = mount(s, 1, (a) => { sent.push(a); return Promise.resolve(); });
+  h.__dc.strips.children[0].click();
+  assert.equal(h.__dc.sheetMode, 'review');
+  assert.equal(h.__dc.reviewId, 't0');
+  assert.equal(h.__dc.sheet.hidden, false);
+  assert.deepEqual(sent, []);
+});
+
+test('a finished game\'s strip cannot be opened, with a reason', () => {
+  const s = { ...ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200)), phase: 'over' };
+  assertDisabledWithReason({ type: 'strip', ...tradeStrips(s, 1, [])[0].tap });
+  const h = mount(s, 1);
   const strip = h.__dc.strips.children[0];
   assert.equal(strip.disabled, true);
-  assert.match(strip.attrs.title, /not open yet/i);
   strip.click();
   assert.equal(h.__dc.sheetMode, 'property');
-  assert.deepEqual(sent, []);
 });
 
 test('the strips of a watcher are disabled too, with their own reason', () => {
@@ -1043,12 +1052,8 @@ test('a strip whose Accept is blocked says why on its single line, and in its ti
 test('the New deal entry is under the strips, disabled with a reason at the cap, and absent for a watcher', () => {
   const h = mount(owned(Object.fromEntries(CAP_SQUARES.map(q => [q, 1]))), 0);
   const entry = () => buttonsIn(h.__dc.newDeal).find(b => /new deal/i.test(b.textContent));
-  // Until task 10 draws the deal sheet it is disabled, with the same reason as the card's button.
-  assert.equal(DEALS_OPEN, false);
-  assert.equal(entry().disabled, true);
-  assert.match(entry().attrs.title, /not open yet/i);
-  entry().click();
-  assert.equal(h.__dc.sheetMode, 'property');   // a disabled button does nothing
+  assert.equal(DEALS_OPEN, true);
+  assert.equal(entry().disabled, false);
   const s = capped();
   render(s, h, { mySeat: 0, names: ['Ann', 'Bo'], onAction: () => {} });
   assert.equal(entry().disabled, true);
@@ -1058,9 +1063,12 @@ test('the New deal entry is under the strips, disabled with a reason at the cap,
   assert.ok(h.__dc.newDeal.hidden);
 });
 
-test('Counter is described disabled with a reason until the deal sheet exists', () => {
+test('Counter is enabled for the seat being asked, and it opens the builder rather than sending', () => {
   const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));
-  assertDisabledWithReason(tradeStrips(s, 1, [])[0].buttons.find(b => b.type === 'trade-counter'));
+  const counter = tradeStrips(s, 1, [])[0].buttons.find(b => b.type === 'trade-counter');
+  assert.equal(counter.disabled, undefined);
+  assert.equal(counter.opens, true);
+  assert.equal(counter.action, null);
 });
 
 test('a blocked Accept leads the strip as visible text with its own class, an unblocked one adds none', () => {
@@ -1116,4 +1124,382 @@ test('the stylesheet gives the story feed a minimum height of two lines', () => 
   // One story line is about 1.02rem (16.4px at 16px). If the unit changes this fails loudly rather than matching nothing.
   assert.equal(min[2], 'rem', `the guard measures rem; the feed now uses "${min[2]}", so update this test`);
   assert.ok(Number(min[1]) >= 2.2, `the feed minimum is ${min[1]}rem, under two story lines`);
+});
+
+// ---- the deal sheet ---------------------------------------------------------
+const emptyDraft = () => ({ props: BLANK_PROPS, cash: 0, outs0: 0, outs1: 0, id: '' });
+const propsOf = (map) => Object.entries(map).reduce((p, [sq, [dest, mortgaged]]) => setChar(p, Number(sq), dealChar(dest, mortgaged)), BLANK_PROPS);
+const container = () => { const host = makeEl('div'); host.ownerDocument = { createElement: clickable }; return { host }; };
+const renderBoard = render;
+const bySquare = (root, sq) => all(root).find((n) => n.tag === 'button' && n.dataset.square === String(sq));
+const byType = (root, type) => all(root).find((n) => n.tag === 'button' && n.dataset.type === type);
+const byStep = (root, step) => all(root).find((n) => n.tag === 'button' && n.dataset.step === step);
+const settle = () => new Promise((r) => setImmediate(r));   // one event-loop turn, so promises resolve; not a timed wait
+const NAMES = ['Ann', 'Bo'];
+
+test('the sheet offers your properties to give and theirs to get', () => {
+  const s = owned({ 24: 0, 6: 1 });
+  const sheet = dealSheetFor(s, 0, emptyDraft(), []);
+  assert.deepEqual(sheet.give.chips.map(c => c.square), [24]);
+  assert.deepEqual(sheet.get.chips.map(c => c.square), [6]);
+});
+
+test('a chip is on when the draft holds it, and its destination follows the shelf', () => {
+  const s = owned({ 24: 0, 6: 1 });
+  const draft = { ...emptyDraft(), props: propsOf({ 24: [1, false], 6: [0, false] }) };
+  const sheet = dealSheetFor(s, 0, draft, []);
+  assert.equal(sheet.give.chips.find(c => c.square === 24).on, true);
+  assert.equal(sheet.get.chips.find(c => c.square === 6).on, true);
+  // and the other way round, from the other seat's side of the table
+  const them = dealSheetFor(s, 1, draft, []);
+  assert.equal(them.give.chips.find(c => c.square === 6).on, true);
+  assert.equal(them.get.chips.find(c => c.square === 24).on, true);
+});
+
+test('a property with a building in its set cannot be put in a deal, and says why', () => {
+  const s = { ...owned({ 21: 0, 23: 0, 24: 0 }), built: setChar(BLANK_BUILT, 21, '1') };
+  const chip = dealSheetFor(s, 0, emptyDraft(), []).give.chips.find(c => c.square === 24);
+  assert.ok(chip.disabled);
+  assert.match(chip.why, /build|hous|hotel/i);
+  // owner-blind: the same on their side of the table
+  const theirs = { ...owned({ 21: 1, 23: 1, 24: 1 }), built: setChar(BLANK_BUILT, 21, '1') };
+  const gone = dealSheetFor(theirs, 0, emptyDraft(), []).get.chips.find(c => c.square === 24);
+  assert.ok(gone.disabled);
+  assert.match(gone.why, /build|hous|hotel/i);
+  // and a set without buildings is free
+  const clear = dealSheetFor(owned({ 21: 0, 23: 0, 24: 0 }), 0, emptyDraft(), []).give.chips;
+  assert.ok(clear.every(c => !c.disabled));
+});
+
+test('the send button carries the reason the deal is not legal yet, and no error is ever raised', () => {
+  const s = { ...owned({ 24: 1 }), cash: [10, 1500] };
+  const empty = dealSheetFor(s, 0, emptyDraft(), []).send;
+  assert.ok(empty.disabled);
+  assert.ok(empty.why.length > 0);
+  const broke = dealSheetFor(s, 0, { ...emptyDraft(), props: propsOf({ 24: [0, false] }), cash: 200 }, []).send;
+  assert.ok(broke.disabled);
+  assert.match(broke.why, /cash|afford|enough/i);
+});
+
+test('a legal draft enables send as an offer, or as a counter when it came from a deal', () => {
+  const s = { ...owned({ 24: 1 }), cash: [1500, 1500] };
+  const draft = { ...emptyDraft(), props: propsOf({ 24: [0, false] }), cash: 200 };
+  assert.deepEqual(
+    [dealSheetFor(s, 0, draft, []).send.disabled, dealSheetFor(s, 0, draft, []).send.type],
+    [false, 'trade-offer']);
+  const withDeal = ok(offer(s, 1, { 24: [0, false] }, 200));
+  const counter = dealSheetFor(withDeal, 0, { ...draft, id: 't0' }, []).send;
+  assert.equal(counter.type, 'trade-counter');
+  assert.equal(counter.action.id, 't0');
+});
+
+test('get-out cards appear as something to give only when you hold one', () => {
+  const none = dealSheetFor(createInitialState(), 0, emptyDraft(), []);
+  assert.equal(none.give.cards, undefined);
+  const held = dealSheetFor({ ...createInitialState(), outCards: ['lj', ''] }, 0, emptyDraft(), []);
+  assert.ok(held.give.cards.max >= 1);
+  assert.equal(held.get.cards, undefined);   // theirs: they hold none
+});
+
+test('money goes on one shelf or the other, never both', () => {
+  const s = { ...owned({ 24: 1 }), cash: [1500, 1500] };
+  const giving = dealSheetFor(s, 0, { ...emptyDraft(), props: propsOf({ 24: [0, false] }), cash: 200 }, []);
+  assert.equal(giving.give.cash, 200);
+  assert.equal(giving.get.cash, 0);
+  const getting = dealSheetFor(s, 0, { ...emptyDraft(), props: propsOf({ 24: [0, false] }), cash: -200 }, []);
+  assert.equal(getting.give.cash, 0);
+  assert.equal(getting.get.cash, 200);
+});
+
+test('the cash figure is signed in seat 0\'s frame, so the second seat\'s shelves are mirrored', () => {
+  const s = { ...owned({ 24: 0 }), cash: [1500, 1500] };
+  // seat 0 pays seat 1 200 (positive): for seat 1 that is money they GET
+  const draft = { ...emptyDraft(), props: propsOf({ 24: [1, false] }), cash: 200 };
+  const theirSide = dealSheetFor(s, 1, draft, []);
+  assert.equal(theirSide.get.cash, 200);
+  assert.equal(theirSide.give.cash, 0);
+  // seat 1 raising GIVE writes a NEGATIVE figure
+  assert.equal(nudgeCash(emptyDraft(), 1, 'give', +1).cash, -10);
+  assert.equal(nudgeCash(emptyDraft(), 0, 'give', +1).cash, 10);
+  // and the engine agrees on who pays: seat 1 builds "I give 200 and get 24" and it comes out of seat 1's pocket
+  let built = { ...emptyDraft(), props: propsOf({ 24: [1, false] }) };
+  for (let i = 0; i < 12; i++) built = nudgeCash(built, 1, 'give', +1);   // 10 x 9, 50, 50 ... however far the steps go
+  const target = dealSheetFor(s, 1, built, []);
+  assert.equal(target.give.cash, -built.cash);
+  assert.equal(target.send.disabled, false);
+  let t = ok(applyAction(s, target.send.action, 1));
+  const paid = target.give.cash;
+  t = ok(applyAction(t, { type: 'trade-accept', id: 't0' }, 0));
+  assert.deepEqual(t.cash, [1500 + paid, 1500 - paid]);   // seat 1 paid seat 0
+});
+
+test('raising one shelf\'s money drives the other to zero, and steps are reversible', () => {
+  let d = { ...emptyDraft(), cash: -50 };           // seat 0 receives 50
+  d = nudgeCash(d, 0, 'give', +1);                   // raise GIVE above zero
+  assert.equal(d.cash, 10);
+  d = nudgeCash(d, 0, 'get', +1);                    // and back the other way
+  assert.equal(d.cash, -10);
+  // down at an empty shelf changes nothing (and must not wipe the other shelf)
+  assert.equal(nudgeCash({ ...emptyDraft(), cash: -50 }, 0, 'give', -1).cash, -50);
+  // going up then down returns to where you were, across every step boundary
+  for (const start of [0, 10, 90, 100, 450, 500, 900]) {
+    const up = nudgeCash({ ...emptyDraft(), cash: start }, 0, 'give', +1);
+    assert.equal(nudgeCash(up, 0, 'give', -1).cash, start, `from ${start}`);
+  }
+  assert.equal(nudgeCash({ ...emptyDraft(), cash: 1000000 }, 0, 'give', +1).cash, 1000000);
+});
+
+test('toggling a chip adds and removes it, stamping mortgages as they stand', () => {
+  const s = { ...owned({ 24: 0, 6: 1 }), mortg: setChar('0'.repeat(40), 6, '1') };
+  let d = toggleChip(s, 0, emptyDraft(), 24);
+  assert.equal(dealDest(d.props, 24), 1);
+  d = toggleChip(s, 0, d, 6);
+  assert.equal(dealDest(d.props, 6), 0);
+  assert.equal(d.props[6], 'm');                      // it was mortgaged when the offer was made
+  d = toggleChip(s, 0, d, 24);
+  assert.equal(d.props[24], '.');
+  // a square that is not yours or theirs, or is in a built set, is left alone
+  assert.equal(toggleChip(s, 0, emptyDraft(), 5).props, BLANK_PROPS);
+  const built = { ...owned({ 21: 0, 24: 0 }), built: setChar(BLANK_BUILT, 21, '1') };
+  assert.equal(toggleChip(built, 0, emptyDraft(), 24).props, BLANK_PROPS);
+});
+
+test('a draft forgets a square that has since changed hands, so it can never be sent stale', () => {
+  const s = owned({ 24: 0 });
+  const draft = { ...emptyDraft(), props: propsOf({ 24: [1, false] }) };
+  assert.equal(tidyDraft(s, 0, draft).props[24], '1');
+  const moved = { ...s, own: setChar(s.own, 24, '1') };
+  assert.equal(tidyDraft(moved, 0, draft).props[24], '.');
+  assert.equal(tidyDraft(s, 0, { ...draft, outs0: 1 }).outs0, 0);   // no card is held
+});
+
+test('every disabled control on the builder says why, and the engine agrees with the send button', () => {
+  const base = { ...owned({ 24: 1, 21: 0, 23: 0 }), cash: [1500, 1500] };
+  const mine = (sq, dest = 1) => propsOf({ [sq]: [dest, false] });
+  const withDeal = ok(offer(base, 1, { 24: [0, false] }, 200));   // t0 awaits seat 0
+  const cases = [
+    ['an empty deal', base, 0, emptyDraft(), true],
+    ['a legal gift', base, 0, { ...emptyDraft(), props: mine(21) }, false],
+    ['cannot afford', { ...base, cash: [10, 1500] }, 0, { ...emptyDraft(), props: propsOf({ 24: [0, false] }), cash: 200 }, true],
+    ['a card nobody holds', base, 0, { ...emptyDraft(), props: mine(21), outs0: 1 }, true],
+    ['houses on the set', { ...base, built: setChar(BLANK_BUILT, 21, '1') }, 0, { ...emptyDraft(), props: mine(23) }, true],
+    ['the game is over', { ...base, phase: 'over' }, 0, { ...emptyDraft(), props: mine(21) }, true],
+    ['a watcher', base, null, { ...emptyDraft(), props: mine(21) }, true],
+    ['at the deal limit', capped(), 0, { ...emptyDraft(), props: propsOf({ 1: [0, false] }) }, true],
+    ['a counter that is legal', withDeal, 0, { ...emptyDraft(), props: propsOf({ 24: [0, false] }), cash: 100, id: 't0' }, false],
+    ['a counter whose deal is gone', base, 0, { ...emptyDraft(), props: mine(21), id: 't0' }, true],
+    ['a counter of a deal that awaits the other seat', withDeal, 1, { ...emptyDraft(), props: propsOf({ 24: [1, false] }), id: 't0' }, true]
+  ];
+  for (const [name, state, seat, draft, wantDisabled] of cases) {
+    const sheet = dealSheetFor(state, seat, draft, NAMES);
+    assert.equal(sheet.send.disabled, wantDisabled, name);
+    if (sheet.send.disabled) { assertDisabledWithReason(sheet.send); assert.equal(sheet.problem, sheet.send.why, name); }
+    else assert.equal(sheet.problem, '');
+    // the single source of truth: the engine takes exactly what the button would send, and refuses the rest
+    if (seat === 0 || seat === 1) {
+      const r = applyAction(state, sheet.send.action, seat);
+      assert.equal(r.error === undefined, !sheet.send.disabled, `${name}: engine said ${r.error}`);
+    }
+    for (const c of [...sheet.give.chips, ...sheet.get.chips]) if (c.disabled) assertDisabledWithReason(c);
+  }
+});
+
+test('the money steppers say why when they cannot move', () => {
+  const sheet = dealSheetFor(owned({ 24: 1 }), 0, emptyDraft(), []);
+  assertDisabledWithReason({ type: 'down', ...sheet.give.down });
+  assertDisabledWithReason({ type: 'down', ...sheet.get.down });
+  assert.equal(sheet.give.up.disabled, false);
+  const top = dealSheetFor(owned({ 24: 1 }), 0, { ...emptyDraft(), cash: 1000000 }, []);
+  assertDisabledWithReason({ type: 'up', ...top.give.up });
+  assert.equal(top.give.down.disabled, false);
+});
+
+test('a counter opens the sheet with their terms already in it', () => {
+  const { host } = container();
+  const s = { ...ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200)), cash: [1500, 1500] };
+  renderBoard(s, host, { mySeat: 1, names: [], onAction: () => {} });
+  const strip = host.__dc.strips.children.find((n) => n.dataset.trade === 't0');
+  strip.click();
+  assert.equal(host.__dc.sheetMode, 'review');
+  byType(host.__dc.sheet, 'trade-counter').click();
+  assert.equal(host.__dc.sheetMode, 'deal');
+  assert.equal(host.__dc.draft.id, 't0');
+  assert.equal(host.__dc.draft.cash, 200);
+  assert.equal(dealDest(host.__dc.draft.props, 24), 0);
+  // and the chip for their offer is already on
+  assert.ok(bySquare(host.__dc.sheet, 24).classes.has('is-on'));
+});
+
+test('a counter keeps the deal\'s id and is sent as a counter, which the engine takes', async () => {
+  const { host } = container();
+  const sent = [];
+  const s = { ...ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200)), cash: [1500, 1500] };
+  const onAction = (a) => { sent.push(a); return Promise.resolve(); };
+  renderBoard(s, host, { mySeat: 1, names: NAMES, onAction });
+  host.__dc.strips.children[0].click();
+  byType(host.__dc.sheet, 'trade-counter').click();
+  byStep(host.__dc.sheet, 'get-down').click();       // they asked 200 of you: take it down a step, to 150
+  byType(host.__dc.sheet, 'trade-counter').click();  // and the send button is now a counter, not an offer
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].type, 'trade-counter');
+  assert.equal(sent[0].id, 't0');
+  assert.equal(sent[0].cash, 150);
+  assert.equal(applyAction(s, sent[0], 1).error, undefined);
+  await settle();
+  assert.equal(host.__dc.sheet.hidden, true);        // sent, so the sheet closes
+});
+
+test('a deal can be built from nothing, sent, and the other seat answers it', async () => {
+  const { host } = container();
+  const sent = [];
+  const s = { ...owned({ 24: 0, 6: 1 }), cash: [1500, 1500] };
+  const onAction = (a) => { sent.push(a); return Promise.resolve(); };
+  renderBoard(s, host, { mySeat: 0, names: NAMES, onAction });
+  const entry = buttonsIn(host.__dc.newDeal).find((b) => /new deal/i.test(b.textContent));
+  entry.click();
+  assert.equal(host.__dc.sheetMode, 'deal');
+  assert.equal(host.__dc.draft.id, '');
+  assert.equal(byType(host.__dc.sheet, 'trade-offer').disabled, true);   // nothing in it yet
+  bySquare(host.__dc.sheet, 24).click();          // give 24
+  bySquare(host.__dc.sheet, 6).click();           // get 6
+  byStep(host.__dc.sheet, 'give-up').click();
+  const send = byType(host.__dc.sheet, 'trade-offer');
+  assert.equal(send.disabled, false);
+  send.click();
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].type, 'trade-offer');
+  assert.equal(sent[0].cash, 10);
+  assert.equal(dealDest(sent[0].props, 24), 1);
+  assert.equal(dealDest(sent[0].props, 6), 0);
+  const after = ok(applyAction(s, sent[0], 0));
+  await settle();
+  assert.equal(host.__dc.sheet.hidden, true);
+  // the other phone now sees the strip and can accept from the review face
+  const other = container().host;
+  const accepted = [];
+  renderBoard(after, other, { mySeat: 1, names: NAMES, onAction: (a) => { accepted.push(a); return Promise.resolve(); } });
+  other.__dc.strips.children[0].click();
+  byType(other.__dc.sheet, 'trade-accept').click();
+  assert.deepEqual(accepted, [{ type: 'trade-accept', id: 't0' }]);
+  assert.equal(applyAction(after, accepted[0], 1).error, undefined);
+});
+
+test('sending a deal passes the draft through as the action', () => {
+  const { host } = container();
+  const sent = [];
+  const s = { ...owned({ 24: 1 }), cash: [1500, 1500] };
+  renderBoard(s, host, { mySeat: 0, names: [], onAction: (a) => { sent.push(a); return Promise.resolve(); } });
+  host.__dc.draft = { ...emptyDraft(), props: propsOf({ 24: [0, false] }), cash: 200 };
+  host.__dc.sheetMode = 'deal';
+  renderBoard(s, host, { mySeat: 0, names: [], onAction: (a) => { sent.push(a); return Promise.resolve(); } });
+  byType(host.__dc.sheet, 'trade-offer').click();
+  assert.equal(sent.at(-1).type, 'trade-offer');
+  assert.equal(sent.at(-1).cash, 200);
+  assert.equal(dealDest(sent.at(-1).props, 24), 0);
+});
+
+test('the builder shows a disabled chip\'s reason and the send button\'s reason as visible text', () => {
+  const { host } = container();
+  const s = { ...owned({ 21: 0, 24: 0 }), cash: [1500, 1500], built: setChar(BLANK_BUILT, 21, '1') };
+  renderBoard(s, host, { mySeat: 0, names: NAMES, onAction: () => {} });
+  buttonsIn(host.__dc.newDeal)[0].click();
+  const chip = bySquare(host.__dc.sheet, 24);
+  assert.equal(chip.disabled, true);
+  assert.match(text(chip), /build|hous|hotel/i);                     // inside the chip, not only a title
+  const send = byType(host.__dc.sheet, 'trade-offer');
+  assert.equal(send.disabled, true);
+  assert.ok(all(host.__dc.sheet).some((n) => n.classes.has('dc-problem') && n.textContent.length > 0));
+  assert.equal(byStep(host.__dc.sheet, 'give-down').disabled, true);
+});
+
+test('cancelling a counter goes back to the deal, and cancelling a new deal closes the sheet', () => {
+  const { host } = container();
+  const s = { ...ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200)), cash: [1500, 1500] };
+  renderBoard(s, host, { mySeat: 1, names: NAMES, onAction: () => {} });
+  host.__dc.strips.children[0].click();
+  byType(host.__dc.sheet, 'trade-counter').click();
+  byType(host.__dc.sheet, 'cancel').click();
+  assert.equal(host.__dc.sheetMode, 'review');
+  byType(host.__dc.sheet, 'close').click();
+  assert.equal(host.__dc.sheet.hidden, true);
+  buttonsIn(host.__dc.newDeal)[0].click();
+  assert.equal(host.__dc.sheetMode, 'deal');
+  byType(host.__dc.sheet, 'cancel').click();
+  assert.equal(host.__dc.sheet.hidden, true);
+  assert.equal(host.__dc.sheetMode, 'property');
+  assert.equal(host.__dc.draft, null);
+});
+
+test('a deal that is answered elsewhere closes its review, and a finished game disables the builder\'s send', () => {
+  const { host } = container();
+  const s = { ...ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200)), cash: [1500, 1500] };
+  renderBoard(s, host, { mySeat: 1, names: NAMES, onAction: () => {} });
+  host.__dc.strips.children[0].click();
+  assert.equal(host.__dc.sheet.hidden, false);
+  const declined = ok(applyAction(s, { type: 'trade-decline', id: 't0' }, 1));
+  renderBoard(declined, host, { mySeat: 1, names: NAMES, onAction: () => {} });
+  assert.equal(host.__dc.sheet.hidden, true);
+  // the builder, open when the game ends, can still be closed but cannot send
+  buttonsIn(host.__dc.newDeal)[0].click();
+  const over = { ...declined, phase: 'over' };
+  renderBoard(over, host, { mySeat: 1, names: NAMES, onAction: () => {} });
+  assertDisabledWithReason(dealSheetFor(over, 1, emptyDraft(), NAMES).send);
+  assert.equal(byType(host.__dc.sheet, 'trade-offer').disabled, true);
+});
+
+test('the review shows what you get above what you give, and the buttons in foot order', () => {
+  const s = { ...ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200)), cash: [1500, 1500] };
+  const r = dealReviewFor(s, 1, 't0', NAMES);
+  assert.equal(r.title, "Ann's offer");
+  assert.deepEqual(r.get.items.map(i => i.square), []);
+  assert.equal(r.get.cash, 200);
+  assert.deepEqual(r.give.items.map(i => i.square), [24]);
+  assert.deepEqual(r.buttons.map(b => b.type), ['trade-decline', 'trade-counter', 'trade-accept']);
+  const mine = dealReviewFor(s, 0, 't0', NAMES);
+  assert.equal(mine.title, 'Your offer to Bo');
+  assert.deepEqual(mine.get.items.map(i => i.square), [24]);
+  assert.equal(mine.give.cash, 200);
+  assert.deepEqual(mine.buttons.map(b => b.type), ['trade-cancel']);
+  assert.equal(dealReviewFor(s, 1, 't9', NAMES), null);
+  assert.equal(dealReviewFor({ ...s, trades: undefined }, 1, 't0', NAMES), null);
+});
+
+test('a blocked Accept on the review says why in text, and counter is still open to fix it', () => {
+  const offered = ok(offer({ ...owned({ 24: 1 }), cash: [1500, 1500] }, 0, { 24: [0, false] }, 200));
+  const { host } = container();
+  renderBoard({ ...offered, cash: [10, 1500] }, host, { mySeat: 1, names: NAMES, onAction: () => {} });
+  host.__dc.strips.children[0].click();
+  const accept = byType(host.__dc.sheet, 'trade-accept');
+  assert.equal(accept.disabled, true);
+  assert.match(text(host.__dc.sheet), /afford/i);
+  assert.equal(byType(host.__dc.sheet, 'trade-counter').disabled, false);
+});
+
+test('the card\'s deal button opens a builder with that property already on its shelf', () => {
+  const { host } = container();
+  const s = owned({ 24: 1, 6: 0 });
+  renderBoard(s, host, { mySeat: 0, names: NAMES, onAction: () => {} });
+  host.__dc.tiles[24].click();
+  const deal = byType(host.__dc.sheet, 'new-deal');
+  assert.equal(deal.disabled, false);
+  deal.click();
+  assert.equal(host.__dc.sheetMode, 'deal');
+  assert.equal(dealDest(host.__dc.draft.props, 24), 0);
+  assert.equal(host.__dc.draft.id, '');
+  // a square nobody owns has nothing to deal for, and says so
+  const bare = container().host;
+  renderBoard(fresh(), bare, { mySeat: 0, names: NAMES, onAction: () => {} });
+  bare.__dc.tiles[24].click();
+  const none = byType(bare.__dc.sheet, 'new-deal');
+  assert.equal(none.disabled, true);
+  assert.match(text(bare.__dc.sheet), /nobody owns/i);
+});
+
+test('the builder has its own styles, and the sheet still sits under the chat', () => {
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  for (const cls of ['dc-shelf', 'dc-dchip', 'dc-cashrow', 'dc-sheetfoot', 'dc-problem']) {
+    assert.ok(new RegExp(`\\.${cls}\\b`).test(css), `${cls} has no style`);
+  }
+  assert.match(/\.dc-sheet\s*\{[^}]*z-index:\s*5\b/.exec(css)[0], /z-index:\s*5/);
+  assert.match(/\.chat-sheet\s*\{[^}]*z-index:\s*10\b/.exec(css)[0], /z-index:\s*10/);
 });

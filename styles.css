@@ -933,3 +933,90 @@ body {
 .dc-newdeal { flex: none; text-align: center; }
 .dc-newdeal-btn { margin: 0; padding: 0.1rem 0.3rem; font-size: clamp(0.6rem, 2.7vw, 0.75rem); }
 .dc-newdeal-btn:disabled { opacity: 0.45; cursor: default; }
+
+/* ---- Darling & Co. deal sheet: builder and review, drawn inside .dc-sheet ----
+   trade-builder.html option A ("two shelves") and trade-flow.html panel 2. Each
+   shelf is a wrapping run of chips, so a long place name keeps its full width. */
+.dc-shelf {
+  flex: none;
+  padding: 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: rgb(255 255 255 / 0.03);
+}
+.dc-shelf.is-give { border-left: 3px solid var(--seat0); }
+.dc-shelf.is-get { border-left: 3px solid var(--seat1); }
+.dc-lab { margin: 0 0 0.45rem; font-size: 0.62rem; letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+.dc-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.dc-none { font-size: 0.72rem; color: var(--muted); }
+.dc-dchip {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  max-width: 100%;
+  margin: 0;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  text-align: left;
+  cursor: pointer;
+}
+.dc-dchip .dc-sw { flex: none; width: 0.5rem; height: 0.5rem; border-radius: 2px; }
+.dc-dchip .dc-nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dc-dchip.is-on { background: #232536; color: var(--text); border-color: var(--accent); }
+.dc-dchip.is-on::after { content: '\2713'; font-size: 0.65rem; color: var(--accent); }
+.dc-dchip:disabled { cursor: default; opacity: 0.55; }
+.dc-dchip.is-static { cursor: default; background: #232536; color: var(--text); border-color: #393d50; }
+.dc-dchip.is-money { font-variant-numeric: tabular-nums; }
+.dc-chipnote { flex: none; font-size: 0.6rem; color: var(--muted); }
+/* The reason a chip cannot be used is part of the chip: a title is invisible on a phone. */
+.dc-chipwhy { color: var(--seat0); }
+.dc-cashrow { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.6rem; }
+.dc-step {
+  flex: none;
+  width: 2.2rem;
+  height: 2.2rem;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 1.05rem;
+  cursor: pointer;
+}
+.dc-step:disabled { opacity: 0.4; cursor: default; }
+.dc-cashbox {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  height: 2.2rem;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: var(--bg);
+  font-variant-numeric: tabular-nums;
+}
+.dc-cashbox.is-zero { color: #5b6075; }
+/* The foot sticks to the bottom of the scrolling sheet, so Send / Accept is
+   always in reach however many properties the shelves hold. */
+.dc-sheetfoot {
+  position: sticky;
+  bottom: calc(-0.75rem - env(safe-area-inset-bottom));
+  flex: none;
+  margin: 0 -1rem calc(-0.75rem - env(safe-area-inset-bottom));
+  padding: 0.5rem 1rem 0;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+}
+/* Under the buttons, level with the floating chat toggle (bottom right, z-index 10),
+   so the reason is written beside it and nothing the player must press is under it. */
+.dc-problems { min-height: 4.5rem; padding: 0.35rem 7rem calc(0.4rem + env(safe-area-inset-bottom)) 0; }
+.dc-problem { font-size: 0.72rem; line-height: 1.25; color: var(--muted); }
+.dc-footbtns { margin-top: 0; flex-wrap: nowrap; }
+.btn.dc-btn-primary { background: var(--accent); color: #fff; border: 1px solid var(--accent); }

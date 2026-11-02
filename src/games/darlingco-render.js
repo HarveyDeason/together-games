@@ -6,10 +6,13 @@
 // attributes set here: data-edge, data-own, data-built, and .is-mortgaged.
 
 import {
-  SQUARES, SETS, STATION_RENT, UTIL_MULT, GAME_NAME, JAIL_FINE, LJ_CARDS, JB_CARDS, LJ_NAME, JB_NAME, MAX_TRADES
+  SQUARES, SETS, STATION_RENT, UTIL_MULT, GAME_NAME, JAIL_FINE, LJ_CARDS, JB_CARDS, LJ_NAME, JB_NAME, MAX_TRADES, MAX_DEAL_CASH
 } from './darlingco-board.js';
 import { readLog, readTrades, dealSummary } from './darlingco.js';
-import { ownerOf, housesOn, isMortgaged, ownsFullSet, countKind, rentFor, canBuild, canSell, netWorth, dealProblem } from './darlingco-state.js';
+import {
+  ownerOf, housesOn, isMortgaged, ownsFullSet, countKind, rentFor, canBuild, canSell, netWorth, dealProblem,
+  BLANK_PROPS, setChar, dealChar, dealDest, dealWasMortgaged, dealSquares, squaresOwnedBy
+} from './darlingco-state.js';
 
 /** Grid cell of a square. Square 0 is bottom right; play runs left along the
  *  bottom, up the left side, right along the top, down the right side. */
@@ -395,9 +398,10 @@ export function cardFor(state, mySeat, sq, names) {
 // refusal the engine could give is worked out here first, so a button that
 // cannot work is disabled with a reason instead of being pressed and shaken.
 
-/** Until the deal sheet exists (task 10) Counter and + New deal are drawn
- *  disabled, as the card's deal button is. Task 10 flips this. */
-export const DEALS_OPEN = false;
+/** The deal sheet is open for business. Kept as a flag (rather than deleted) so
+ *  Counter, the strip tap, + New deal and the card's deal button can still be
+ *  shut together, each with a reason, should the sheet ever need pulling. */
+export const DEALS_OPEN = true;
 const NOT_OPEN = 'Deals are not open yet';
 
 /** How many one-line rows the strips region may hold (a "+N more" line counts
@@ -454,8 +458,9 @@ export function tradeStrips(state, mySeat, names) {
 
     // Why a blocked Accept is blocked, shown on the strip itself.
     let note = '';
-    // Tapping the strip opens the deal in the sheet (task 10): until then, or for a watcher, it cannot.
+    // Tapping the strip opens the deal in the sheet. A watcher cannot, and a finished game has no deal left to answer.
     const tap = !seated ? { disabled: true, why: 'Only the players can open a deal' }
+      : state.phase === 'over' ? { disabled: true, why: 'The game is over' }
       : !DEALS_OPEN ? { disabled: true, why: NOT_OPEN } : { disabled: false, why: '' };
     let buttons = [];
     if (seated && mine) {
@@ -475,9 +480,7 @@ export function tradeStrips(state, mySeat, names) {
       buttons = buttons.map((b) => ({ ...b, disabled: true, why: note }));
     }
     // A watcher's strip is permanently inert, so say why on the line itself:
-    // a title is invisible on a phone. (The temporary DEALS_OPEN = false case is
-    // the one deliberate exception: it is dimmed with a title only, because task
-    // 10 turns it off, and spelling it out on every strip would crowd out the deal.)
+    // a title is invisible on a phone.
     if (!seated) note = tap.why;
     return { id, text, badge: stale ? 'stale' : mine ? 'answer' : 'waiting', stale, mine, buttons, note, tap };
   });
@@ -500,6 +503,174 @@ export function canOpenDeal(state, mySeat) {
   if (state.phase === 'over') return { ok: false, why: 'The game is over' };
   if (Object.keys(readTrades(state)).length >= MAX_TRADES) return { ok: false, why: 'Eight deals is the limit' };
   return { ok: true, why: '' };
+}
+
+// ---- the deal sheet ----------------------------------------------------------
+// Two faces on the one sheet: building or countering an offer (trade-builder.html,
+// option A: "You give" over "You get") and reviewing one that was sent
+// (trade-flow.html panel 2: "You get" first). Everything below is PURE; the DOM
+// code further down only draws what these return. A draft is
+// { props, cash, outs0, outs1, id }: the engine's own deal fields, cash signed in
+// seat 0's frame, plus `id` ('' for a new offer, a deal's id for a counter).
+// It lives on `world` and never in the game state.
+
+export const blankDraft = () => ({ props: BLANK_PROPS, cash: 0, outs0: 0, outs1: 0, id: '' });
+
+/** The draft a counter starts from: their terms exactly, under the same id. */
+export function draftFromDeal(trade, id) {
+  return { props: trade.props, cash: trade.cash, outs0: trade.outs0, outs1: trade.outs1, id };
+}
+
+const isSeat = (seat) => seat === 0 || seat === 1;
+// The one place the sign convention is applied. The engine's `cash` is what seat 0
+// pays seat 1; the sheet speaks of what *you* pay. These two are inverses.
+const youPay = (mySeat, cash) => (mySeat === 0 ? cash : -cash);
+const fromYouPay = (mySeat, net) => (mySeat === 0 ? net : -net);
+
+/** Which squares a deal may carry: the engine refuses (trade-built) any square
+ *  whose colour set has a building anywhere, whoever owns the rest. */
+function builtReason(state, sq) {
+  const spec = SQUARES[sq];
+  const group = spec.set ? SETS[spec.set].squares : [sq];
+  return group.some((q) => housesOn(state, q) > 0) ? 'Buildings stand on this set' : '';
+}
+
+/** How far one tap moves the figure: small sums by 10, then 50, then 100.
+ *  Down uses the step *below* the current amount, so up-then-down always lands home. */
+const stepUp = (amount) => (amount < 100 ? 10 : amount < 500 ? 50 : 100);
+const stepDown = (amount) => stepUp(amount - 1);
+
+/** Move one shelf's money a step. The two shelves are one signed figure: a shelf
+ *  going above zero drives the other to zero. `shelf` is 'give' or 'get'. */
+export function nudgeCash(draft, mySeat, shelf, dir) {
+  const pay = youPay(mySeat, draft.cash);
+  const shown = shelf === 'give' ? Math.max(pay, 0) : Math.max(-pay, 0);
+  if (dir < 0 && shown === 0) return draft;   // nothing on this shelf to take off; leave the other alone
+  const next = dir > 0 ? Math.min(shown + stepUp(shown), MAX_DEAL_CASH) : Math.max(shown - stepDown(shown), 0);
+  return { ...draft, cash: fromYouPay(mySeat, shelf === 'give' ? next : -next) };
+}
+
+/** Put a square in the deal or take it out. A square you cannot add (not held
+ *  by either side, or in a built set) is left alone; one already in can always come out. */
+export function toggleChip(state, mySeat, draft, sq) {
+  if (!isSeat(mySeat)) return draft;
+  const owner = ownerOf(state, sq);
+  if (dealDest(draft.props, sq) >= 0) return { ...draft, props: setChar(draft.props, sq, '.') };
+  if (owner < 0 || builtReason(state, sq)) return draft;
+  // Mine goes to them, theirs comes to me; the mortgage is stamped as it stands now.
+  return { ...draft, props: setChar(draft.props, sq, dealChar(1 - owner, isMortgaged(state, sq))) };
+}
+
+/** The draft with anything the board has since moved out from under it dropped:
+ *  a square that changed hands, a mortgage stamp that went stale, a get-out card
+ *  no longer held. The sheet then never offers a deal the engine calls stale. */
+export function tidyDraft(state, mySeat, draft) {
+  let props = draft.props;
+  for (const sq of dealSquares(props)) {
+    const owner = ownerOf(state, sq);
+    props = owner < 0 || owner !== 1 - dealDest(props, sq)
+      ? setChar(props, sq, '.')
+      : setChar(props, sq, dealChar(dealDest(props, sq), isMortgaged(state, sq)));
+  }
+  const held = (seat) => Math.min(2, Math.floor(state.outCards[seat].length / 2));
+  return { ...draft, props, outs0: Math.min(draft.outs0, held(0)), outs1: Math.min(draft.outs1, held(1)) };
+}
+
+const COLOUR_OF = (sq) => (SQUARES[sq].set ? SETS[SQUARES[sq].set].colour : PLAIN_COLOUR);
+
+/** What a deal problem means to a player. The engine's codes are never shown. */
+function problemWords(state, mySeat, names, draft, code) {
+  const other = seatName(names, 1 - mySeat);
+  switch (code) {
+    case 'empty-deal': return 'Put something in the deal first';
+    case 'trade-built': return 'Buildings stand on a set in this deal';
+    case 'cannot-afford': {
+      const payer = draft.cash > 0 ? 0 : 1;
+      const amount = Math.abs(draft.cash).toLocaleString('en-GB');
+      return payer === mySeat ? `You do not have enough cash for £${amount}` : `${other} does not have enough cash for £${amount}`;
+    }
+    case 'no-card': return 'A get-out card in this deal is not held';
+    case 'trade-stale': return 'A place in this deal has changed hands. Start it again';
+    default: return 'This deal cannot be sent';
+  }
+}
+
+/** The builder, as plain data. `give` is what mySeat hands over, `get` what they
+ *  receive; each shelf is { chips, cash, up, down, cards? } with each chip
+ *  { square, name, colour, mortgaged, on, disabled, why }. `send` is the one
+ *  button that sends, carrying the exact action; `problem` is why it cannot be
+ *  pressed ('' when it can), in the words the player reads. `canCancel` is
+ *  whether the player can back out (they always can: nothing is sent until Send). */
+export function dealSheetFor(state, mySeat, draft, names) {
+  const seated = isSeat(mySeat);
+  const me = seated ? mySeat : 0;
+  const chipsFor = (owner, dest) => squaresOwnedBy(state, owner).map((sq) => {
+    const on = dealDest(draft.props, sq) === dest;
+    const why = builtReason(state, sq);
+    return { square: sq, name: SQUARES[sq].name, colour: COLOUR_OF(sq), mortgaged: isMortgaged(state, sq), on, disabled: !on && !!why, why: on ? '' : why };
+  });
+  const pay = youPay(me, draft.cash);
+  const shelf = (amount, dest, owner, outs) => {
+    const held = Math.min(2, Math.floor(state.outCards[owner].length / 2));
+    return {
+      chips: seated ? chipsFor(owner, dest) : [],
+      cash: amount,
+      down: amount > 0 ? { disabled: false, why: '' } : { disabled: true, why: 'Nothing to take off' },
+      up: amount < MAX_DEAL_CASH ? { disabled: false, why: '' } : { disabled: true, why: 'That is the most a deal can carry' },
+      ...(held > 0 ? { cards: { count: outs, max: held } } : {})
+    };
+  };
+  // outsN is what seat N hands over: mine on the give shelf, theirs on the get shelf.
+  const give = shelf(Math.max(pay, 0), 1 - me, me, me === 0 ? draft.outs0 : draft.outs1);
+  const get = shelf(Math.max(-pay, 0), me, 1 - me, me === 0 ? draft.outs1 : draft.outs0);
+
+  const trades = readTrades(state);
+  const answering = draft.id !== '';
+  let problem = '';
+  if (!seated) problem = 'Only the players can make deals';
+  else if (state.phase === 'over') problem = 'The game is over';
+  else if (answering && (!trades[draft.id] || trades[draft.id].awaits !== mySeat)) problem = 'This deal has changed. Close it and look again';
+  else if (!answering && Object.keys(trades).length >= MAX_TRADES) problem = 'Eight deals is the limit';
+  else {
+    const code = dealProblem(state, { props: draft.props, cash: draft.cash, outs0: draft.outs0, outs1: draft.outs1, awaits: 1 - mySeat });
+    if (code) problem = problemWords(state, mySeat, names, draft, code);
+  }
+  const type = answering ? 'trade-counter' : 'trade-offer';
+  const terms = { props: draft.props, cash: draft.cash, outs0: draft.outs0, outs1: draft.outs1 };
+  return {
+    title: answering ? `Counter ${seatName(names, 1 - me)}'s deal` : `New deal with ${seatName(names, 1 - me)}`,
+    give, get, problem,
+    send: { type, label: answering ? 'Send counter' : 'Send offer', disabled: !!problem, why: problem, action: answering ? { type, id: draft.id, ...terms } : { type, ...terms } },
+    canCancel: true
+  };
+}
+
+/** A deal someone sent (or that you sent), seen from `mySeat`, or null when it
+ *  is gone. `get` first, as the mockup has it: what you receive is what you care
+ *  about. Buttons are tradeStrips' own, in foot order. */
+export function dealReviewFor(state, mySeat, id, names) {
+  const strip = tradeStrips(state, mySeat, names).find((t) => t.id === id);
+  const trade = readTrades(state)[id];
+  if (!strip || !trade || !isSeat(mySeat)) return null;
+  const side = (seat, outs) => ({
+    items: dealSquares(trade.props).filter((sq) => dealDest(trade.props, sq) === seat)
+      .map((sq) => ({ square: sq, name: SQUARES[sq].name, colour: COLOUR_OF(sq), mortgaged: dealWasMortgaged(trade.props, sq) })),
+    cash: Math.max(seat === 1 ? trade.cash : -trade.cash, 0),
+    cards: outs
+  });
+  const other = 1 - mySeat;
+  // outsN is what seat N hands over.
+  const get = side(mySeat, mySeat === 0 ? trade.outs1 : trade.outs0);
+  const give = side(other, mySeat === 0 ? trade.outs0 : trade.outs1);
+  const order = ['trade-decline', 'trade-cancel', 'trade-counter', 'trade-accept'];
+  return {
+    id,
+    title: trade.awaits === mySeat ? `${seatName(names, other)}'s offer` : `Your offer to ${seatName(names, other)}`,
+    get, give,
+    note: strip.note,
+    stale: strip.stale,
+    buttons: [...strip.buttons].sort((a, b) => order.indexOf(a.type) - order.indexOf(b.type))
+  };
 }
 
 // ---- things that move -------------------------------------------------------
@@ -534,7 +705,7 @@ const FACES = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
  *  comes back: a failed write leaves no snapshot to re-render from, so
  *  re-enabling from the promise is the only thing that stops it being
  *  stranded disabled for ever. */
-function actionButton(world, spec, buildAction, className) {
+function actionButton(world, spec, buildAction, className, onSent) {
   const b = el(world.doc, 'button', className || `btn dc-btn dc-btn-${spec.kind || 'secondary'}`, spec.label);
   b.type = 'button';
   b.disabled = !!spec.disabled || world.pending || world.busy;
@@ -545,7 +716,8 @@ function actionButton(world, spec, buildAction, className) {
     world.pending = true;
     let sent;
     try { sent = world.onAction(buildAction()); } catch (e) { sent = Promise.reject(e); }
-    Promise.resolve(sent).catch(() => {}).then(() => {
+    // onSent runs only when the write went through, so a failed send leaves the sheet (and the draft) open.
+    Promise.resolve(sent).then(() => { if (onSent) onSent(); }, () => {}).then(() => {
       world.pending = false;
       b.disabled = false;
       paint(world);
@@ -595,7 +767,7 @@ function buildWorld(doc, host) {
 
   const world = {
     doc, root, bar, chips, potChip, tiles, dice, feed, sheet, strips, decision, newDeal, room,
-    selected: -1, sheetMode: 'property', draft: null, pending: false, busy: false, generation: 0, animatedKey: null,
+    selected: -1, sheetMode: 'property', draft: null, reviewId: null, pending: false, busy: false, generation: 0, animatedKey: null,
     shown: null, builtSeen: null, state: null, mySeat: null, names: [], onAction: () => {}
   };
   tiles.forEach((tile, i) => {
@@ -617,11 +789,215 @@ function inkFor(hex) {
   return lum > 0.55 ? '#0d1310' : '#ffffff';
 }
 
-/** The one sheet node serves every mode. The mode is chosen first, so a mode
- *  this function does not draw (the deal builder, later) leaves the sheet and
- *  the selection alone instead of closing them. */
+/** The one sheet node serves every mode: the property card ('property'), the
+ *  deal builder ('deal', world.draft) and a deal under review ('review',
+ *  world.reviewId). The mode is chosen first, so a deal mode cannot blank the
+ *  sheet by way of the card's selection. */
 function paintSheet(world) {
-  if (world.sheetMode === 'property') paintCard(world);
+  if (world.sheetMode === 'deal') paintBuilder(world);
+  else if (world.sheetMode === 'review') paintReview(world);
+  else paintCard(world);
+}
+
+/** Back to the plain board: no sheet, no draft, nothing selected. */
+function closeSheet(world) {
+  world.sheetMode = 'property';
+  world.draft = null;
+  world.reviewId = null;
+  world.selected = -1;
+  paint(world);
+}
+
+/** Open the builder on a draft. The one entry point, so there is one convention. */
+function openBuilder(world, draft) {
+  world.sheetMode = 'deal';
+  world.draft = draft;
+  world.reviewId = null;
+  paint(world);
+}
+
+function openReview(world, id) {
+  world.sheetMode = 'review';
+  world.reviewId = id;
+  world.draft = null;
+  paint(world);
+}
+
+/** Redraw a sheet face from scratch without losing the player's scroll. */
+function resetSheet(world) {
+  const top = world.sheet.scrollTop || 0;
+  clear(world.sheet);
+  world.sheet.hidden = false;
+  return () => { world.sheet.scrollTop = top; };
+}
+
+function sheetHead(world, title, closeType, onClose) {
+  const head = el(world.doc, 'div', 'dc-sheet-head');
+  head.appendChild(el(world.doc, 'span', 'dc-sheet-title', title));
+  const close = el(world.doc, 'button', 'link-btn dc-close', 'Close');
+  close.type = 'button';
+  close.dataset.type = closeType;
+  close.addEventListener('click', onClose);
+  head.appendChild(close);
+  return head;
+}
+
+const sterling = (n) => `£${n.toLocaleString('en-GB')}`;
+const cardWords = (n) => (n === 1 ? 'Get-out card' : `${n} get-out cards`);
+
+/** A chip that is tapped: swatch, name, and (when it cannot be used) the reason. */
+function dealChip(world, chip, onTap) {
+  const b = el(world.doc, 'button', `dc-dchip${chip.on ? ' is-on' : ''}${chip.mortgaged ? ' is-mortgaged' : ''}`);
+  b.type = 'button';
+  b.dataset.square = String(chip.square);
+  b.disabled = !!chip.disabled;
+  const sw = el(world.doc, 'span', 'dc-sw');
+  sw.style.background = chip.colour;
+  b.appendChild(sw);
+  const name = el(world.doc, 'span', 'dc-nm', chip.name);
+  b.appendChild(name);
+  if (chip.mortgaged) b.appendChild(el(world.doc, 'span', 'dc-chipnote', 'mortgaged'));
+  // A title is invisible on a phone: the reason is part of the chip.
+  if (chip.why) { b.appendChild(el(world.doc, 'span', 'dc-chipnote dc-chipwhy', chip.why)); b.setAttribute('title', chip.why); }
+  b.addEventListener('click', () => { if (!b.disabled) onTap(); });
+  return b;
+}
+
+function stepButton(world, label, step, spec, onTap) {
+  const b = el(world.doc, 'button', 'dc-step', label);
+  b.type = 'button';
+  b.dataset.step = step;
+  b.disabled = !!spec.disabled;
+  if (spec.why) { b.setAttribute('title', spec.why); b.setAttribute('aria-label', `${label === '+' ? 'More' : 'Less'}: ${spec.why}`); }
+  b.addEventListener('click', () => { if (!b.disabled) onTap(); });
+  return b;
+}
+
+function paintBuilder(world) {
+  const { state, mySeat, names, doc } = world;
+  if (!world.draft || (mySeat !== 0 && mySeat !== 1)) { world.sheetMode = 'property'; world.draft = null; paintCard(world); return; }
+  world.draft = tidyDraft(state, mySeat, world.draft);
+  const draft = world.draft;
+  const sheet0 = dealSheetFor(state, mySeat, draft, names);
+  const restore = resetSheet(world);
+  const { sheet } = world;
+  const edit = (next) => { world.draft = next; paint(world); };
+  const cancel = () => {
+    // A counter goes back to the deal it answers; a new offer just closes.
+    if (draft.id && readTrades(world.state)[draft.id]) openReview(world, draft.id); else closeSheet(world);
+  };
+  sheet.appendChild(sheetHead(world, sheet0.title, 'close', cancel));
+
+  for (const [key, label, cls] of [['give', 'You give', 'is-give'], ['get', 'You get', 'is-get']]) {
+    const side = sheet0[key];
+    const shelf = el(doc, 'section', `dc-shelf ${cls}`);
+    shelf.appendChild(el(doc, 'p', 'dc-lab', label));
+    const chips = el(doc, 'div', 'dc-chips');
+    for (const c of side.chips) chips.appendChild(dealChip(world, c, () => edit(toggleChip(state, mySeat, draft, c.square))));
+    if (side.cards) {
+      for (let i = 0; i < side.cards.max; i++) {
+        const mine = key === 'give';
+        const field = (mySeat === 0) === mine ? 'outs0' : 'outs1';
+        const on = i < side.cards.count;
+        const b = el(doc, 'button', `dc-dchip is-card${on ? ' is-on' : ''}`);
+        b.type = 'button';
+        b.dataset.card = `${key}-${i}`;
+        const sw = el(doc, 'span', 'dc-sw'); sw.style.background = '#f2cf3d';
+        b.appendChild(sw);
+        b.appendChild(el(doc, 'span', 'dc-nm', '🔑 Get-out card'));
+        b.addEventListener('click', () => edit({ ...draft, [field]: on ? i : i + 1 }));
+        chips.appendChild(b);
+      }
+    }
+    if (!chips.children.length) chips.appendChild(el(doc, 'span', 'dc-none', 'Nothing to put in'));
+    shelf.appendChild(chips);
+    const row = el(doc, 'div', 'dc-cashrow');
+    row.appendChild(stepButton(world, '−', `${key}-down`, side.down, () => edit(nudgeCash(draft, mySeat, key, -1))));
+    row.appendChild(el(doc, 'span', `dc-cashbox${side.cash ? '' : ' is-zero'}`, sterling(side.cash)));
+    row.appendChild(stepButton(world, '+', `${key}-up`, side.up, () => edit(nudgeCash(draft, mySeat, key, +1))));
+    shelf.appendChild(row);
+    sheet.appendChild(shelf);
+  }
+
+  // The foot stays in reach however long the shelves grow. Under the buttons is a
+  // strip that clears the chat toggle (it floats bottom right, above this sheet);
+  // the reason the deal cannot be sent is written there, as text.
+  const foot = el(doc, 'div', 'dc-sheetfoot');
+  const problems = el(doc, 'div', 'dc-problems');
+  if (sheet0.problem) problems.appendChild(el(doc, 'div', 'dc-problem', sheet0.problem));
+  const row = el(doc, 'div', 'dc-btns dc-footbtns');
+  const back = el(doc, 'button', 'btn dc-btn dc-btn-secondary', 'Cancel');
+  back.type = 'button';
+  back.dataset.type = 'cancel';
+  back.addEventListener('click', cancel);
+  row.appendChild(back);
+  const send = actionButton(world, sheet0.send, () => sheet0.send.action, 'btn dc-btn dc-btn-primary', () => closeSheet(world));
+  send.dataset.type = sheet0.send.type;
+  row.appendChild(send);
+  foot.appendChild(row);
+  foot.appendChild(problems);
+  sheet.appendChild(foot);
+  restore();
+}
+
+/** A static (untappable) chip for the review face. */
+function readOnlyChip(world, text, colour, extra) {
+  const c = el(world.doc, 'span', `dc-dchip is-static${extra ? ` ${extra}` : ''}`);
+  if (colour) { const sw = el(world.doc, 'span', 'dc-sw'); sw.style.background = colour; c.appendChild(sw); }
+  c.appendChild(el(world.doc, 'span', 'dc-nm', text));
+  return c;
+}
+
+function paintReview(world) {
+  const { state, mySeat, names, doc } = world;
+  const r = world.reviewId ? dealReviewFor(state, mySeat, world.reviewId, names) : null;
+  if (!r) { world.sheetMode = 'property'; world.reviewId = null; paintCard(world); return; }
+  const restore = resetSheet(world);
+  const { sheet } = world;
+  sheet.appendChild(sheetHead(world, r.title, 'close', () => closeSheet(world)));
+
+  for (const [key, label, cls] of [['get', 'You get', 'is-get'], ['give', 'You give', 'is-give']]) {
+    const side = r[key];
+    const shelf = el(doc, 'section', `dc-shelf ${cls}`);
+    shelf.appendChild(el(doc, 'p', 'dc-lab', label));
+    const chips = el(doc, 'div', 'dc-chips');
+    for (const it of side.items) chips.appendChild(readOnlyChip(world, it.mortgaged ? `${it.name} (mortgaged)` : it.name, it.colour));
+    if (side.cash) chips.appendChild(readOnlyChip(world, sterling(side.cash), '', 'is-money'));
+    if (side.cards) chips.appendChild(readOnlyChip(world, cardWords(side.cards), '#f2cf3d'));
+    if (!chips.children.length) chips.appendChild(el(doc, 'span', 'dc-none', 'Nothing'));
+    shelf.appendChild(chips);
+    sheet.appendChild(shelf);
+  }
+
+  const foot = el(doc, 'div', 'dc-sheetfoot');
+  // Every reason a button is off, as text: a title is invisible on a phone.
+  const whys = [...new Set([r.note, ...r.buttons.filter((b) => b.disabled).map((b) => b.why)].filter(Boolean))];
+  const problems = el(doc, 'div', 'dc-problems');
+  for (const w of whys) problems.appendChild(el(doc, 'div', 'dc-problem', w));
+  const row = el(doc, 'div', 'dc-btns dc-footbtns');
+  for (const b of r.buttons) {
+    const kind = b.type === 'trade-accept' ? 'primary' : b.type === 'trade-decline' || b.type === 'trade-cancel' ? 'danger' : 'secondary';
+    let btn;
+    if (b.opens) {
+      btn = el(doc, 'button', `btn dc-btn dc-btn-${kind}`, b.label);
+      btn.type = 'button';
+      btn.disabled = !!b.disabled || world.pending || world.busy;
+      if (b.why) btn.setAttribute('title', b.why);
+      btn.addEventListener('click', () => {
+        if (btn.disabled) return;
+        const trade = readTrades(world.state)[r.id];
+        if (trade) openBuilder(world, draftFromDeal(trade, r.id));
+      });
+    } else {
+      btn = actionButton(world, { ...b, kind }, () => b.action, undefined, () => closeSheet(world));
+    }
+    btn.dataset.type = b.type;
+    row.appendChild(btn);
+  }
+  foot.appendChild(row);
+  foot.appendChild(problems);
+  sheet.appendChild(foot);
+  restore();
 }
 
 function paintCard(world) {
@@ -667,28 +1043,33 @@ function paintCard(world) {
     sheet.appendChild(row);
   }
   if (c.dealButton) {
-    // The deal builder arrives with the deal sheet; until it does the button
-    // is drawn disabled rather than left to do nothing.
+    // Opens the builder with this square already on its shelf. Only a square somebody
+    // owns, outside a built set, can be dealt for; otherwise the reason is the text.
+    const can = canOpenDeal(state, mySeat);
+    const why = !DEALS_OPEN ? NOT_OPEN : !can.ok ? can.why
+      : ownerOf(state, c.square) < 0 ? 'Nobody owns this yet' : builtReason(state, c.square);
+    if (why) sheet.appendChild(el(doc, 'div', 'dc-detail', why));
     const row = el(doc, 'div', 'dc-btns');
-    row.appendChild(actionButton(world, { ...c.dealButton, disabled: true, why: 'Deals are not open yet' }, () => ({})));
+    const open = openerButton(world, { label: c.dealButton.label, disabled: !!why, why },
+      () => openBuilder(world, toggleChip(state, mySeat, blankDraft(), c.square)), 'btn dc-btn dc-btn-secondary');
+    open.dataset.type = 'new-deal';
+    row.appendChild(open);
     sheet.appendChild(row);
   }
 }
 
 const PILL = { answer: 'Answer', waiting: 'Waiting', stale: 'Expired' };
 
-/** A button that sends nothing: it only opens the deal sheet (task 10 draws
- *  it). Disabled it carries its reason, like every other control here. */
-function openerButton(world, spec, draft, className) {
+/** A button that sends nothing: it only opens a face of the deal sheet, by way
+ *  of `onOpen`. Disabled it carries its reason, like every other control here. */
+function openerButton(world, spec, onOpen, className) {
   const b = el(world.doc, 'button', className, spec.label);
   b.type = 'button';
   b.disabled = !!spec.disabled || world.pending || world.busy;
   if (spec.why) b.setAttribute('title', spec.why);
   b.addEventListener('click', () => {
     if (b.disabled) return;
-    world.sheetMode = 'deal';
-    world.draft = draft;
-    paint(world);
+    onOpen();
   });
   return b;
 }
@@ -703,7 +1084,7 @@ function paintStrips(world) {
     // One line per deal, and the whole line is the tap target: it opens the
     // deal in the sheet, where Accept / Counter / Decline live. Keyed on the
     // id, which a counter keeps, so a strip does not jump.
-    const row = openerButton(world, { label: '', ...t.tap }, { open: t.id }, `dc-deal is-${t.badge}`);
+    const row = openerButton(world, { label: '', ...t.tap }, () => openReview(world, t.id), `dc-deal is-${t.badge}`);
     row.dataset.trade = t.id;
     const dt = el(doc, 'span', 'dc-dt', '');
     // A title is invisible on a phone, so why Accept is blocked leads the line.
@@ -720,7 +1101,7 @@ function paintStrips(world) {
   newDeal.hidden = (mySeat !== 0 && mySeat !== 1) || state.phase === 'over';
   if (!newDeal.hidden) {
     const can = canOpenDeal(state, mySeat);
-    const b = openerButton(world, { label: '+ New deal', disabled: !can.ok || !DEALS_OPEN, why: can.ok ? (DEALS_OPEN ? '' : NOT_OPEN) : can.why }, { counter: null },
+    const b = openerButton(world, { label: '+ New deal', disabled: !can.ok || !DEALS_OPEN, why: can.ok ? (DEALS_OPEN ? '' : NOT_OPEN) : can.why }, () => openBuilder(world, blankDraft()),
       'link-btn dc-newdeal-btn');
     b.dataset.type = 'new-deal';
     newDeal.appendChild(b);

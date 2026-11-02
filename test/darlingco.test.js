@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { SQUARES, LJ_CARDS, JB_CARDS, MAX_LOG, MAX_LOG_LINE, START_CASH, JAIL_FINE } from '../src/games/darlingco-board.js';
 import { rentFor, netWorth } from '../src/games/darlingco-state.js';
 import {
-  meta, createInitialState, getStatus, nextStarter, shuffleOrder, logged, readLog, applyAction, sendToJail, applyCard
+  meta, createInitialState, getStatus, nextStarter, shuffleOrder, logged, readLog, readTrades, applyAction, sendToJail, applyCard
 } from '../src/games/darlingco.js';
 
 const sorted = (s) => [...s].sort().join('');
@@ -1144,4 +1144,12 @@ test('the insolvent third-turn fine reaches the pot exactly once, when the debt 
   const funded = { ...owing, cash: [owing.cash[0] + JAIL_FINE, owing.cash[1]] };
   const paid = ok(applyAction(funded, { type: 'pay' }, 0));
   assert.equal(paid.pot, 30 + JAIL_FINE);            // once, not twice
+});
+
+test('readTrades survives Firebase dropping the empty trades object', () => {
+  const s = createInitialState();
+  assert.deepEqual(readTrades({ ...s, trades: undefined }), {});
+  const { trades, ...stripped } = s;          // the key absent entirely
+  assert.deepEqual(readTrades(stripped), {});
+  assert.deepEqual(readTrades(s), {});
 });

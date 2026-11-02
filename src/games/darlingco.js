@@ -6,6 +6,8 @@
 //  - no null anywhere (a null key vanishes); use -1, '', 0 or false
 //  - an empty array vanishes too, so a fresh `log: []` can arrive undefined;
 //    always read the log through readLog
+//  - an empty object vanishes too, so with no offers open `trades` arrives
+//    undefined; always read it through readTrades
 
 import {
   GAME_ID, GAME_NAME, START_CASH, LJ_CARDS, JB_CARDS, MAX_LOG, MAX_LOG_LINE, SQUARES,
@@ -86,6 +88,12 @@ export function nextStarter(state) {
 /** The event log; Firebase drops an empty array, so it may be undefined. */
 export function readLog(state) {
   return state.log ?? [];
+}
+
+/** The open trade offers; Firebase drops an empty object, so with none open
+ *  `trades` may be undefined. */
+export function readTrades(state) {
+  return state.trades ?? {};
 }
 
 /** The log with `line` appended, trimmed to the last MAX_LOG. A line over

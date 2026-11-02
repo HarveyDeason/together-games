@@ -6,6 +6,8 @@
 //   own   '.' unowned or unownable, '0'/'1' the owning seat
 //   built '0'-'4' houses, '5' a hotel
 //   mortg '0' | '1'
+//   props (a trade's deal mask) '.' not in the deal; '0'/'1' moving to that
+//         seat, clear when offered; 'm'/'n' moving to seat 0/1, mortgaged when offered
 // "No seat" is -1, never null.
 
 import { SQUARES, SETS, STATION_RENT, UTIL_MULT } from './darlingco-board.js';
@@ -13,10 +15,37 @@ import { SQUARES, SETS, STATION_RENT, UTIL_MULT } from './darlingco-board.js';
 export const BLANK_OWN = '.'.repeat(40);
 export const BLANK_BUILT = '0'.repeat(40);
 export const BLANK_MORTG = '0'.repeat(40);
+export const BLANK_PROPS = '.'.repeat(40);
 
 /** A copy of `str` with the character at `i` replaced by `ch`. */
 export function setChar(str, i, ch) {
   return str.slice(0, i) + ch + str.slice(i + 1);
+}
+
+/** The one deal-mask character for a square moving to `seat`, remembering
+ *  whether it was mortgaged when the offer was made. */
+export function dealChar(seat, mortgaged) {
+  return mortgaged ? (seat === 0 ? 'm' : 'n') : String(seat);
+}
+
+/** The seat a square in the deal moves to, or -1 when it is not in the deal. */
+export function dealDest(props, sq) {
+  const c = props[sq];
+  if (c === '0' || c === 'm') return 0;
+  if (c === '1' || c === 'n') return 1;
+  return -1;
+}
+
+/** true if the square was mortgaged when the offer was made. */
+export function dealWasMortgaged(props, sq) {
+  return props[sq] === 'm' || props[sq] === 'n';
+}
+
+/** Square indices in the deal, ascending. */
+export function dealSquares(props) {
+  const out = [];
+  for (let i = 0; i < 40; i++) if (dealDest(props, i) >= 0) out.push(i);
+  return out;
 }
 
 /** The owning seat, or -1 when unowned or unownable. */

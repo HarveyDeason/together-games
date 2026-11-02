@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SQUARES, SETS, STATION_RENT, UTIL_MULT } from '../src/games/darlingco-board.js';
 import {
-  BLANK_OWN, BLANK_BUILT, BLANK_MORTG, setChar, ownerOf, housesOn, isMortgaged,
+  BLANK_OWN, BLANK_BUILT, BLANK_MORTG, BLANK_PROPS, dealChar, dealDest, dealWasMortgaged, dealSquares, setChar, ownerOf, housesOn, isMortgaged,
   squaresOwnedBy, ownsFullSet, countKind, rentFor, netWorth, canBuild, canSell
 } from '../src/games/darlingco-state.js';
 
@@ -215,4 +215,31 @@ test('every set id in SETS is understood', () => {
   for (const id of Object.keys(SETS)) {
     assert.equal(ownsFullSet(mk({ own: own(SETS[id].squares) }), 0, id), true);
   }
+});
+
+test('a deal character round-trips its destination and mortgage state', () => {
+  for (const seat of [0, 1]) for (const m of [true, false]) {
+    const props = setChar(BLANK_PROPS, 7, dealChar(seat, m));
+    assert.equal(dealDest(props, 7), seat);
+    assert.equal(dealWasMortgaged(props, 7), m);
+  }
+});
+
+test('the four deal characters are all different, so neither field can be lost', () => {
+  const all = [dealChar(0, false), dealChar(1, false), dealChar(0, true), dealChar(1, true)];
+  assert.equal(new Set(all).size, 4);
+  assert.ok(!all.includes('.'));
+  for (const c of all) assert.equal(c.length, 1);
+});
+
+test('a blank mask is forty dots and holds no squares', () => {
+  assert.equal(BLANK_PROPS.length, 40);
+  assert.deepEqual(dealSquares(BLANK_PROPS), []);
+  assert.equal(dealDest(BLANK_PROPS, 0), -1);
+});
+
+test('dealSquares lists every square in the deal, ascending, and nothing else', () => {
+  let p = setChar(BLANK_PROPS, 24, dealChar(0, false));
+  p = setChar(p, 6, dealChar(1, true));
+  assert.deepEqual(dealSquares(p), [6, 24]);
 });

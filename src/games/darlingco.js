@@ -63,6 +63,12 @@ export function createInitialState({ first = 0, rnd = Math.random } = {}) {
     settleOffer: -1,
     over: '',
     winner: -1,
+    aucSq: -1,
+    aucBid: 0,
+    aucBy: -1,
+    aucPass: 0,
+    tradeSeq: 0,
+    trades: {},
     log: []
   };
 }

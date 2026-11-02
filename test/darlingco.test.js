@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { SQUARES, LJ_CARDS, JB_CARDS, MAX_LOG, MAX_LOG_LINE, START_CASH, JAIL_FINE } from '../src/games/darlingco-board.js';
+import { SQUARES, LJ_CARDS, JB_CARDS, MAX_LOG, MAX_LOG_LINE, START_CASH, JAIL_FINE, MAX_TRADES, MAX_DEAL_CASH } from '../src/games/darlingco-board.js';
 import { rentFor, netWorth } from '../src/games/darlingco-state.js';
 import {
   meta, createInitialState, getStatus, nextStarter, shuffleOrder, logged, readLog, readTrades, applyAction, sendToJail, applyCard
@@ -1152,4 +1152,59 @@ test('readTrades survives Firebase dropping the empty trades object', () => {
   const { trades, ...stripped } = s;          // the key absent entirely
   assert.deepEqual(readTrades(stripped), {});
   assert.deepEqual(readTrades(s), {});
+});
+
+// ---- Task 3: trading and auction state keys ---------------------------------
+
+test('a new game has no deals, no auction, and a trade counter at zero', () => {
+  const s = createInitialState();
+  assert.equal(s.aucSq, -1);
+  assert.equal(s.aucBid, 0);
+  assert.equal(s.aucBy, -1);
+  assert.equal(s.aucPass, 0);
+  assert.equal(s.tradeSeq, 0);
+  assert.deepEqual(readTrades(s), {});
+});
+
+test('no key of a new game is null or an empty array', () => {
+  // Firebase drops both, and a dropped key is a bug nobody can see.
+  // `log` starts empty by design: readLog() covers its disappearance.
+  for (const [k, v] of Object.entries(createInitialState())) {
+    assert.notEqual(v, null, k);
+    assert.ok(k === 'log' || !(Array.isArray(v) && v.length === 0), k);
+  }
+});
+
+test('every key a new game writes has a validator in firebase-rules.json', () => {
+  const rules = JSON.parse(readFileSync(new URL('../firebase-rules.json', import.meta.url), 'utf8'));
+  const allowed = rules.rules.rooms.$code.game.state;
+  for (const k of Object.keys(createInitialState())) {
+    assert.ok(allowed[k], `no validator for state.${k}`);
+  }
+});
+
+test('the auction and deal bounds in the rules file cover the engine constants', () => {
+  const rules = JSON.parse(readFileSync(new URL('../firebase-rules.json', import.meta.url), 'utf8'));
+  const st = rules.rules.rooms.$code.game.state;
+  const cap = (v) => Number(/<= (\d+)/.exec(v)[1]);
+  assert.ok(cap(st.aucBid['.validate']) >= MAX_DEAL_CASH);
+  assert.ok(cap(st.aucPass['.validate']) >= 2);
+  assert.ok(cap(st.tradeSeq['.validate']) > MAX_TRADES);
+  assert.equal(st.trades.$tradeId.props['.validate'], 'newData.isString() && newData.val().length === 40');
+});
+
+test('the trade id pattern admits ids well past the live-deal cap, since ids are never reused', () => {
+  const rules = JSON.parse(readFileSync(new URL('../firebase-rules.json', import.meta.url), 'utf8'));
+  const v = rules.rules.rooms.$code.game.state.trades.$tradeId['.validate'];
+  const pattern = new RegExp(/\/(\^t.*?\$)\//.exec(v)[1]);
+  for (const n of [0, 9, 10, 99, 1000, 99999]) assert.ok(pattern.test(`t${n}`), `t${n}`);
+  for (const bad of ['0', '1', 't', 'tx', 't-1', 'tt0']) assert.ok(!pattern.test(bad), bad);
+});
+
+test('no trade id can look like an array index', () => {
+  // An object keyed "0", "1", ... comes back from Firebase as an ARRAY.
+  const rules = JSON.parse(readFileSync(new URL('../firebase-rules.json', import.meta.url), 'utf8'));
+  const v = rules.rules.rooms.$code.game.state.trades.$tradeId['.validate'];
+  const pattern = new RegExp(/\/(\^t.*?\$)\//.exec(v)[1]);
+  for (let n = 0; n < 12; n++) assert.ok(!pattern.test(String(n)), String(n));
 });

@@ -1727,3 +1727,23 @@ test('ending the game clears every live deal and closes any auction', () => {
     assert.equal(over.aucBy, -1);
   }
 });
+
+test('calling it with an auction and a deal both live leaves neither in the saved game', () => {
+  // The tally actions skip the actor guard, so accept-tally really can land mid-auction.
+  const buying = { ...at(24, { own: owned({ 21: 1 }).own }), phase: 'buy', pendingBuy: 24, actor: 0, turn: 0 };
+  let s = ok(act(buying, { type: 'decline' }, 0));
+  s = ok(act(s, { type: 'bid', amount: 100 }, 1));
+  s = ok(act(s, { type: 'trade-offer', props: propsOf({ 21: [0, false] }), cash: 200, outs0: 0, outs1: 0 }, 0));
+  assert.equal(s.phase, 'auction');
+  assert.equal(s.aucSq, 24);
+  assert.equal(s.aucBid, 100);
+  assert.equal(s.aucBy, 1);
+  assert.equal(Object.keys(readTrades(s)).length, 1);
+  const over = ok(act(ok(act(s, { type: 'offer-tally' }, 0)), { type: 'accept-tally' }, 1));
+  assert.equal(over.phase, 'over');
+  assert.deepEqual(readTrades(over), {});
+  assert.equal(over.aucSq, -1);
+  assert.equal(over.aucBid, 0);
+  assert.equal(over.aucBy, -1);
+  assert.equal(over.aucPass, 0);
+});

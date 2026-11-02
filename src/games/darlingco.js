@@ -550,6 +550,8 @@ function doTally(state, type, seat) {
   const mine = netWorth(state, seat);
   const theirs = netWorth(state, 1 - seat);
   const winner = mine === theirs ? -1 : (mine > theirs ? seat : 1 - seat);
+  // The tally actions bypass the actor guard, so this accept can arrive while an
+  // auction is genuinely live (bankrupt cannot: it is gated to 'pay'). Hence the clear-down.
   const end = { ...clearedForEnd(counted), phase: 'over', over: 'tally', winner };
   return { state: say(end, winner === -1
     ? `Tallied up: ${mine} each. A draw.`

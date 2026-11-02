@@ -756,6 +756,7 @@ test('a card says who holds it and how much of the set they have', () => {
   assert.match(cardFor(s, 0, 24, ['Harvey', 'Shruti']).ownerLine, /Shruti/);
   assert.match(cardFor(s, 0, 24, ['Harvey', 'Shruti']).ownerLine, /2 of 3/);
   assert.match(cardFor(createInitialState(), 0, 24, []).ownerLine, /sale|unowned|nobody/i);
+  assert.deepEqual(cardFor(s, 0, 24, ['Harvey', 'Shruti']).footParts, ['Owned by Shruti', '2 of 3 in set']);
 });
 
 test('your own card carries the build and mortgage buttons; theirs carries a deal button', () => {
@@ -788,7 +789,7 @@ test('tapping any priced tile opens its card, not only one you own', () => {
   const h = mount(owned({ 24: 1 }), 0);
   h.__dc.tiles[24].click();
   assert.equal(h.__dc.selected, 24);
-  assert.match(text(h.__dc.sheet), /Balloons at Sunrise/);
+  assert.ok(text(h.__dc.sheet).includes(SQUARES[24].name));
   assert.equal(h.__dc.sheetMode, 'property');
   h.__dc.tiles[0].click();   // GO has no card: the open one stays
   assert.equal(h.__dc.selected, 24);

@@ -362,12 +362,14 @@ export function cardFor(state, mySeat, sq, names) {
     : spec.kind === 'util' ? { one: 'utility', many: 'utilities', of: 2 } : null;
 
   let ownerLine = `For sale: ${spec.price}`;
+  let footParts = [ownerLine, ''];
   if (owner >= 0) {
     const who = `${seatName(names, owner)}${owner === mySeat ? ' (you)' : ''}`;
     const held = set ? set.squares.filter((q) => ownerOf(state, q) === owner).length : countKind(state, owner, spec.kind);
     const total = set ? set.squares.length : unit.of;
     const noun = set ? 'in set' : held === 1 ? unit.one : unit.many;
-    ownerLine = `Owned by ${who} \u00b7 ${held} of ${total} ${noun}`;
+    footParts = [`Owned by ${who}`, `${held} of ${total} ${noun}`];
+    ownerLine = footParts.join(' \u00b7 ');
   }
 
   const mine = owner >= 0 && owner === mySeat;
@@ -380,6 +382,7 @@ export function cardFor(state, mySeat, sq, names) {
     setColour: set ? set.colour : PLAIN_COLOUR,
     rows: ladderFor(state, sq, owner),
     ownerLine,
+    footParts,   // the same line in the two halves the card foot lays out
     detail: p ? p.detail : '',
     buttons: p ? p.buttons : [],
     dealButton: canDeal ? { label: 'Offer a deal for this', square: sq } : null
@@ -505,6 +508,7 @@ function paintSheet(world) {
   sheet.hidden = !c;
   if (!c) return;
 
+  const card = el(doc, 'div', 'dc-card');
   const top = el(doc, 'div', 'dc-cardtop');
   top.style.background = c.setColour;
   top.style.color = inkFor(c.setColour);
@@ -516,7 +520,7 @@ function paintSheet(world) {
   close.addEventListener('click', () => { world.selected = -1; paint(world); });
   head.appendChild(close);
   top.appendChild(head);
-  sheet.appendChild(top);
+  card.appendChild(top);
 
   const table = el(doc, 'table', 'dc-rents');
   for (const r of c.rows) {
@@ -525,8 +529,11 @@ function paintSheet(world) {
     tr.appendChild(el(doc, 'td', '', money(r)));
     table.appendChild(tr);
   }
-  sheet.appendChild(table);
-  sheet.appendChild(el(doc, 'div', 'dc-cardfoot', c.ownerLine));
+  card.appendChild(table);
+  const foot = el(doc, 'div', 'dc-cardfoot');
+  for (const part of c.footParts) if (part) foot.appendChild(el(doc, 'span', '', part));
+  card.appendChild(foot);
+  sheet.appendChild(card);
   if (c.detail) sheet.appendChild(el(doc, 'div', 'dc-detail', c.detail));
 
   if (c.buttons.length) {

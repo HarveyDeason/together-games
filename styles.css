@@ -798,7 +798,8 @@ body {
 
 /* The property card (trade-flow mockup, panel 3). Sized for the centre of the
    board, so the rows are tighter than the 360px mockup and the card scrolls. */
-.dc-cardtop { flex: none; padding: 0.3rem 0.4rem; border-radius: 0.5rem 0.5rem 0 0; font-weight: 700; font-size: 0.85rem; }
+.dc-card { flex: none; border: 1px solid var(--line); border-radius: 0.75rem; overflow: hidden; background: var(--surface); }
+.dc-cardtop { flex: none; padding: 0.3rem 0.4rem; font-weight: 700; font-size: 0.85rem; }
 .dc-cardtop .dc-sheet-title { font-size: clamp(0.72rem, 3.2vw, 0.9rem); }
 .dc-cardtop .dc-close { color: inherit; }
 .dc-cardset { display: block; font-weight: 600; font-size: 0.55rem; opacity: 0.75; letter-spacing: 0.06em; text-transform: uppercase; }
@@ -808,7 +809,7 @@ body {
 .dc-rents tr.now td { color: var(--text); font-weight: 650; }
 .dc-rents tr.now td:last-child { color: var(--seat1); }
 .dc-rents tr.rule td { border-top: 1px solid var(--line); }
-.dc-cardfoot { flex: none; padding: 0.25rem 0.4rem; border-top: 1px solid var(--line); font-size: clamp(0.58rem, 2.5vw, 0.7rem); color: var(--muted); }
+.dc-cardfoot { flex: none; display: flex; justify-content: space-between; gap: 0.4rem; padding: 0.25rem 0.4rem; border-top: 1px solid var(--line); font-size: clamp(0.58rem, 2.5vw, 0.7rem); color: var(--muted); }
 
 /* ---- Darling & Co.: things that move ------------------------------------
    Out on the board, never in the centre. Quick and light; the script only adds

@@ -851,10 +851,10 @@ function dealChip(world, chip, onTap) {
   b.type = 'button';
   b.dataset.square = String(chip.square);
   b.disabled = !!chip.disabled;
-  const sw = el(world.doc, 'span', 'dc-sw');
+  const sw = el(world.doc, 'span', 'dc-chipsw');
   sw.style.background = chip.colour;
   b.appendChild(sw);
-  const name = el(world.doc, 'span', 'dc-nm', chip.name);
+  const name = el(world.doc, 'span', 'dc-chipname', chip.name);
   b.appendChild(name);
   if (chip.mortgaged) b.appendChild(el(world.doc, 'span', 'dc-chipnote', 'mortgaged'));
   // A title is invisible on a phone: the reason is part of the chip.
@@ -902,9 +902,9 @@ function paintBuilder(world) {
         const b = el(doc, 'button', `dc-dchip is-card${on ? ' is-on' : ''}`);
         b.type = 'button';
         b.dataset.card = `${key}-${i}`;
-        const sw = el(doc, 'span', 'dc-sw'); sw.style.background = '#f2cf3d';
+        const sw = el(doc, 'span', 'dc-chipsw'); sw.style.background = '#f2cf3d';
         b.appendChild(sw);
-        b.appendChild(el(doc, 'span', 'dc-nm', '🔑 Get-out card'));
+        b.appendChild(el(doc, 'span', 'dc-chipname', '🔑 Get-out card'));
         b.addEventListener('click', () => edit({ ...draft, [field]: on ? i : i + 1 }));
         chips.appendChild(b);
       }
@@ -916,6 +916,9 @@ function paintBuilder(world) {
     row.appendChild(el(doc, 'span', `dc-cashbox${side.cash ? '' : ' is-zero'}`, sterling(side.cash)));
     row.appendChild(stepButton(world, '+', `${key}-up`, side.up, () => edit(nudgeCash(draft, mySeat, key, +1))));
     shelf.appendChild(row);
+    // A greyed stepper says why in text too: a title is invisible on a phone.
+    const stepWhys = [...new Set([side.down, side.up].filter((x) => x.disabled).map((x) => x.why))];
+    if (stepWhys.length) shelf.appendChild(el(doc, 'div', 'dc-stepwhy', stepWhys.join('. ')));
     sheet.appendChild(shelf);
   }
 
@@ -934,8 +937,8 @@ function paintBuilder(world) {
   const send = actionButton(world, sheet0.send, () => sheet0.send.action, 'btn dc-btn dc-btn-primary', () => closeSheet(world));
   send.dataset.type = sheet0.send.type;
   row.appendChild(send);
-  foot.appendChild(row);
   foot.appendChild(problems);
+  foot.appendChild(row);
   sheet.appendChild(foot);
   restore();
 }
@@ -943,8 +946,8 @@ function paintBuilder(world) {
 /** A static (untappable) chip for the review face. */
 function readOnlyChip(world, text, colour, extra) {
   const c = el(world.doc, 'span', `dc-dchip is-static${extra ? ` ${extra}` : ''}`);
-  if (colour) { const sw = el(world.doc, 'span', 'dc-sw'); sw.style.background = colour; c.appendChild(sw); }
-  c.appendChild(el(world.doc, 'span', 'dc-nm', text));
+  if (colour) { const sw = el(world.doc, 'span', 'dc-chipsw'); sw.style.background = colour; c.appendChild(sw); }
+  c.appendChild(el(world.doc, 'span', 'dc-chipname', text));
   return c;
 }
 
@@ -994,8 +997,8 @@ function paintReview(world) {
     btn.dataset.type = b.type;
     row.appendChild(btn);
   }
-  foot.appendChild(row);
   foot.appendChild(problems);
+  foot.appendChild(row);
   sheet.appendChild(foot);
   restore();
 }

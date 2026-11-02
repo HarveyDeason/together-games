@@ -955,7 +955,7 @@ body {
   gap: 0.3rem;
   max-width: 100%;
   margin: 0;
-  padding: 0.35rem 0.55rem;
+  padding: 0.3rem 0.5rem;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--bg);
@@ -966,16 +966,17 @@ body {
   text-align: left;
   cursor: pointer;
 }
-.dc-dchip .dc-sw { flex: none; width: 0.5rem; height: 0.5rem; border-radius: 2px; }
-.dc-dchip .dc-nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dc-dchip .dc-chipsw { flex: none; width: 0.5rem; height: 0.5rem; border-radius: 2px; }
+.dc-dchip .dc-chipname { font-size: 0.75rem; color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dc-dchip.is-on { background: #232536; color: var(--text); border-color: var(--accent); }
 .dc-dchip.is-on::after { content: '\2713'; font-size: 0.65rem; color: var(--accent); }
 .dc-dchip:disabled { cursor: default; opacity: 0.55; }
 .dc-dchip.is-static { cursor: default; background: #232536; color: var(--text); border-color: #393d50; }
 .dc-dchip.is-money { font-variant-numeric: tabular-nums; }
-.dc-chipnote { flex: none; font-size: 0.6rem; color: var(--muted); }
+.dc-chipnote { flex: none; font-size: 0.62rem; color: var(--muted); }
 /* The reason a chip cannot be used is part of the chip: a title is invisible on a phone. */
-.dc-chipwhy { color: var(--seat0); }
+.dc-chipwhy { opacity: 0.85; }
+.dc-stepwhy { margin-top: 0.3rem; font-size: 0.62rem; color: var(--muted); }
 .dc-cashrow { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.6rem; }
 .dc-step {
   flex: none;
@@ -1010,13 +1011,13 @@ body {
   bottom: calc(-0.75rem - env(safe-area-inset-bottom));
   flex: none;
   margin: 0 -1rem calc(-0.75rem - env(safe-area-inset-bottom));
-  padding: 0.5rem 1rem 0;
+  padding: 0.5rem 7rem calc(0.75rem + env(safe-area-inset-bottom)) 1rem;
   background: var(--surface);
   border-top: 1px solid var(--line);
 }
-/* Under the buttons, level with the floating chat toggle (bottom right, z-index 10),
-   so the reason is written beside it and nothing the player must press is under it. */
-.dc-problems { min-height: 4.5rem; padding: 0.35rem 7rem calc(0.4rem + env(safe-area-inset-bottom)) 0; }
+/* The foot keeps 7rem clear on the right: the chat toggle floats there (z-index 10),
+   so the buttons sit beside it, never under it, and need no reserved strip. */
+.dc-problems { padding: 0 0 0.35rem; }
 .dc-problem { font-size: 0.72rem; line-height: 1.25; color: var(--muted); }
 .dc-footbtns { margin-top: 0; flex-wrap: nowrap; }
 .btn.dc-btn-primary { background: var(--accent); color: #fff; border: 1px solid var(--accent); }

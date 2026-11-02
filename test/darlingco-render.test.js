@@ -1503,3 +1503,26 @@ test('the builder has its own styles, and the sheet still sits under the chat', 
   assert.match(/\.dc-sheet\s*\{[^}]*z-index:\s*5\b/.exec(css)[0], /z-index:\s*5/);
   assert.match(/\.chat-sheet\s*\{[^}]*z-index:\s*10\b/.exec(css)[0], /z-index:\s*10/);
 });
+
+test('a chip\'s name is its own class, sized for the sheet and larger than its reason; no board-tile class is borrowed', () => {
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  const size = (sel) => { const m = new RegExp(`${sel.replace('.', '\\.')}\\s*\\{[^}]*font-size:\\s*([\\d.]+)rem`).exec(css); assert.ok(m, `${sel} has no rem font-size`); return Number(m[1]); };
+  assert.ok(size('.dc-dchip .dc-chipname') > size('.dc-chipnote'));
+  assert.ok(size('.dc-dchip .dc-chipname') >= 0.75);
+  const { host } = container();
+  renderBoard(owned({ 21: 0, 24: 0, 6: 1 }), host, { mySeat: 0, names: NAMES, onAction: () => {} });
+  buttonsIn(host.__dc.newDeal)[0].click();
+  for (const n of all(host.__dc.sheet)) {
+    assert.ok(!n.classes.has('dc-nm') && !n.classes.has('dc-sw'), 'the sheet borrowed a board-tile class');
+  }
+  assert.ok(all(bySquare(host.__dc.sheet, 24)).some((n) => n.classes.has('dc-chipname')));
+});
+
+test('a greyed money stepper says why as visible text', () => {
+  const { host } = container();
+  renderBoard(owned({ 24: 0 }), host, { mySeat: 0, names: NAMES, onAction: () => {} });
+  buttonsIn(host.__dc.newDeal)[0].click();
+  const notes = all(host.__dc.sheet).filter((n) => n.classes.has('dc-stepwhy')).map((n) => n.textContent);
+  assert.equal(notes.length, 2);   // both shelves start at zero
+  assert.ok(notes.every((t) => t.length > 0));
+});

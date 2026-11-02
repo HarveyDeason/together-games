@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { gridCell, edgeOf, buildBoard, paintTile, decisionFor, feedLines, propertyFor, cardFor, walkPath, chipParts } from '../src/games/darlingco-render.js';
+import { gridCell, edgeOf, buildBoard, paintTile, decisionFor, feedLines, propertyFor, cardFor, walkPath, chipParts, tradeStrips, canOpenDeal } from '../src/games/darlingco-render.js';
 import { createInitialState, render, applyAction } from '../src/games/darlingco.js';
-import { setChar } from '../src/games/darlingco-state.js';
+import { setChar, BLANK_PROPS, dealChar } from '../src/games/darlingco-state.js';
 import { SQUARES, SETS, STATION_RENT } from '../src/games/darlingco-board.js';
 
 // Minimal DOM stub, same reasoning as tictactoe-render.test.js: no jsdom.
@@ -819,4 +819,192 @@ test('a sheet mode the card does not draw leaves the sheet and the selection alo
   assert.equal(h.__dc.selected, 24);
   assert.equal(h.__dc.sheet.hidden, false);
   assert.equal(h.__dc.sheet.children.length, drawn);
+});
+
+
+// ---- live deals in the centre ---------------------------------------------
+const ok = (r) => { assert.equal(r.error, undefined, r.error); return r.state; };
+const offer = (state, seat, squareMap, cash) => {
+  let props = BLANK_PROPS;
+  for (const [sq, [dest, mortgaged]] of Object.entries(squareMap)) props = setChar(props, Number(sq), dealChar(dest, mortgaged));
+  return applyAction(state, { type: 'trade-offer', props, cash, outs0: 0, outs1: 0 }, seat);
+};
+// Every disabled control must carry a reason, and every one is checked here.
+const assertDisabledWithReason = (b) => {
+  assert.equal(b.disabled, true, b.type);
+  assert.ok(typeof b.why === 'string' && b.why.length > 0, `${b.type} has no reason`);
+};
+const CAP_SQUARES = [1, 3, 6, 8, 9, 11, 13, 14];
+const capped = () => {
+  let s = owned(Object.fromEntries(CAP_SQUARES.map(q => [q, 1])));
+  for (const q of CAP_SQUARES) s = ok(offer(s, 0, { [q]: [0, false] }, 0));
+  return s;
+};
+const inAuction = (s) => ({ ...s, phase: 'auction', aucSq: 31, aucBid: 0, aucBy: -1, aucPass: 0, actor: 1, turn: 0 });
+
+test('a deal waiting on you is badged for an answer; one waiting on them is not', () => {
+  const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));
+  assert.deepEqual(tradeStrips(s, 1, []).map(x => x.badge), ['answer']);
+  assert.deepEqual(tradeStrips(s, 0, []).map(x => x.badge), ['waiting']);
+});
+
+test('the strip offers accept, counter and decline to the seat being asked', () => {
+  const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));
+  assert.deepEqual(tradeStrips(s, 1, [])[0].buttons.map(b => b.type).sort(),
+    ['trade-accept', 'trade-counter', 'trade-decline']);
+  assert.deepEqual(tradeStrips(s, 0, [])[0].buttons.map(b => b.type), ['trade-cancel']);
+});
+
+test('a strip says what the deal is, in both directions', () => {
+  const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));
+  const text = tradeStrips(s, 1, ['Harvey', 'Shruti'])[0].text;
+  assert.match(text, /Harvey/);
+  assert.ok(text.includes(SQUARES[24].name));
+  assert.match(text, /200/);
+});
+
+test('a deal that has gone stale is shown as such and only offers a decline', () => {
+  const offered = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));
+  const moved = { ...offered, own: setChar(offered.own, 24, '0') };
+  const strip = tradeStrips(moved, 1, [])[0];
+  assert.equal(strip.badge, 'stale');
+  assert.ok(strip.stale);
+  assert.deepEqual(strip.buttons.map(b => b.type), ['trade-decline']);
+  assert.match(strip.text, /no longer/i);
+  // The seat that offered it can still take it back.
+  assert.deepEqual(tradeStrips(moved, 0, [])[0].buttons.map(b => b.type), ['trade-cancel']);
+});
+
+test('a mortgaged-since-offered property also makes the deal stale', () => {
+  const offered = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));
+  const moved = { ...offered, mortg: setChar(offered.mortg, 24, '1') };
+  assert.equal(tradeStrips(moved, 1, [])[0].badge, 'stale');
+});
+
+test('accepting is offered as a disabled button with its reason, never as an error', () => {
+  const offered = ok(offer({ ...owned({ 24: 1 }), cash: [1500, 1500] }, 0, { 24: [0, false] }, 200));
+  const live = inAuction(offered);
+  const duringAuction = tradeStrips(live, 1, [])[0].buttons.find(b => b.type === 'trade-accept');
+  assertDisabledWithReason(duringAuction);
+  assert.match(duringAuction.why, /auction/i);
+  assert.equal(applyAction(live, { type: 'trade-accept', id: 't0' }, 1).error, 'auction-live');
+
+  const broke = { ...offered, cash: [10, 1500] };     // the offerer can no longer pay
+  const unaffordable = tradeStrips(broke, 1, [])[0].buttons.find(b => b.type === 'trade-accept');
+  assertDisabledWithReason(unaffordable);
+  assert.equal(applyAction(broke, { type: 'trade-accept', id: 't0' }, 1).error, 'cannot-afford');
+});
+
+test('every enabled strip button is accepted by the engine, and every disabled one is refused', () => {
+  const offered = ok(offer({ ...owned({ 24: 1 }), cash: [1500, 1500] }, 0, { 24: [0, false] }, 200));
+  const cases = [
+    offered,
+    inAuction(offered),
+    { ...offered, cash: [10, 1500] },
+    { ...offered, own: setChar(offered.own, 24, '0') }
+  ];
+  let enabled = 0, disabled = 0;
+  for (const state of cases) {
+    for (const seat of [0, 1]) {
+      for (const b of tradeStrips(state, seat, [])[0].buttons) {
+        if (b.opens) continue;   // the counter opens the deal sheet; it sends nothing itself
+        const r = applyAction(state, b.action, seat);
+        if (b.disabled) { assertDisabledWithReason(b); assert.ok(r.error, `${b.type} should be refused`); disabled++; }
+        else { assert.equal(r.error, undefined, `${b.type}: ${r.error}`); enabled++; }
+      }
+    }
+  }
+  assert.ok(enabled > 0 && disabled > 0);
+});
+
+test('every deal gets a strip, and none when there are none', () => {
+  let s = owned({ 24: 1, 21: 1 });
+  assert.deepEqual(tradeStrips(s, 0, []), []);
+  s = ok(offer(s, 0, { 24: [0, false] }, 0));
+  s = ok(offer(s, 0, { 21: [0, false] }, 0));
+  assert.deepEqual(tradeStrips(s, 1, []).map(x => x.id), ['t0', 't1']);
+});
+
+test('a watcher with no seat sees the deals but can act on none of them', () => {
+  const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));
+  const strips = tradeStrips(s, null, []);
+  assert.equal(strips.length, 1);
+  for (const strip of strips) assert.deepEqual(strip.buttons, []);
+});
+
+test('the new-deal entry point closes at the cap, with a reason', () => {
+  let s = owned(Object.fromEntries(CAP_SQUARES.map(q => [q, 1])));
+  assert.equal(canOpenDeal(s, 0).ok, true);
+  s = capped();
+  assert.equal(canOpenDeal(s, 0).ok, false);
+  assert.ok(canOpenDeal(s, 0).why.length > 0);
+  assert.equal(applyAction(s, { type: 'trade-offer', props: BLANK_PROPS, cash: 5, outs0: 0, outs1: 0 }, 0).error, 'too-many-trades');
+});
+
+test('a watcher or a finished game cannot open a deal, with a reason', () => {
+  const s = owned({ 24: 1 });
+  for (const r of [canOpenDeal(s, null), canOpenDeal({ ...s, phase: 'over' }, 0)]) {
+    assertDisabledWithReason({ disabled: !r.ok, why: r.why, type: 'new-deal' });
+  }
+});
+
+test('the strips are drawn in the centre and survive trades arriving undefined', () => {
+  const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));
+  const { trades, ...dropped } = s;
+  const h = mount(dropped, 1);
+  assert.equal(h.__dc.strips.children.length, 0);
+  render(s, h, { mySeat: 1, names: ['Ann', 'Bo'], onAction: () => {} });
+  assert.equal(h.__dc.strips.children.length, 1);
+  const mid = all(h.__dc.root).find(n => n.classes.has('dc-mid'));
+  const order = mid.children;
+  assert.ok(order.includes(h.__dc.strips));
+  assert.ok(order.indexOf(h.__dc.feed) < order.indexOf(h.__dc.strips));
+  assert.ok(order.indexOf(h.__dc.strips) < order.indexOf(h.__dc.decision));
+});
+
+test('strips are keyed by deal id, carry data-trade, and their buttons carry data-type', () => {
+  const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));
+  const h = mount(s, 1);
+  const strip = h.__dc.strips.children[0];
+  assert.equal(strip.dataset.trade, 't0');
+  assert.deepEqual(buttonsIn(strip).map(b => b.dataset.type).sort(), ['trade-accept', 'trade-counter', 'trade-decline']);
+});
+
+test('pressing Accept on a strip sends the trade action with its id', () => {
+  const sent = [];
+  const s = ok(offer({ ...owned({ 24: 1 }), cash: [1500, 1500] }, 0, { 24: [0, false] }, 200));
+  const h = mount(s, 1, (a) => { sent.push(a); return Promise.resolve(); });
+  buttonsIn(h.__dc.strips).find(b => b.dataset.type === 'trade-accept').click();
+  assert.deepEqual(sent, [{ type: 'trade-accept', id: 't0' }]);
+});
+
+test('a drawn strip button that cannot be pressed is disabled and says why', () => {
+  const offered = ok(offer({ ...owned({ 24: 1 }), cash: [1500, 1500] }, 0, { 24: [0, false] }, 200));
+  const h = mount(inAuction(offered), 1);
+  const accept = buttonsIn(h.__dc.strips).find(b => b.dataset.type === 'trade-accept');
+  assert.equal(accept.disabled, true);
+  assert.match(accept.attrs.title, /auction/i);
+  accept.click();   // pressing it sends nothing
+});
+
+test('the New deal entry is under the strips, disabled with a reason at the cap, and absent for a watcher', () => {
+  const h = mount(owned(Object.fromEntries(CAP_SQUARES.map(q => [q, 1]))), 0);
+  const entry = () => buttonsIn(h.__dc.newDeal).find(b => /new deal/i.test(b.textContent));
+  assert.equal(entry().disabled, false);
+  entry().click();
+  assert.equal(h.__dc.sheetMode, 'deal');
+  const s = capped();
+  render(s, h, { mySeat: 0, names: ['Ann', 'Bo'], onAction: () => {} });
+  assert.equal(h.__dc.strips.children.length, 8);
+  assert.equal(entry().disabled, true);
+  assert.ok(entry().attrs.title.length > 0);
+  render(s, h, { mySeat: null, names: ['Ann', 'Bo'], onAction: () => {} });
+  assert.equal(entry(), undefined);
+  assert.deepEqual(buttonsIn(h.__dc.strips), []);
+});
+
+test('with eight deals live the decision is still drawn with its buttons', () => {
+  const h = mount(capped(), 0);
+  assert.equal(h.__dc.strips.children.length, 8);
+  assert.ok(buttonsIn(h.__dc.decision).some(b => /roll/i.test(b.textContent)));
 });

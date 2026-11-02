@@ -6,10 +6,10 @@
 // attributes set here: data-edge, data-own, data-built, and .is-mortgaged.
 
 import {
-  SQUARES, SETS, STATION_RENT, UTIL_MULT, GAME_NAME, JAIL_FINE, LJ_CARDS, JB_CARDS, LJ_NAME, JB_NAME
+  SQUARES, SETS, STATION_RENT, UTIL_MULT, GAME_NAME, JAIL_FINE, LJ_CARDS, JB_CARDS, LJ_NAME, JB_NAME, MAX_TRADES
 } from './darlingco-board.js';
-import { readLog } from './darlingco.js';
-import { ownerOf, housesOn, isMortgaged, ownsFullSet, countKind, rentFor, canBuild, canSell, netWorth } from './darlingco-state.js';
+import { readLog, readTrades, dealSummary } from './darlingco.js';
+import { ownerOf, housesOn, isMortgaged, ownsFullSet, countKind, rentFor, canBuild, canSell, netWorth, dealProblem } from './darlingco-state.js';
 
 /** Grid cell of a square. Square 0 is bottom right; play runs left along the
  *  bottom, up the left side, right along the top, down the right side. */
@@ -389,6 +389,72 @@ export function cardFor(state, mySeat, sq, names) {
   };
 }
 
+// ---- live deals ------------------------------------------------------------
+// One line per deal, in the centre between the story and the live decision.
+// tradeStrips / canOpenDeal are PURE; the DOM code below only draws them. Every
+// refusal the engine could give is worked out here first, so a button that
+// cannot work is disabled with a reason instead of being pressed and shaken.
+
+/** dealProblem results that mean the deal can never be executed as written:
+ *  the squares moved, or were mortgaged. The rest (cash, a card, houses) can
+ *  recover, so Accept stays but is disabled with its reason. */
+const DEAD_DEAL = ['trade-stale', 'bad-deal', 'empty-deal'];
+
+const dealButton = (id, type, label, extra = {}) => ({ type, label, action: { type, id }, ...extra });
+
+function acceptBlock(state, trade, problem, names, mySeat) {
+  if (state.phase === 'auction') return 'Finish the auction first';
+  if (problem === 'cannot-afford') {
+    const payer = trade.cash > 0 ? 0 : 1;
+    return payer === mySeat ? 'You cannot afford this right now' : `${seatName(names, payer)} cannot afford this right now`;
+  }
+  if (problem === 'trade-built') return 'Houses stand on a set in this deal';
+  if (problem === 'no-card') return 'A get-out card in this deal is gone';
+  return problem ? 'This deal cannot be done right now' : '';
+}
+
+/** One entry per live deal, in id order: { id, text, badge, stale, buttons }.
+ *  `badge` is 'answer' (waiting on mySeat), 'waiting' (on the other seat) or
+ *  'stale' (it can no longer be done). `buttons` are empty for a watcher.
+ *  Read through readTrades: Firebase drops an empty object. */
+export function tradeStrips(state, mySeat, names) {
+  const trades = readTrades(state);
+  const seated = mySeat === 0 || mySeat === 1;
+  return Object.keys(trades).sort().map((id) => {
+    const trade = trades[id];
+    const offerer = 1 - trade.awaits;
+    const problem = dealProblem(state, trade);
+    const stale = DEAD_DEAL.includes(problem);
+    const mine = seated && trade.awaits === mySeat;
+
+    const who = offerer === mySeat ? 'You' : seatName(names, offerer);
+    const gives = dealSummary(trade, trade.awaits) || 'nothing';   // what the offerer hands over
+    const asks = dealSummary(trade, offerer) || 'nothing';
+    const text = stale ? `${who}: this deal is no longer possible` : `${who}: ${gives} for ${asks}`;
+
+    let buttons = [];
+    if (seated && mine) {
+      buttons = [dealButton(id, 'trade-decline', 'Decline')];
+      if (!stale) {
+        const why = acceptBlock(state, trade, problem, names, mySeat);
+        buttons.unshift(dealButton(id, 'trade-accept', 'Accept', why ? { disabled: true, why } : {}));
+        buttons.splice(1, 0, { type: 'trade-counter', label: 'Counter', id, opens: true, action: null });
+      }
+    } else if (seated) {
+      buttons = [dealButton(id, 'trade-cancel', 'Cancel')];
+    }
+    return { id, text, badge: stale ? 'stale' : mine ? 'answer' : 'waiting', stale, buttons };
+  });
+}
+
+/** Whether `+ New deal` can be opened by mySeat now, and if not, why. */
+export function canOpenDeal(state, mySeat) {
+  if (mySeat !== 0 && mySeat !== 1) return { ok: false, why: 'Only the players can make deals' };
+  if (state.phase === 'over') return { ok: false, why: 'The game is over' };
+  if (Object.keys(readTrades(state)).length >= MAX_TRADES) return { ok: false, why: 'Eight deals is the limit' };
+  return { ok: true, why: '' };
+}
+
 // ---- things that move -------------------------------------------------------
 // Tokens walk square by square, a built house pops, and money flicks toward
 // whoever is owed. All of it happens out on the board, never in the centre.
@@ -466,8 +532,10 @@ function buildWorld(doc, host) {
   head.appendChild(dice);
   const feed = el(doc, 'ol', 'dc-feed');
   const sheet = el(doc, 'div', 'dc-sheet');
+  const strips = el(doc, 'div', 'dc-deals');
   const decision = el(doc, 'div', 'dc-decision');
-  [head, feed, decision].forEach((n) => mid.appendChild(n));
+  const newDeal = el(doc, 'div', 'dc-newdeal');
+  [head, feed, strips, decision, newDeal].forEach((n) => mid.appendChild(n));
   board.appendChild(mid);
   root.appendChild(board);
   const room = el(doc, 'div', 'dc-room');
@@ -479,8 +547,8 @@ function buildWorld(doc, host) {
   host.appendChild(root);
 
   const world = {
-    doc, root, bar, chips, potChip, tiles, dice, feed, sheet, decision, room,
-    selected: -1, sheetMode: 'property', pending: false, busy: false, generation: 0, animatedKey: null,
+    doc, root, bar, chips, potChip, tiles, dice, feed, sheet, strips, decision, newDeal, room,
+    selected: -1, sheetMode: 'property', draft: null, pending: false, busy: false, generation: 0, animatedKey: null,
     shown: null, builtSeen: null, state: null, mySeat: null, names: [], onAction: () => {}
   };
   tiles.forEach((tile, i) => {
@@ -560,6 +628,64 @@ function paintCard(world) {
   }
 }
 
+const PILL = { answer: 'Answer', waiting: 'Waiting', stale: 'Expired' };
+
+/** A button that sends nothing: it only opens the deal sheet (task 10 draws
+ *  it). Disabled it carries its reason, like every other control here. */
+function openerButton(world, spec, draft, className) {
+  const b = el(world.doc, 'button', className, spec.label);
+  b.type = 'button';
+  b.disabled = !!spec.disabled || world.pending || world.busy;
+  if (spec.why) b.setAttribute('title', spec.why);
+  b.addEventListener('click', () => {
+    if (b.disabled) return;
+    world.sheetMode = 'deal';
+    world.draft = draft;
+    paint(world);
+  });
+  return b;
+}
+
+function paintStrips(world) {
+  const { strips, newDeal, state, mySeat, doc } = world;
+  clear(strips);
+  const list = tradeStrips(state, mySeat, world.names);
+  strips.hidden = list.length === 0;
+  for (const t of list) {
+    // Keyed on the deal id, which a counter keeps, so a strip does not jump.
+    const row = el(doc, 'div', `dc-deal is-${t.badge}`);
+    row.dataset.trade = t.id;
+    const line = el(doc, 'div', 'dc-dealrow');
+    const dt = el(doc, 'span', 'dc-dt', t.text);
+    dt.setAttribute('title', t.text);
+    line.appendChild(dt);
+    line.appendChild(el(doc, 'span', 'dc-pill', PILL[t.badge]));
+    row.appendChild(line);
+    if (t.buttons.length) {
+      const btns = el(doc, 'div', 'dc-dealbtns');
+      for (const spec of t.buttons) {
+        const b = spec.opens
+          ? openerButton(world, spec, { counter: t.id }, 'btn dc-btn dc-btn-secondary')
+          : actionButton(world, spec, () => spec.action);
+        b.dataset.type = spec.type;
+        btns.appendChild(b);
+      }
+      row.appendChild(btns);
+    }
+    strips.appendChild(row);
+  }
+
+  clear(newDeal);
+  newDeal.hidden = (mySeat !== 0 && mySeat !== 1) || state.phase === 'over';
+  if (!newDeal.hidden) {
+    const can = canOpenDeal(state, mySeat);
+    const b = openerButton(world, { label: '+ New deal', disabled: !can.ok, why: can.why }, { counter: null },
+      'link-btn dc-newdeal-btn');
+    b.dataset.type = 'new-deal';
+    newDeal.appendChild(b);
+  }
+}
+
 function paintDecision(world) {
   const { decision, state, mySeat, names } = world;
   clear(decision);
@@ -624,6 +750,7 @@ function paint(world) {
   for (const line of feedLines(state, FEED_LINES, names)) world.feed.appendChild(el(world.doc, 'li', 'dc-line', line));
 
   paintSheet(world);
+  paintStrips(world);
   paintRoom(world, paintDecision(world));
 }
 

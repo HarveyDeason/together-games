@@ -1571,7 +1571,7 @@ test('passing on a standing bid ends the auction and the bidder buys at their bi
   assert.deepEqual(done.cash, [1500, 1440]);
   assert.equal(done.phase, 'end');
   assert.equal(done.actor, 0);
-  assert.equal(done.aucSq, -1);
+  assert.deepEqual([done.aucSq, done.aucBid, done.aucBy, done.aucPass], [-1, 0, -1, 0]);
 });
 
 test('the auction price goes to the bank, never to the Free Parking pot', () => {
@@ -1591,6 +1591,10 @@ test('the player who declined can win the lot cheap', () => {
   const done = ok(act(s, { type: 'pass' }, 1));
   assert.equal(ownerOf(done, 24), 0);
   assert.equal(done.cash[0], 1500 - MIN_BID);
+  // Seat 1 passed to close it, but it is still seat 0's turn to end.
+  assert.equal(done.actor, 0);
+  assert.equal(act(done, 'end', 1).error, 'not-your-turn');
+  assert.equal(ok(act(done, 'end', 0)).phase, 'roll');
 });
 
 test('when neither of them bids the property stays unowned', () => {
@@ -1603,6 +1607,7 @@ test('when neither of them bids the property stays unowned', () => {
   assert.equal(ownerOf(done, 24), -1);
   assert.equal(done.phase, 'end');
   assert.equal(done.actor, done.turn);
+  assert.deepEqual([done.aucSq, done.aucBid, done.aucBy, done.aucPass], [-1, 0, -1, 0]);
   assert.match(readLog(done).at(-1), /stays unsold/);
 });
 
@@ -1637,6 +1642,18 @@ test('declining a property somebody owns does not open an auction', () => {
   const next = ok(act(s, { type: 'decline' }, 0));
   assert.equal(next.phase, 'end');
   assert.equal(next.aucSq, -1);
+  assert.equal(next.actor, 0);
+  assert.equal(next.moves, s.moves + 1);
+});
+
+test('every auction action counts a move', () => {
+  let a = auction(24, { cash: [1500, 1500], actor: 1, moves: 7 });
+  a = ok(act(a, { type: 'bid', amount: 60 }, 1));
+  assert.equal(a.moves, 8);
+  assert.equal(ok(act(a, { type: 'pass' }, 0)).moves, 9);
+  const quiet = ok(act(auction(24, { actor: 1, moves: 7 }), { type: 'pass' }, 1));
+  assert.equal(quiet.moves, 8);
+  assert.equal(ok(act(quiet, { type: 'pass' }, 0)).moves, 9);
 });
 
 test('a malformed bid is refused and the standing bid is untouched', () => {

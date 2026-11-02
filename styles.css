@@ -236,7 +236,10 @@ button.room-code {
   .reaction-float { animation-duration: 1s; }
 }
 
+/* z-index 10: chat always sits above the game's bottom sheet (.dc-sheet, 5), so a
+   card or deal sheet never covers the conversation or the button that opens it. */
 .chat-toggle {
+  z-index: 10;
   position: fixed;
   right: 1rem;
   bottom: 1rem;
@@ -265,7 +268,9 @@ button.room-code {
   border-radius: 999px;
 }
 
+/* z-index 10: above the game's bottom sheet (.dc-sheet, 5); chat must never be covered. */
 .chat-sheet {
+  z-index: 10;
   position: fixed;
   inset: auto 0 0 0;
   display: flex;
@@ -811,8 +816,9 @@ body {
   box-shadow: 0 -10px 30px rgb(0 0 0 / 0.4);
 }
 
-/* The property card (trade-flow mockup, panel 3). Sized for the centre of the
-   board, so the rows are tighter than the 360px mockup and the card scrolls. */
+/* The property card (trade-flow mockup, panel 3), drawn inside the bottom sheet
+   above, so it has the width of the phone. Rows are a little tighter than the
+   360px mockup. */
 .dc-card { flex: none; border: 1px solid var(--line); border-radius: 0.75rem; overflow: hidden; background: var(--surface); }
 .dc-cardtop { flex: none; padding: 0.3rem 0.4rem; font-weight: 700; font-size: 0.85rem; }
 .dc-cardtop .dc-sheet-title { font-size: clamp(0.72rem, 3.2vw, 0.9rem); }

@@ -6,10 +6,10 @@
 // attributes set here: data-edge, data-own, data-built, and .is-mortgaged.
 
 import {
-  SQUARES, SETS, GAME_NAME, JAIL_FINE, LJ_CARDS, JB_CARDS, LJ_NAME, JB_NAME
+  SQUARES, SETS, STATION_RENT, UTIL_MULT, GAME_NAME, JAIL_FINE, LJ_CARDS, JB_CARDS, LJ_NAME, JB_NAME
 } from './darlingco-board.js';
 import { readLog } from './darlingco.js';
-import { ownerOf, housesOn, isMortgaged, canBuild, canSell, netWorth } from './darlingco-state.js';
+import { ownerOf, housesOn, isMortgaged, ownsFullSet, countKind, rentFor, canBuild, canSell, netWorth } from './darlingco-state.js';
 
 /** Grid cell of a square. Square 0 is bottom right; play runs left along the
  *  bottom, up the left side, right along the top, down the right side. */
@@ -57,6 +57,7 @@ export function buildBoard(doc) {
     tile.style.gridColumn = String(column);
     tile.dataset.edge = edgeOf(i);
     tile.dataset.square = String(i);
+    if (sq.price !== undefined) tile.dataset.deed = '1';   // has a title deed to show
     // The untruncated name is always reachable, whatever the tile clips.
     tile.setAttribute('title', sq.name);
     tile.setAttribute('aria-label', sq.name);
@@ -310,6 +311,81 @@ export function propertyFor(state, mySeat, sq) {
   };
 }
 
+// ---- the property card -------------------------------------------------------
+const PLAIN_COLOUR = '#9aa0b5';
+
+function ladderFor(state, sq, owner) {
+  const spec = SQUARES[sq];
+  const mortgaged = owner >= 0 && isMortgaged(state, sq);
+  const row = (label, amount, extra) => ({ label, amount, now: false, ...extra });
+  const rows = [];
+  let nowIndex;
+
+  if (spec.kind === 'prop') {
+    const n = housesOn(state, sq);
+    rows.push(row('Rent', spec.rent[0]));
+    rows.push(row('With the set', spec.rent[0] * 2));
+    for (let h = 1; h <= 4; h++) rows.push(row(`${h} house${h > 1 ? 's' : ''}`, spec.rent[h], h === 1 ? { rule: true } : {}));
+    rows.push(row('Hotel', spec.rent[5]));
+    rows.push(row('House costs', spec.house, { rule: true }));
+    rows.push(row('Mortgage value', spec.mortgage));
+    nowIndex = n > 0 ? n + 1 : owner >= 0 && ownsFullSet(state, owner, spec.set) ? 1 : 0;
+  } else if (spec.kind === 'stn') {
+    STATION_RENT.forEach((r, i) => rows.push(row(`${i + 1} station${i ? 's' : ''}`, r)));
+    rows.push(row('Mortgage value', spec.mortgage, { rule: true }));
+    nowIndex = owner >= 0 ? countKind(state, owner, 'stn') - 1 : 0;
+  } else {
+    UTIL_MULT.forEach((m, i) => rows.push(row(`${i ? 'Both utilities' : '1 utility'}, times the dice`, m, { times: true })));
+    rows.push(row('Mortgage value', spec.mortgage, { rule: true }));
+    nowIndex = owner >= 0 ? countKind(state, owner, 'util') - 1 : 0;
+  }
+
+  if (mortgaged) {
+    // rentFor says 0 for a mortgaged square; the ladder shows that instead of a rent.
+    rows.unshift(row('Mortgaged: no rent', rentFor(state, sq, 0), { now: true }));
+  } else {
+    rows[nowIndex].now = true;
+  }
+  return rows;
+}
+
+/** The title deed for any priced square, whoever holds it, or null for a
+ *  square with no price. `buttons` are propertyFor's (the build / sell /
+ *  mortgage set) when `mySeat` owns it and empty otherwise. The deal button
+ *  is only described here; opening the deal builder is wired by the sheet. */
+export function cardFor(state, mySeat, sq, names) {
+  const spec = SQUARES[sq];
+  if (!spec || spec.price === undefined) return null;
+  const owner = ownerOf(state, sq);
+  const set = spec.set ? SETS[spec.set] : null;
+  const unit = spec.kind === 'stn' ? { one: 'station', many: 'stations', of: 4 }
+    : spec.kind === 'util' ? { one: 'utility', many: 'utilities', of: 2 } : null;
+
+  let ownerLine = `For sale: ${spec.price}`;
+  if (owner >= 0) {
+    const who = `${seatName(names, owner)}${owner === mySeat ? ' (you)' : ''}`;
+    const held = set ? set.squares.filter((q) => ownerOf(state, q) === owner).length : countKind(state, owner, spec.kind);
+    const total = set ? set.squares.length : unit.of;
+    const noun = set ? 'in set' : held === 1 ? unit.one : unit.many;
+    ownerLine = `Owned by ${who} \u00b7 ${held} of ${total} ${noun}`;
+  }
+
+  const mine = owner >= 0 && owner === mySeat;
+  const p = mine ? propertyFor(state, mySeat, sq) : null;
+  const canDeal = !mine && mySeat !== null && mySeat !== undefined && state.phase !== 'over';
+  return {
+    square: sq,
+    title: spec.name,
+    setName: set ? set.name : unit.one === 'station' ? 'Stations' : 'Utilities',
+    setColour: set ? set.colour : PLAIN_COLOUR,
+    rows: ladderFor(state, sq, owner),
+    ownerLine,
+    detail: p ? p.detail : '',
+    buttons: p ? p.buttons : [],
+    dealButton: canDeal ? { label: 'Offer a deal for this', square: sq } : null
+  };
+}
+
 // ---- things that move -------------------------------------------------------
 // Tokens walk square by square, a built house pops, and money flicks toward
 // whoever is owed. All of it happens out on the board, never in the centre.
@@ -397,12 +473,12 @@ function buildWorld(doc, host) {
 
   const world = {
     doc, root, bar, chips, potChip, tiles, dice, feed, sheet, decision, room,
-    selected: -1, pending: false, busy: false, generation: 0, animatedKey: null,
+    selected: -1, sheetMode: 'property', pending: false, busy: false, generation: 0, animatedKey: null,
     shown: null, builtSeen: null, state: null, mySeat: null, names: [], onAction: () => {}
   };
   tiles.forEach((tile, i) => {
     tile.addEventListener('click', () => {
-      if (!propertyFor(world.state, world.mySeat, i)) return;
+      if (!cardFor(world.state, world.mySeat, i, world.names)) return;
       world.selected = world.selected === i ? -1 : i;
       paint(world);
     });
@@ -410,24 +486,61 @@ function buildWorld(doc, host) {
   return world;
 }
 
+const money = (r) => (r.times ? `${r.amount}\u00d7` : `\u00a3${r.amount.toLocaleString('en-GB')}`);
+
+// Dark ink on a light set colour, light ink on a dark one.
+function inkFor(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const lum = (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
+  return lum > 0.55 ? '#0d1310' : '#ffffff';
+}
+
+/** The one sheet node serves every mode; today only the card ('property'). */
 function paintSheet(world) {
-  const { sheet, state, mySeat } = world;
+  const { sheet, state, mySeat, doc } = world;
   clear(sheet);
-  const p = world.selected >= 0 ? propertyFor(state, mySeat, world.selected) : null;
-  if (!p) world.selected = -1;
-  sheet.hidden = !p;
-  if (!p) return;
-  const head = el(world.doc, 'div', 'dc-sheet-head');
-  head.appendChild(el(world.doc, 'span', 'dc-sheet-title', p.title));
-  const close = el(world.doc, 'button', 'link-btn dc-close', 'Close');
+  const c = world.sheetMode === 'property' && world.selected >= 0
+    ? cardFor(state, mySeat, world.selected, world.names) : null;
+  if (!c) world.selected = -1;
+  sheet.hidden = !c;
+  if (!c) return;
+
+  const top = el(doc, 'div', 'dc-cardtop');
+  top.style.background = c.setColour;
+  top.style.color = inkFor(c.setColour);
+  top.appendChild(el(doc, 'small', 'dc-cardset', c.setName));
+  const head = el(doc, 'div', 'dc-sheet-head');
+  head.appendChild(el(doc, 'span', 'dc-sheet-title', c.title));
+  const close = el(doc, 'button', 'link-btn dc-close', 'Close');
   close.type = 'button';
   close.addEventListener('click', () => { world.selected = -1; paint(world); });
   head.appendChild(close);
-  sheet.appendChild(head);
-  if (p.detail) sheet.appendChild(el(world.doc, 'div', 'dc-detail', p.detail));
-  const row = el(world.doc, 'div', 'dc-btns dc-btns-grid');
-  for (const b of p.buttons) row.appendChild(actionButton(world, b, () => b.action));
-  sheet.appendChild(row);
+  top.appendChild(head);
+  sheet.appendChild(top);
+
+  const table = el(doc, 'table', 'dc-rents');
+  for (const r of c.rows) {
+    const tr = el(doc, 'tr', `${r.now ? 'now' : ''} ${r.rule ? 'rule' : ''}`.trim());
+    tr.appendChild(el(doc, 'td', '', r.label));
+    tr.appendChild(el(doc, 'td', '', money(r)));
+    table.appendChild(tr);
+  }
+  sheet.appendChild(table);
+  sheet.appendChild(el(doc, 'div', 'dc-cardfoot', c.ownerLine));
+  if (c.detail) sheet.appendChild(el(doc, 'div', 'dc-detail', c.detail));
+
+  if (c.buttons.length) {
+    const row = el(doc, 'div', 'dc-btns dc-btns-grid');
+    for (const b of c.buttons) row.appendChild(actionButton(world, b, () => b.action));
+    sheet.appendChild(row);
+  }
+  if (c.dealButton) {
+    // The deal builder arrives with the deal sheet; until it does the button
+    // is drawn disabled rather than left to do nothing.
+    const row = el(doc, 'div', 'dc-btns');
+    row.appendChild(actionButton(world, { ...c.dealButton, disabled: true, why: 'Deals are not open yet' }, () => ({})));
+    sheet.appendChild(row);
+  }
 }
 
 function paintDecision(world) {

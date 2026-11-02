@@ -789,12 +789,26 @@ body {
 .dc-note { font-size: 0.75rem; color: var(--muted); }
 
 .dc-tile.is-picked { outline: 2px solid var(--accent); outline-offset: -2px; }
-.dc-tile[data-own] { cursor: pointer; }
+.dc-tile[data-deed] { cursor: pointer; }
 .dc-sheet-head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
 .dc-close { margin: 0; padding: 0.1rem 0.3rem; font-size: 0.8rem; }
 .dc-btns-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.25rem; }
 .dc-btns-grid .btn.dc-btn { min-height: 2.1rem; padding: 0.3rem 0.4rem; font-size: clamp(0.62rem, 2.8vw, 0.78rem); }
 .dc-sheet { justify-content: flex-start; }
+
+/* The property card (trade-flow mockup, panel 3). Sized for the centre of the
+   board, so the rows are tighter than the 360px mockup and the card scrolls. */
+.dc-cardtop { flex: none; padding: 0.3rem 0.4rem; border-radius: 0.5rem 0.5rem 0 0; font-weight: 700; font-size: 0.85rem; }
+.dc-cardtop .dc-sheet-title { font-size: clamp(0.72rem, 3.2vw, 0.9rem); }
+.dc-cardtop .dc-close { color: inherit; }
+.dc-cardset { display: block; font-weight: 600; font-size: 0.55rem; opacity: 0.75; letter-spacing: 0.06em; text-transform: uppercase; }
+.dc-rents { flex: none; width: 100%; border-collapse: collapse; font-size: clamp(0.58rem, 2.6vw, 0.72rem); }
+.dc-rents td { padding: 0.12rem 0.4rem; color: #c2c7da; }
+.dc-rents td:last-child { text-align: right; font-variant-numeric: tabular-nums; color: var(--text); }
+.dc-rents tr.now td { color: var(--text); font-weight: 650; }
+.dc-rents tr.now td:last-child { color: var(--seat1); }
+.dc-rents tr.rule td { border-top: 1px solid var(--line); }
+.dc-cardfoot { flex: none; padding: 0.25rem 0.4rem; border-top: 1px solid var(--line); font-size: clamp(0.58rem, 2.5vw, 0.7rem); color: var(--muted); }
 
 /* ---- Darling & Co.: things that move ------------------------------------
    Out on the board, never in the centre. Quick and light; the script only adds

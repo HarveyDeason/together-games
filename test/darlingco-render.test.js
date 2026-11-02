@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { gridCell, edgeOf, buildBoard, paintTile, decisionFor, feedLines, propertyFor, walkPath, chipParts } from '../src/games/darlingco-render.js';
+import { gridCell, edgeOf, buildBoard, paintTile, decisionFor, feedLines, propertyFor, cardFor, walkPath, chipParts } from '../src/games/darlingco-render.js';
 import { createInitialState, render, applyAction } from '../src/games/darlingco.js';
 import { setChar } from '../src/games/darlingco-state.js';
-import { SQUARES, SETS } from '../src/games/darlingco-board.js';
+import { SQUARES, SETS, STATION_RENT } from '../src/games/darlingco-board.js';
 
 // Minimal DOM stub, same reasoning as tictactoe-render.test.js: no jsdom.
 function makeEl(tag) {
@@ -710,4 +710,94 @@ test('the Free Parking tile shows the pot, and nothing extra when it is empty', 
   paintTile(tiles[20], s, 20);
   assert.equal(text(potv(tiles[20])), '');
   assert.equal(potv(tiles[6]), undefined);
+});
+
+// ---- the property card -----------------------------------------------------
+const owned = (map) => {
+  const s = fresh();
+  for (const [sq, seat] of Object.entries(map)) s.own = setChar(s.own, Number(sq), String(seat));
+  return s;
+};
+
+test('a card shows the whole rent ladder with the rent now payable marked', () => {
+  const s = owned({ 24: 1 });
+  const c = cardFor(s, 0, 24, ['Harvey', 'Shruti']);
+  assert.equal(c.title, SQUARES[24].name);
+  assert.equal(c.setName, SETS.cappadocia.name);
+  assert.equal(c.setColour, SETS.cappadocia.colour);
+  assert.deepEqual(c.rows.filter(r => r.now).map(r => r.amount), [SQUARES[24].rent[0]]);
+  assert.ok(c.rows.some(r => r.amount === SQUARES[24].rent[5]));
+  assert.ok(c.rows.some(r => r.amount === SQUARES[24].house));
+  assert.ok(c.rows.some(r => r.amount === SQUARES[24].mortgage));
+});
+
+test('the marked rent follows the set, the houses and the mortgage', () => {
+  const full = owned({ 21: 1, 23: 1, 24: 1 });
+  const marked = (s, sq) => cardFor(s, 0, sq, []).rows.find(r => r.now).amount;
+  assert.equal(marked(full, 24), SQUARES[24].rent[0] * 2);
+  const built = { ...full, built: setChar(full.built, 24, '3') };
+  assert.equal(marked(built, 24), SQUARES[24].rent[3]);
+  const mortgaged = { ...full, mortg: setChar(full.mortg, 24, '1') };
+  assert.equal(marked(mortgaged, 24), 0);
+  assert.equal(cardFor(mortgaged, 0, 24, []).rows.filter(r => r.now).length, 1);
+});
+
+test('a station card counts the owner holdings and a utility card shows the multiples', () => {
+  const stations = owned({ 5: 1, 15: 1 });
+  assert.equal(cardFor(stations, 0, 5, []).rows.find(r => r.now).amount, STATION_RENT[1]);
+  const util = owned({ 12: 1 });
+  const rows = cardFor(util, 0, 12, []).rows;
+  assert.ok(rows.some(r => /dice/i.test(r.label)));
+  assert.equal(rows.filter(r => r.now).length, 1);
+});
+
+test('a card says who holds it and how much of the set they have', () => {
+  const s = owned({ 21: 1, 24: 1 });
+  assert.match(cardFor(s, 0, 24, ['Harvey', 'Shruti']).ownerLine, /Shruti/);
+  assert.match(cardFor(s, 0, 24, ['Harvey', 'Shruti']).ownerLine, /2 of 3/);
+  assert.match(cardFor(createInitialState(), 0, 24, []).ownerLine, /sale|unowned|nobody/i);
+});
+
+test('your own card carries the build and mortgage buttons; theirs carries a deal button', () => {
+  const mine = owned({ 24: 0 });
+  assert.deepEqual(cardFor(mine, 0, 24, []).buttons.map(b => b.type), propertyFor(mine, 0, 24).buttons.map(b => b.type));
+  assert.equal(cardFor(mine, 0, 24, []).dealButton, null);
+  const theirs = owned({ 24: 1 });
+  assert.deepEqual(cardFor(theirs, 0, 24, []).buttons, []);
+  assert.equal(cardFor(theirs, 0, 24, []).dealButton.square, 24);
+  assert.equal(cardFor(createInitialState(), 0, 24, []).dealButton.square, 24);
+});
+
+test('a square with no price has no card at all', () => {
+  for (const sq of [0, 2, 4, 7, 10, 17, 20, 22, 30, 33, 36, 38]) {
+    assert.equal(cardFor(createInitialState(), 0, sq, []), null, String(sq));
+  }
+});
+
+test('every priced square on the board produces a card with a marked row', () => {
+  const s = createInitialState();
+  for (let sq = 0; sq < 40; sq++) {
+    if (SQUARES[sq].price === undefined) continue;
+    const c = cardFor(s, 0, sq, []);
+    assert.ok(c && c.rows.length > 0, String(sq));
+    assert.equal(c.rows.filter(r => r.now).length, 1, SQUARES[sq].name);
+  }
+});
+
+test('tapping any priced tile opens its card, not only one you own', () => {
+  const h = mount(owned({ 24: 1 }), 0);
+  h.__dc.tiles[24].click();
+  assert.equal(h.__dc.selected, 24);
+  assert.match(text(h.__dc.sheet), /Balloons at Sunrise/);
+  assert.equal(h.__dc.sheetMode, 'property');
+  h.__dc.tiles[0].click();   // GO has no card: the open one stays
+  assert.equal(h.__dc.selected, 24);
+});
+
+test('their card offers a deal and no build buttons; the unowned one is the same', () => {
+  const h = mount(owned({ 24: 1 }), 0);
+  h.__dc.tiles[24].click();
+  const labels = buttonsIn(h.__dc.sheet).map(b => b.textContent);
+  assert.ok(labels.includes('Offer a deal for this'));
+  assert.ok(!labels.some(l => /build|mortgage/i.test(l)));
 });

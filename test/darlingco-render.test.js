@@ -898,24 +898,59 @@ test('accepting is offered as a disabled button with its reason, never as an err
 
 test('every enabled strip button is accepted by the engine, and every disabled one is refused', () => {
   const offered = ok(offer({ ...owned({ 24: 1 }), cash: [1500, 1500] }, 0, { 24: [0, false] }, 200));
+  // A deal that asks seat 1 for a get-out card nobody holds: the 'no-card' problem.
+  const noCard = { ...owned({ 24: 1 }), cash: [1500, 1500], tradeSeq: 1,
+    trades: { t0: { props: setChar(BLANK_PROPS, 24, dealChar(0, false)), cash: 200, outs0: 1, outs1: 0, awaits: 1 } } };
+  // Both seats' buttons per case, with the enabled/disabled split each must have. Counter
+  // sends nothing (it opens the sheet), so it is checked as disabled-with-reason, not sent.
   const cases = [
-    offered,
-    inAuction(offered),
-    { ...offered, cash: [10, 1500] },
-    { ...offered, own: setChar(offered.own, 24, '0') }
+    ['a live deal', offered, 3, 1],
+    ['an auction running', inAuction(offered), 2, 2],
+    ['the offerer cannot pay', { ...offered, cash: [10, 1500] }, 2, 2],
+    ['the property has moved', { ...offered, own: setChar(offered.own, 24, '0') }, 2, 0],
+    ['houses on the set', { ...offered, built: setChar(offered.built, 21, '1') }, 2, 2],
+    ['a card that is gone', noCard, 2, 2],
+    ['the game is over', { ...offered, phase: 'over' }, 0, 4]
   ];
-  let enabled = 0, disabled = 0;
-  for (const state of cases) {
+  for (const [name, state, wantEnabled, wantDisabled] of cases) {
+    let enabled = 0, disabled = 0;
     for (const seat of [0, 1]) {
       for (const b of tradeStrips(state, seat, [])[0].buttons) {
-        if (b.opens) continue;   // the counter opens the deal sheet; it sends nothing itself
+        if (b.disabled) assertDisabledWithReason(b);
+        if (b.opens) {   // the counter opens the deal sheet; it sends nothing itself
+          assert.equal(b.disabled, true, `${name}: counter`);
+          disabled++;
+          continue;
+        }
         const r = applyAction(state, b.action, seat);
-        if (b.disabled) { assertDisabledWithReason(b); assert.ok(r.error, `${b.type} should be refused`); disabled++; }
-        else { assert.equal(r.error, undefined, `${b.type}: ${r.error}`); enabled++; }
+        if (b.disabled) { assert.ok(r.error, `${name}: ${b.type} should be refused`); disabled++; }
+        else { assert.equal(r.error, undefined, `${name}: ${b.type}: ${r.error}`); enabled++; }
       }
     }
+    assert.deepEqual([enabled, disabled], [wantEnabled, wantDisabled], name);
   }
-  assert.ok(enabled > 0 && disabled > 0);
+});
+
+test('deal ids sort by number, so t10 comes after t2', () => {
+  const trade = { props: setChar(BLANK_PROPS, 24, dealChar(0, false)), cash: 0, outs0: 0, outs1: 0, awaits: 1 };
+  const s = { ...owned({ 24: 1 }), trades: { t10: trade, t2: trade, t9: trade, t0: trade } };
+  assert.deepEqual(tradeStrips(s, 1, []).map(t => t.id), ['t0', 't2', 't9', 't10']);
+});
+
+test('a watcher\'s strip says on its line why it is inert', () => {
+  const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));
+  const h = mount(s, null);
+  assert.match(text(h.__dc.strips.children[0]), /only the players/i);
+});
+
+test('the +N more line says how many hidden deals are waiting on you', () => {
+  const s = capped();   // seat 0 offered all eight: all await seat 1
+  assert.deepEqual(stripsShown(tradeStrips(s, 1, []), 3).moreMine, 6);
+  assert.equal(stripsShown(tradeStrips(s, 0, []), 3).moreMine, 0);
+  const h = mount(s, 1);
+  assert.equal(h.__dc.strips.children.find(n => n.classes.has('dc-more')).textContent, '+6 more (6 waiting on you)');
+  const theirs = mount(s, 0);
+  assert.equal(theirs.__dc.strips.children.find(n => n.classes.has('dc-more')).textContent, '+6 more');
 });
 
 test('every deal gets a strip, and none when there are none', () => {
@@ -1044,7 +1079,7 @@ test('deals awaiting you are drawn first, and the overflow collapses to +N more'
   const s = capped();           // seat 0 offered all eight, so they all await seat 1
   const strips = tradeStrips(s, 1, []);
   // When everything fits, everything is drawn and nothing collapses.
-  assert.deepEqual(stripsShown(strips.slice(0, 3), 3), { shown: strips.slice(0, 3), more: 0 });
+  assert.deepEqual(stripsShown(strips.slice(0, 3), 3), { shown: strips.slice(0, 3), more: 0, moreMine: 0 });
   // When it does not, "+N more" takes one of the lines.
   const { shown, more } = stripsShown(strips, 3);
   assert.deepEqual(shown.map(t => t.id), ['t0', 't1']);
@@ -1053,7 +1088,7 @@ test('deals awaiting you are drawn first, and the overflow collapses to +N more'
   assert.equal(stripsShown(tradeStrips(s, 0, []), 3).more, 6);
   // Awaiting-you comes before waiting-on-them whatever the ids say.
   const mixed = [{ id: 'a', mine: false }, { id: 'b', mine: true }, { id: 'c', mine: false }, { id: 'd', mine: true }];
-  assert.deepEqual(stripsShown(mixed, 3), { shown: [mixed[1], mixed[3]], more: 2 });
+  assert.deepEqual(stripsShown(mixed, 3), { shown: [mixed[1], mixed[3]], more: 2, moreMine: 0 });
   assert.equal(stripsShown([], 3).more, 0);
 });
 
@@ -1068,10 +1103,17 @@ test('with eight deals live only STRIP_CAP are drawn, the rest collapse, and the
   const more = h.__dc.strips.children.find(n => n.classes.has('dc-more'));
   assert.equal(more.textContent, `+${8 - (STRIP_CAP - 1)} more`);
   assert.ok(buttonsIn(h.__dc.decision).some(b => /roll/i.test(b.textContent)));
-  // The story always keeps two lines of room: the stylesheet gives the feed a
-  // minimum height (the fake DOM has no layout, so this is the guard on it).
+});
+
+// The fake DOM has no layout, so the stylesheet is the only place the story's
+// guaranteed room can be checked: .dc-feed must keep two lines whatever the deals do.
+test('the stylesheet gives the story feed a minimum height of two lines', () => {
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
-  const feedRule = /\.dc-feed\s*\{([^}]*)\}/.exec(css)[1];
-  const min = /min-height:\s*([\d.]+)rem/.exec(feedRule);
-  assert.ok(min && Number(min[1]) >= 2.2, 'the feed has no minimum height of two story lines');
+  const feedRule = /\.dc-feed\s*\{([^}]*)\}/.exec(css);
+  assert.ok(feedRule, '.dc-feed rule not found');
+  const min = /min-height:\s*([\d.]+)([a-z%]*)/.exec(feedRule[1]);
+  assert.ok(min, 'the feed has no min-height at all');
+  // One story line is about 1.02rem (16.4px at 16px). If the unit changes this fails loudly rather than matching nothing.
+  assert.equal(min[2], 'rem', `the guard measures rem; the feed now uses "${min[2]}", so update this test`);
+  assert.ok(Number(min[1]) >= 2.2, `the feed minimum is ${min[1]}rem, under two story lines`);
 });

@@ -438,7 +438,9 @@ function acceptBlock(state, trade, problem, names, mySeat) {
 export function tradeStrips(state, mySeat, names) {
   const trades = readTrades(state);
   const seated = mySeat === 0 || mySeat === 1;
-  return Object.keys(trades).sort().map((id) => {
+  // Ids are t0, t1, ... t10: sort by the number, or t10 lands before t2 and the order stops being chronological.
+  const idNumber = (id) => Number(id.slice(1));
+  return Object.keys(trades).sort((a, b) => idNumber(a) - idNumber(b)).map((id) => {
     const trade = trades[id];
     const offerer = 1 - trade.awaits;
     const problem = dealProblem(state, trade);
@@ -467,6 +469,16 @@ export function tradeStrips(state, mySeat, names) {
     } else if (seated) {
       buttons = [dealButton(id, 'trade-cancel', 'Cancel')];
     }
+    // The engine refuses every action once the game is over, so nothing is pressable.
+    if (state.phase === 'over' && seated) {
+      note = 'The game is over';
+      buttons = buttons.map((b) => ({ ...b, disabled: true, why: note }));
+    }
+    // A watcher's strip is permanently inert, so say why on the line itself:
+    // a title is invisible on a phone. (The temporary DEALS_OPEN = false case is
+    // the one deliberate exception: it is dimmed with a title only, because task
+    // 10 turns it off, and spelling it out on every strip would crowd out the deal.)
+    if (!seated) note = tap.why;
     return { id, text, badge: stale ? 'stale' : mine ? 'answer' : 'waiting', stale, mine, buttons, note, tap };
   });
 }
@@ -477,8 +489,9 @@ export function tradeStrips(state, mySeat, names) {
  *  does not, the "+N more" line takes one of those lines, so cap - 1 strips show. Pure. */
 export function stripsShown(strips, cap = STRIP_CAP) {
   const ordered = [...strips.filter((t) => t.mine), ...strips.filter((t) => !t.mine)];
-  if (ordered.length <= cap) return { shown: ordered, more: 0 };
-  return { shown: ordered.slice(0, cap - 1), more: ordered.length - (cap - 1) };
+  if (ordered.length <= cap) return { shown: ordered, more: 0, moreMine: 0 };
+  const hidden = ordered.slice(cap - 1);
+  return { shown: ordered.slice(0, cap - 1), more: hidden.length, moreMine: hidden.filter((t) => t.mine).length };
 }
 
 /** Whether `+ New deal` can be opened by mySeat now, and if not, why. */
@@ -684,7 +697,7 @@ function paintStrips(world) {
   const { strips, newDeal, state, mySeat, doc } = world;
   clear(strips);
   const everyDeal = tradeStrips(state, mySeat, world.names);
-  const { shown: list, more } = stripsShown(everyDeal);
+  const { shown: list, more, moreMine } = stripsShown(everyDeal);
   strips.hidden = everyDeal.length === 0;
   for (const t of list) {
     // One line per deal, and the whole line is the tap target: it opens the
@@ -698,10 +711,10 @@ function paintStrips(world) {
     dt.appendChild(el(doc, 'span', 'dc-dealtext', t.text));
     row.appendChild(dt);
     row.appendChild(el(doc, 'span', 'dc-pill', PILL[t.badge]));
-    row.setAttribute('title', [t.tap.why, t.note, t.text].filter(Boolean).join(' · '));
+    row.setAttribute('title', [...new Set([t.tap.why, t.note, t.text])].filter(Boolean).join(' · '));
     strips.appendChild(row);
   }
-  if (more > 0) strips.appendChild(el(doc, 'div', 'dc-more', `+${more} more`));
+  if (more > 0) strips.appendChild(el(doc, 'div', 'dc-more', `+${more} more${moreMine ? ` (${moreMine} waiting on you)` : ''}`));
 
   clear(newDeal);
   newDeal.hidden = (mySeat !== 0 && mySeat !== 1) || state.phase === 'over';

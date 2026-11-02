@@ -1024,3 +1024,37 @@ body {
 .dc-problem { font-size: 0.72rem; line-height: 1.25; color: var(--muted); }
 .dc-footbtns { margin-top: 0; flex-wrap: nowrap; }
 .btn.dc-btn-primary { background: var(--accent); color: #fff; border: 1px solid var(--accent); }
+
+/* ---- Darling & Co. auction: the live decision, in the centre where a roll
+   would be (auction.html option B, "dial it"). Its own sizes throughout: the
+   board-tile classes are sized for a 29 x 37px tile. Nothing here dims text with
+   opacity; a blocked control is recoloured, and its reason is the note line. */
+.dc-auc { display: flex; flex-direction: column; gap: 0.15rem; line-height: 1.2; }
+.dc-atop { display: flex; align-items: center; gap: 0.3rem; min-width: 0; }
+.dc-aswatch { flex: none; width: 0.6rem; height: 0.6rem; border-radius: 2px; }
+.dc-alot { flex: 1; min-width: 0; font-weight: 700; font-size: clamp(0.7rem, 3.1vw, 0.85rem); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dc-aworth { flex: none; font-size: clamp(0.6rem, 2.6vw, 0.72rem); color: var(--muted); }
+.dc-astanding { display: flex; align-items: center; justify-content: space-between; gap: 0.3rem; }
+.dc-abidder { display: flex; flex-direction: column; min-width: 0; }
+.dc-aamt { font-weight: 700; font-size: clamp(0.85rem, 4vw, 1rem); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dc-awho { font-size: clamp(0.58rem, 2.5vw, 0.68rem); color: var(--seat1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dc-astepline { flex: none; display: flex; gap: 0.25rem; align-items: stretch; }
+.dc-astep, .dc-abid, .dc-apass {
+  margin: 0;
+  font: inherit;
+  font-weight: 650;
+  border-radius: 0.45rem;
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+.dc-astep { flex: none; width: 2rem; min-height: 1.6rem; padding: 0; font-size: 1rem; background: var(--bg); color: var(--text); }
+.dc-aval { flex: none; min-width: 3.4rem; display: grid; place-items: center; min-height: 1.6rem; background: var(--bg); border: 1px solid var(--line); border-radius: 0.45rem; font-weight: 650; font-size: 0.9rem; font-variant-numeric: tabular-nums; }
+.dc-arow { display: flex; gap: 0.3rem; }
+.dc-abid, .dc-apass { flex: 1 1 0; min-width: 0; min-height: 1.8rem; padding: 0.1rem 0.3rem; font-size: clamp(0.64rem, 2.9vw, 0.8rem); }
+.dc-abid { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.dc-apass { background: var(--surface); color: var(--seat0); }
+.dc-astep:disabled, .dc-abid:disabled, .dc-apass:disabled { cursor: default; background: var(--surface); border-style: dashed; color: var(--muted); }
+.dc-anote { font-size: clamp(0.58rem, 2.5vw, 0.7rem); line-height: 1.2; color: var(--muted); text-align: center; }
+
+/* The lot under the hammer, lit on the board for as long as the auction runs. */
+.dc-tile[data-lot] { box-shadow: inset 0 0 0 2px #ff9a8a, 0 0 6px 1px rgba(255, 154, 138, 0.7); z-index: 2; }

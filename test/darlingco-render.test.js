@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { gridCell, edgeOf, buildBoard, paintTile, decisionFor, feedLines, propertyFor, cardFor, walkPath, chipParts, tradeStrips, canOpenDeal, stripsShown, STRIP_CAP, DEALS_OPEN,
+import { gridCell, edgeOf, buildBoard, paintTile, decisionFor, feedLines, propertyFor, cardFor, walkPath, chipParts, tradeStrips, canOpenDeal, stripsShown, STRIP_CAP, DEALS_OPEN, auctionFor,
   dealSheetFor, dealReviewFor, nudgeCash, toggleChip, draftFromDeal, tidyDraft } from '../src/games/darlingco-render.js';
 import { readFileSync } from 'node:fs';
 import { createInitialState, render, applyAction } from '../src/games/darlingco.js';
 import { setChar, BLANK_PROPS, BLANK_BUILT, dealChar, dealDest } from '../src/games/darlingco-state.js';
-import { SQUARES, SETS, STATION_RENT } from '../src/games/darlingco-board.js';
+import { SQUARES, SETS, STATION_RENT, MIN_BID, BID_STEP } from '../src/games/darlingco-board.js';
 
 // Minimal DOM stub, same reasoning as tictactoe-render.test.js: no jsdom.
 function makeEl(tag) {
@@ -1529,4 +1529,204 @@ test('a greyed money stepper says why as visible text', () => {
   const notes = all(host.__dc.sheet).filter((n) => n.classes.has('dc-stepwhy')).map((n) => n.textContent);
   assert.equal(notes.length, 2);   // both shelves start at zero
   assert.ok(notes.every((t) => t.length > 0));
+});
+
+// ---- the auction panel ------------------------------------------------------
+const auction = (square, over = {}) =>
+  ({ ...createInitialState(), phase: 'auction', aucSq: square, aucBid: 0, aucBy: -1, aucPass: 0, ...over });
+const act = (s, t, seat = s.actor) => applyAction(s, typeof t === 'string' ? { type: t } : t, seat);
+const NM = ['Harvey', 'Shruti'];
+
+test('the auction panel shows the lot, what it is worth, and the standing bid', () => {
+  let a = auction(24, { cash: [840, 1210], actor: 1, turn: 0 });
+  a = ok(act(a, { type: 'bid', amount: 60 }, 1));
+  const p = auctionFor(a, 0, 70, NM);
+  assert.equal(p.lot, SQUARES[24].name);
+  assert.equal(p.worth, SQUARES[24].price);
+  assert.equal(p.setName, SETS[SQUARES[24].set].name);
+  assert.equal(p.setColour, SETS[SQUARES[24].set].colour);
+  assert.equal(p.standing, 60);
+  assert.match(p.standingBy, /Shruti/);
+  assert.equal(p.youHave, 840);
+});
+
+test('a station has no colour set, and a bid of your own reads as yours', () => {
+  const p = auctionFor(auction(5, { actor: 0 }), 0, MIN_BID, NM);
+  assert.equal(p.setName, null);
+  assert.ok(p.setColour);
+  const mine = ok(act(auction(24, { actor: 0 }), { type: 'bid', amount: 20 }, 0));
+  assert.match(auctionFor(mine, 0, 30, NM).standingBy, /your/i);
+});
+
+test('the minimum is ten to open and a step above a standing bid', () => {
+  const a = auction(24, { cash: [840, 1210], actor: 1 });
+  assert.equal(auctionFor(a, 1, MIN_BID, []).min, MIN_BID);
+  const bid = ok(act(a, { type: 'bid', amount: 60 }, 1));
+  assert.equal(auctionFor(bid, 0, 70, []).min, 60 + BID_STEP);
+});
+
+test('the stepper is clamped to what you can legally bid', () => {
+  const a = auction(24, { cash: [100, 1210], actor: 0 });
+  assert.equal(auctionFor(a, 0, 5, []).bid.amount, MIN_BID);
+  assert.equal(auctionFor(a, 0, 5000, []).bid.amount, 100);
+  assert.equal(auctionFor(a, 0, 50, []).bid.amount, 50);
+  // cash that is not a multiple of the step still tops out on a legal amount
+  const odd = auction(24, { cash: [157, 1210], actor: 0 });
+  assert.equal(auctionFor(odd, 0, 5000, []).bid.amount, 150);
+  assert.equal(auctionFor(odd, 0, 55, []).bid.amount, 50);
+  assert.equal(auctionFor(odd, 0, NaN, []).bid.amount, MIN_BID);
+  assert.equal(auctionFor(odd, 0, null, []).bid.amount, MIN_BID);
+});
+
+test('every amount the stepper offers is one the engine accepts', () => {
+  let a = auction(24, { cash: [157, 1210], actor: 0 });
+  for (const want of [0, 10, 55, 90, 157, 1e9]) {
+    const p = auctionFor(a, 0, want, []);
+    assert.equal(p.bid.disabled, false);
+    assert.equal(act(a, { type: 'bid', amount: p.bid.amount }, 0).error, undefined, `step ${want}`);
+  }
+  a = ok(act(a, { type: 'bid', amount: 100 }, 0));
+  const p = auctionFor(a, 1, 100, []);   // equal to the standing bid is not beating it
+  assert.equal(p.bid.amount, 100 + BID_STEP);
+  assert.equal(act(a, { type: 'bid', amount: p.bid.amount }, 1).error, undefined);
+  assert.equal(act(a, { type: 'bid', amount: 100 }, 1).error, 'bad-bid');
+});
+
+test('a player who cannot reach the minimum gets a disabled bid with the reason', () => {
+  let a = auction(24, { cash: [50, 1210], actor: 1 });
+  a = ok(act(a, { type: 'bid', amount: 100 }, 1));
+  const p = auctionFor(a, 0, 110, []);
+  assert.ok(p.bid.disabled);
+  assert.match(p.bid.why, /50|hold|enough/i);
+  assert.ok(p.pass.label.length > 0);
+  assert.equal(p.pass.disabled, false);   // they can still let it go
+  assert.equal(p.note, p.bid.why);        // and the reason is the visible line, not only a title
+  assertDisabledWithReason({ type: 'up', ...p.up });
+  assertDisabledWithReason({ type: 'down', ...p.down });
+});
+
+test('the stepper buttons stop at the ends, and say why', () => {
+  const a = auction(24, { cash: [840, 1210], actor: 0 });
+  const low = auctionFor(a, 0, MIN_BID, []);
+  assertDisabledWithReason({ type: 'down', ...low.down });
+  assert.equal(low.up.disabled, false);
+  const high = auctionFor(a, 0, 5000, []);
+  assertDisabledWithReason({ type: 'up', ...high.up });
+  assert.equal(high.down.disabled, false);
+});
+
+test('the pass wording changes once a bid stands', () => {
+  const a = auction(24, { cash: [840, 1210], actor: 1 });
+  const none = auctionFor(a, 1, MIN_BID, []).pass.label;
+  const bid = auctionFor(ok(act(a, { type: 'bid', amount: 60 }, 1)), 0, 70, []).pass.label;
+  assert.notEqual(none, bid);
+  assert.match(none, /pass/i);
+  assert.match(bid, /let them have it/i);
+});
+
+test('the auction is the live decision, and the lot is marked out on the board', () => {
+  const { host } = container();
+  const a = auction(24, { cash: [840, 1210], actor: 0, turn: 0 });
+  renderBoard(a, host, { mySeat: 0, names: [], onAction: () => {} });
+  assert.ok(text(host.__dc.decision).includes(SQUARES[24].name));
+  assert.equal(host.__dc.tiles[24].dataset.lot, '1');
+  assert.equal(host.__dc.tiles[23].dataset.lot, undefined);
+  const over = { ...a, phase: 'end', aucSq: -1 };
+  renderBoard(over, host, { mySeat: 0, names: [], onAction: () => {} });
+  assert.equal(host.__dc.tiles[24].dataset.lot, undefined);
+});
+
+test('the other player sees the auction without being able to bid in it', () => {
+  const a = auction(24, { cash: [840, 1210], actor: 0 });
+  const p = auctionFor(a, 1, MIN_BID, []);
+  assertDisabledWithReason({ type: 'bid', ...p.bid });
+  assertDisabledWithReason({ type: 'pass', ...p.pass });
+  assertDisabledWithReason({ type: 'up', ...p.up });
+  assertDisabledWithReason({ type: 'down', ...p.down });
+  assert.equal(p.note, p.bid.why);
+  const w = auctionFor(a, null, MIN_BID, []);
+  assertDisabledWithReason({ type: 'bid', ...w.bid });
+  assertDisabledWithReason({ type: 'pass', ...w.pass });
+  assert.equal(w.youHave, null);
+  // and drawn, every control in the panel is dead
+  const { host } = container();
+  renderBoard(a, host, { mySeat: null, names: NM, onAction: () => assert.fail('a watcher sent something') });
+  assert.deepEqual(buttonsIn(host.__dc.decision).filter((b) => !b.disabled), []);
+  assert.match(text(host.__dc.decision), /watching/i);
+});
+
+test('there is no panel when no auction is running', () => {
+  assert.equal(auctionFor(createInitialState(), 0, 10, []), null);
+  assert.equal(auctionFor({ ...auction(24), phase: 'end', aucSq: -1 }, 0, 10, []), null);
+});
+
+test('bidding sends the stepper amount', () => {
+  const { host } = container();
+  const sent = [];
+  const a = auction(24, { cash: [840, 1210], actor: 0, turn: 0 });
+  const opts = { mySeat: 0, names: [], onAction: (x) => { sent.push(x); return Promise.resolve(); } };
+  renderBoard(a, host, opts);
+  host.__dc.bidStep = 90;
+  renderBoard(a, host, opts);
+  byType(host.__dc.decision, 'bid').click();
+  assert.deepEqual(sent.at(-1), { type: 'bid', amount: 90 });
+});
+
+test('the stepper opens at the minimum, moves a step at a time, and starts again after a bid', async () => {
+  const { host } = container();
+  const sent = [];
+  const a = auction(24, { cash: [840, 1210], actor: 0, turn: 0 });
+  renderBoard(a, host, { mySeat: 0, names: NM, onAction: (x) => { sent.push(x); return Promise.resolve(); } });
+  assert.equal(host.__dc.bidStep, null);
+  byType(host.__dc.decision, 'bid-up').click();
+  byType(host.__dc.decision, 'bid-up').click();
+  assert.equal(host.__dc.bidStep, MIN_BID + 2 * BID_STEP);
+  byType(host.__dc.decision, 'bid-down').click();
+  byType(host.__dc.decision, 'bid').click();
+  assert.deepEqual(sent.at(-1), { type: 'bid', amount: MIN_BID + BID_STEP });
+  await settle();
+  // the other seat bids; it is our turn again and the dial is back at the new minimum
+  const next = ok(act(a, { type: 'bid', amount: 100 }, 0));
+  const back = ok(act(next, { type: 'bid', amount: 150 }, 1));
+  renderBoard(back, host, { mySeat: 0, names: NM, onAction: () => Promise.resolve() });
+  assert.equal(host.__dc.bidStep, null);
+  assert.ok(text(byType(host.__dc.decision, 'bid')).includes(String(150 + BID_STEP)));
+});
+
+test('passing sends a pass, whichever of the two things it means', () => {
+  for (const standing of [false, true]) {
+    const { host } = container();
+    const sent = [];
+    let a = auction(24, { cash: [840, 1210], actor: 1, turn: 0 });
+    if (standing) a = ok(act(a, { type: 'bid', amount: 60 }, 1));
+    else a = { ...a, actor: 0 };
+    renderBoard(a, host, { mySeat: 0, names: NM, onAction: (x) => { sent.push(x); return Promise.resolve(); } });
+    byType(host.__dc.decision, 'pass').click();
+    assert.deepEqual(sent, [{ type: 'pass' }]);
+  }
+});
+
+test('the panel borrows no board-tile class, and the reason is plain text outside the button', () => {
+  const { host } = container();
+  renderBoard(auction(24, { cash: [50, 1210], actor: 0, aucBid: 100, aucBy: 1 }), host, { mySeat: 0, names: NM, onAction: () => {} });
+  for (const n of all(host.__dc.decision)) {
+    assert.ok(!n.classes.has('dc-nm') && !n.classes.has('dc-sw'), 'the panel borrowed a board-tile class');
+  }
+  const bid = byType(host.__dc.decision, 'bid');
+  assert.equal(bid.disabled, true);
+  assert.ok(bid.attrs.title && bid.attrs.title.length > 0);
+  const note = all(host.__dc.decision).find((n) => n.classes.has('dc-anote'));
+  assert.ok(note.textContent.length > 0);
+  assert.ok(!all(bid).includes(note), 'the reason sits inside the button');
+});
+
+test('the auction styles exist, the lot is lit, and nothing explanatory is dimmed by opacity', () => {
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  for (const cls of ['dc-auc', 'dc-alot', 'dc-astanding', 'dc-astep', 'dc-abid', 'dc-apass', 'dc-anote']) {
+    assert.ok(new RegExp(`\\.${cls}\\b`).test(css), `${cls} has no style`);
+  }
+  assert.match(css, /\.dc-tile\[data-lot\]/);
+  const rule = (sel) => (new RegExp(`${sel.replace(/\./g, '\\.')}\\s*\\{([^}]*)\\}`).exec(css) || [])[1] || '';
+  assert.ok(!/opacity/.test(rule('.dc-anote')), 'the note is dimmed');
+  assert.ok(!/opacity/.test(rule('.dc-abid:disabled') + rule('.dc-apass:disabled') + rule('.dc-astep:disabled')), 'a disabled control text is dimmed');
 });

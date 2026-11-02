@@ -6,7 +6,7 @@
 // attributes set here: data-edge, data-own, data-built, and .is-mortgaged.
 
 import {
-  SQUARES, SETS, STATION_RENT, UTIL_MULT, GAME_NAME, JAIL_FINE, LJ_CARDS, JB_CARDS, LJ_NAME, JB_NAME, MAX_TRADES, MAX_DEAL_CASH
+  SQUARES, SETS, STATION_RENT, UTIL_MULT, GAME_NAME, JAIL_FINE, LJ_CARDS, JB_CARDS, LJ_NAME, JB_NAME, MAX_TRADES, MAX_DEAL_CASH, MIN_BID, BID_STEP
 } from './darlingco-board.js';
 import { readLog, readTrades, dealSummary } from './darlingco.js';
 import {
@@ -110,6 +110,10 @@ export function paintTile(tile, state, i) {
 
   part(tile, 'dc-mort').textContent = mortgaged ? 'M' : '';
 
+  // The lot under the hammer is lit for as long as the auction runs, and no longer.
+  if (state.phase === 'auction' && state.aucSq === i) tile.dataset.lot = '1';
+  else delete tile.dataset.lot;
+
   // Only the Free Parking tile has this node; an empty pot shows nothing.
   const potv = part(tile, 'dc-potv');
   if (potv) potv.textContent = state.pot > 0 ? String(state.pot) : '';
@@ -197,6 +201,12 @@ export function decisionFor(state, mySeat, names) {
     return done('Game over', why);
   }
 
+  // The auction is the live decision, drawn in the centre where a roll would be.
+  // The panel itself comes from auctionFor, which also needs the stepper.
+  if (isAuction(state)) {
+    return { ...done(SQUARES[state.aucSq].name, '', [], state.actor === mySeat), auction: true };
+  }
+
   const actor = state.actor;
   const mine = mySeat !== null && mySeat !== undefined && mySeat === actor;
   const them = seatName(names, actor);
@@ -266,6 +276,67 @@ export function decisionFor(state, mySeat, names) {
         buttons, true);
     }
   }
+}
+
+const isAuction = (state) => state.phase === 'auction' && state.aucSq >= 0 && !!SQUARES[state.aucSq];
+
+/** The auction panel for `mySeat`, or null outside an auction. PURE.
+ *
+ *  Mirrors doBid exactly: the minimum is MIN_BID to open and a step above a
+ *  standing bid (equalling it is not beating it); an amount must be a multiple
+ *  of BID_STEP, at most MAX_DEAL_CASH and at most the bidder's cash. `step` is
+ *  where the stepper has got to and is clamped into [min, max(min, cash)], so
+ *  one tap on Bid is always a legal move whenever Bid is enabled. Nothing is
+ *  ever reported as an error: a control that cannot be pressed is disabled and
+ *  carries its reason, and `note` is the one line of that reason shown as text. */
+export function auctionFor(state, mySeat, step, names) {
+  if (!isAuction(state)) return null;
+  const sq = SQUARES[state.aucSq];
+  const set = sq.set ? SETS[sq.set] : null;
+  const standing = state.aucBy >= 0 ? state.aucBid : 0;
+  const min = state.aucBy >= 0 ? state.aucBid + BID_STEP : MIN_BID;
+  const seated = mySeat === 0 || mySeat === 1;
+  const cash = seated ? state.cash[mySeat] : null;
+  const myTurn = seated && state.actor === mySeat;
+
+  // The highest amount that is both affordable and a multiple of the step.
+  const reach = seated ? Math.floor(Math.min(cash, MAX_DEAL_CASH) / BID_STEP) * BID_STEP : 0;
+  const canBid = myTurn && reach >= min;
+  const top = Math.max(min, reach);
+  const want = Number.isFinite(step) ? Math.floor(step / BID_STEP) * BID_STEP : min;
+  const amount = Math.min(top, Math.max(min, want));
+
+  let why = '';
+  if (!seated) why = 'You are watching this auction';
+  else if (!myTurn) why = `Waiting for ${seatName(names, state.actor)} to bid or pass`;
+  else if (!canBid) why = `You hold ${sterling(cash)}, not enough for the ${sterling(min)} minimum`;
+
+  const stop = (blocked, reason) => ({ disabled: blocked, why: blocked ? reason : '' });
+  const down = !canBid ? stop(true, why) : stop(amount <= min, `${sterling(min)} is the lowest bid`);
+  const up = !canBid ? stop(true, why) : stop(amount >= top, `${sterling(top)} is all you can bid`);
+
+  const standingBy = state.aucBy < 0 ? '' : state.aucBy === mySeat ? 'Your bid' : `${seatName(names, state.aucBy)}'s bid`;
+  const note = why || `You have ${sterling(cash)} · ${up.disabled ? 'that is your limit' : `minimum ${sterling(min)}`}`;
+  return {
+    lot: sq.name,
+    setName: set ? set.name : null,
+    setColour: set ? set.colour : PLAIN_COLOUR,
+    worth: sq.price,
+    standing,
+    standingBy,
+    min,
+    step: amount,
+    youHave: cash,
+    bid: { label: `Bid ${sterling(amount)}`, amount, disabled: !canBid, why },
+    pass: {
+      label: state.aucBy >= 0 ? 'Let them have it' : "I'll pass",
+      disabled: !myTurn,
+      why: myTurn ? '' : why
+    },
+    down,
+    up,
+    note
+  };
 }
 
 // Same integer arithmetic as the engine, so the label never disagrees with it.
@@ -769,7 +840,7 @@ function buildWorld(doc, host) {
 
   const world = {
     doc, root, bar, chips, potChip, tiles, dice, feed, sheet, strips, decision, newDeal, room,
-    selected: -1, sheetMode: 'property', draft: null, reviewId: null, pending: false, busy: false, generation: 0, animatedKey: null,
+    selected: -1, bidStep: null, bidKey: '', sheetMode: 'property', draft: null, reviewId: null, pending: false, busy: false, generation: 0, animatedKey: null,
     shown: null, builtSeen: null, state: null, mySeat: null, names: [], onAction: () => {}
   };
   tiles.forEach((tile, i) => {
@@ -1113,11 +1184,80 @@ function paintStrips(world) {
   }
 }
 
+/** One control of the auction panel. Its own class (never a board-tile one, and
+ *  never .btn.dc-btn, whose disabled rule dims the label): a blocked control is
+ *  drawn plainly blocked, and its reason is the panel's note line. */
+function auctionButton(world, spec, className, type) {
+  const b = el(world.doc, 'button', className, spec.label);
+  b.type = 'button';
+  b.dataset.type = type;
+  b.disabled = !!spec.disabled || world.pending || world.busy;
+  if (spec.why) b.setAttribute('title', spec.why);
+  return b;
+}
+
+function paintAuction(world) {
+  const { decision, state, mySeat, names, doc } = world;
+  // The dial starts again at the minimum whenever the bidding moves on.
+  const key = [state.aucSq, state.aucBid, state.aucBy, state.aucPass, state.actor].join(':');
+  if (key !== world.bidKey) { world.bidKey = key; world.bidStep = null; }
+  const p = auctionFor(state, mySeat, world.bidStep, names);
+
+  const panel = el(doc, 'div', 'dc-auc');
+  // Four short rows, because the centre has ~100px for the decision: the lot (its
+  // set's colour, and what it is worth), the standing bid beside the dial, the
+  // two buttons, and the one line of text that says why anything is blocked.
+  const top = el(doc, 'div', 'dc-atop');
+  const swatch = el(doc, 'span', 'dc-aswatch');
+  swatch.style.background = p.setColour;
+  if (p.setName) swatch.setAttribute('title', p.setName);
+  top.appendChild(swatch);
+  top.appendChild(el(doc, 'span', 'dc-alot', p.lot));
+  top.appendChild(el(doc, 'span', 'dc-aworth', `worth ${sterling(p.worth)}`));
+  panel.appendChild(top);
+
+  const standing = el(doc, 'div', 'dc-astanding');
+  const bidder = el(doc, 'span', 'dc-abidder');
+  bidder.appendChild(el(doc, 'span', 'dc-aamt', p.standingBy ? sterling(p.standing) : 'No bid yet'));
+  if (p.standingBy) bidder.appendChild(el(doc, 'span', 'dc-awho', p.standingBy));
+  standing.appendChild(bidder);
+  panel.appendChild(standing);
+
+  // The stepper only moves what is shown; nothing is sent until Bid.
+  const line = el(doc, 'div', 'dc-astepline');
+  const down = auctionButton(world, { label: '−', ...p.down }, 'dc-astep', 'bid-down');
+  down.setAttribute('aria-label', 'Bid less');
+  down.addEventListener('click', () => { if (!down.disabled) { world.bidStep = p.step - BID_STEP; paint(world); } });
+  const val = el(doc, 'span', 'dc-aval', sterling(p.step));
+  const up = auctionButton(world, { label: '+', ...p.up }, 'dc-astep', 'bid-up');
+  up.setAttribute('aria-label', 'Bid more');
+  up.addEventListener('click', () => { if (!up.disabled) { world.bidStep = p.step + BID_STEP; paint(world); } });
+  [down, val, up].forEach((n) => line.appendChild(n));
+  standing.appendChild(line);
+
+  // Bid and Pass are real writes, so they go through actionButton and its guard.
+  const row = el(doc, 'div', 'dc-arow');
+  const bid = actionButton(world, p.bid, () => ({ type: 'bid', amount: p.bid.amount }), 'dc-abid');
+  bid.dataset.type = 'bid';
+  const pass = actionButton(world, p.pass, () => ({ type: 'pass' }), 'dc-apass');
+  pass.dataset.type = 'pass';
+  row.appendChild(bid);
+  row.appendChild(pass);
+  panel.appendChild(row);
+  panel.appendChild(el(doc, 'div', 'dc-anote', p.note));
+  decision.appendChild(panel);
+}
+
 function paintDecision(world) {
   const { decision, state, mySeat, names } = world;
   clear(decision);
   const d = decisionFor(state, mySeat, names);
   decision.dataset.mine = d.mine ? '1' : '0';
+  if (d.auction) {
+    paintAuction(world);
+    appendTally(world, d);
+    return d;
+  }
   decision.appendChild(el(world.doc, 'div', 'dc-dtitle', d.title));
   if (d.detail) decision.appendChild(el(world.doc, 'div', 'dc-detail', d.detail));
   if (d.buttons.length) {
@@ -1125,15 +1265,18 @@ function paintDecision(world) {
     for (const b of d.buttons) row.appendChild(actionButton(world, b, decisionAction(b)));
     decision.appendChild(row);
   }
-  if (d.tally.buttons.length) {
-    const t = el(world.doc, 'div', 'dc-tally');
-    t.appendChild(el(world.doc, 'div', 'dc-detail', d.tally.detail));
-    const row = el(world.doc, 'div', 'dc-btns');
-    for (const b of d.tally.buttons) row.appendChild(actionButton(world, b, () => ({ type: b.type })));
-    t.appendChild(row);
-    decision.appendChild(t);
-  }
+  appendTally(world, d);
   return d;
+}
+
+function appendTally(world, d) {
+  if (!d.tally.buttons.length) return;
+  const t = el(world.doc, 'div', 'dc-tally');
+  t.appendChild(el(world.doc, 'div', 'dc-detail', d.tally.detail));
+  const row = el(world.doc, 'div', 'dc-btns');
+  for (const b of d.tally.buttons) row.appendChild(actionButton(world, b, () => ({ type: b.type })));
+  t.appendChild(row);
+  world.decision.appendChild(t);
 }
 
 function paintRoom(world, d) {

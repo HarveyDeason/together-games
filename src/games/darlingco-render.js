@@ -467,11 +467,15 @@ function buildWorld(doc, host) {
   const feed = el(doc, 'ol', 'dc-feed');
   const sheet = el(doc, 'div', 'dc-sheet');
   const decision = el(doc, 'div', 'dc-decision');
-  [head, feed, sheet, decision].forEach((n) => mid.appendChild(n));
+  [head, feed, decision].forEach((n) => mid.appendChild(n));
   board.appendChild(mid);
   root.appendChild(board);
   const room = el(doc, 'div', 'dc-room');
   root.appendChild(room);
+  // A bottom sheet over the board, not part of the centre: the deed is far taller
+  // than the 9 x 9 middle can ever be.
+  sheet.hidden = true;
+  root.appendChild(sheet);
   host.appendChild(root);
 
   const world = {
@@ -498,11 +502,17 @@ function inkFor(hex) {
   return lum > 0.55 ? '#0d1310' : '#ffffff';
 }
 
-/** The one sheet node serves every mode; today only the card ('property'). */
+/** The one sheet node serves every mode. The mode is chosen first, so a mode
+ *  this function does not draw (the deal builder, later) leaves the sheet and
+ *  the selection alone instead of closing them. */
 function paintSheet(world) {
+  if (world.sheetMode === 'property') paintCard(world);
+}
+
+function paintCard(world) {
   const { sheet, state, mySeat, doc } = world;
   clear(sheet);
-  const c = world.sheetMode === 'property' && world.selected >= 0
+  const c = world.selected >= 0
     ? cardFor(state, mySeat, world.selected, world.names) : null;
   if (!c) world.selected = -1;
   sheet.hidden = !c;
@@ -614,7 +624,6 @@ function paint(world) {
   for (const line of feedLines(state, FEED_LINES, names)) world.feed.appendChild(el(world.doc, 'li', 'dc-line', line));
 
   paintSheet(world);
-  world.feed.hidden = !world.sheet.hidden;
   paintRoom(world, paintDecision(world));
 }
 

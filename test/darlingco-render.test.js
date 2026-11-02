@@ -802,3 +802,21 @@ test('their card offers a deal and no build buttons; the unowned one is the same
   assert.ok(labels.includes('Offer a deal for this'));
   assert.ok(!labels.some(l => /build|mortgage/i.test(l)));
 });
+
+test('the sheet is a bottom sheet over the board, not part of the centre', () => {
+  const h = mount(owned({ 24: 1 }), 0);
+  const w = h.__dc;
+  assert.ok(!all(w.root).some(n => n.classes.has('dc-mid') && all(n).includes(w.sheet)));
+  assert.ok(w.root.children.includes(w.sheet));
+});
+
+test('a sheet mode the card does not draw leaves the sheet and the selection alone', () => {
+  const h = mount(owned({ 24: 1 }), 0);
+  h.__dc.tiles[24].click();
+  const drawn = h.__dc.sheet.children.length;
+  h.__dc.sheetMode = 'deal';
+  render(owned({ 24: 1 }), h, { mySeat: 0, names: ['Ann', 'Bo'], onAction: () => {} });
+  assert.equal(h.__dc.selected, 24);
+  assert.equal(h.__dc.sheet.hidden, false);
+  assert.equal(h.__dc.sheet.children.length, drawn);
+});

@@ -963,29 +963,46 @@ test('the strips are drawn in the centre and survive trades arriving undefined',
   assert.ok(order.indexOf(h.__dc.strips) < order.indexOf(h.__dc.decision));
 });
 
-test('strips are keyed by deal id, carry data-trade, and their buttons carry data-type', () => {
+test('a strip is one line: a single button keyed by deal id, with no buttons of its own inside', () => {
   const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));
   const h = mount(s, 1);
   const strip = h.__dc.strips.children[0];
+  assert.equal(strip.tag, 'button');
   assert.equal(strip.dataset.trade, 't0');
-  assert.deepEqual(buttonsIn(strip).map(b => b.dataset.type).sort(), ['trade-accept', 'trade-counter', 'trade-decline']);
+  assert.equal(all(strip).filter(n => n !== strip && n.tag === 'button').length, 0);
+  assert.ok(text(strip).includes(SQUARES[24].name));
+  assert.ok(text(strip).includes('Answer'));
+  // The pure strip still describes the buttons the sheet will carry (task 10).
+  assert.deepEqual(tradeStrips(s, 1, [])[0].buttons.map(b => b.type).sort(), ['trade-accept', 'trade-counter', 'trade-decline']);
 });
 
-test('pressing Accept on a strip sends the trade action with its id', () => {
+test('until the deal sheet exists a strip is disabled with a reason, and tapping it does nothing', () => {
+  const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));
+  assertDisabledWithReason({ type: 'strip', ...tradeStrips(s, 1, [])[0].tap });
   const sent = [];
-  const s = ok(offer({ ...owned({ 24: 1 }), cash: [1500, 1500] }, 0, { 24: [0, false] }, 200));
   const h = mount(s, 1, (a) => { sent.push(a); return Promise.resolve(); });
-  buttonsIn(h.__dc.strips).find(b => b.dataset.type === 'trade-accept').click();
-  assert.deepEqual(sent, [{ type: 'trade-accept', id: 't0' }]);
+  const strip = h.__dc.strips.children[0];
+  assert.equal(strip.disabled, true);
+  assert.match(strip.attrs.title, /not open yet/i);
+  strip.click();
+  assert.equal(h.__dc.sheetMode, 'property');
+  assert.deepEqual(sent, []);
 });
 
-test('a drawn strip button that cannot be pressed is disabled and says why', () => {
+test('the strips of a watcher are disabled too, with their own reason', () => {
+  const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));
+  const tap = tradeStrips(s, null, [])[0].tap;
+  assertDisabledWithReason({ type: 'strip', ...tap });
+  assert.match(tap.why, /players/i);
+});
+
+test('a strip whose Accept is blocked says why on its single line, and in its title', () => {
   const offered = ok(offer({ ...owned({ 24: 1 }), cash: [1500, 1500] }, 0, { 24: [0, false] }, 200));
   const h = mount(inAuction(offered), 1);
-  const accept = buttonsIn(h.__dc.strips).find(b => b.dataset.type === 'trade-accept');
-  assert.equal(accept.disabled, true);
-  assert.match(accept.attrs.title, /auction/i);
-  accept.click();   // pressing it sends nothing
+  const strip = h.__dc.strips.children[0];
+  assert.match(text(strip), /auction/i);
+  assert.match(strip.attrs.title, /auction/i);
+  assert.equal(strip.children.length, 2);   // [text, badge]: still one line
 });
 
 test('the New deal entry is under the strips, disabled with a reason at the cap, and absent for a watcher', () => {
@@ -1003,22 +1020,15 @@ test('the New deal entry is under the strips, disabled with a reason at the cap,
   assert.match(entry().attrs.title, /limit/i);   // at the cap the rule's reason wins
   render(s, h, { mySeat: null, names: ['Ann', 'Bo'], onAction: () => {} });
   assert.equal(entry(), undefined);
-  assert.deepEqual(buttonsIn(h.__dc.strips), []);
+  assert.ok(h.__dc.newDeal.hidden);
 });
 
-test('Counter is drawn disabled with a reason until the deal sheet exists', () => {
+test('Counter is described disabled with a reason until the deal sheet exists', () => {
   const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));
-  const counter = tradeStrips(s, 1, [])[0].buttons.find(b => b.type === 'trade-counter');
-  assertDisabledWithReason(counter);
-  const h = mount(s, 1);
-  const b = buttonsIn(h.__dc.strips).find(x => x.dataset.type === 'trade-counter');
-  assert.equal(b.disabled, true);
-  assert.ok(b.attrs.title.length > 0);
-  b.click();
-  assert.equal(h.__dc.sheetMode, 'property');
+  assertDisabledWithReason(tradeStrips(s, 1, [])[0].buttons.find(b => b.type === 'trade-counter'));
 });
 
-test('a disabled Accept shows its reason as visible text on the strip, not only as a title', () => {
+test('a blocked Accept leads the strip as visible text with its own class, an unblocked one adds none', () => {
   const offered = ok(offer({ ...owned({ 24: 1 }), cash: [1500, 1500] }, 0, { 24: [0, false] }, 200));
   const h = mount(inAuction(offered), 1);
   const strip = h.__dc.strips.children[0];
@@ -1033,23 +1043,30 @@ test('a disabled Accept shows its reason as visible text on the strip, not only 
 test('deals awaiting you are drawn first, and the overflow collapses to +N more', () => {
   const s = capped();           // seat 0 offered all eight, so they all await seat 1
   const strips = tradeStrips(s, 1, []);
+  // When everything fits, everything is drawn and nothing collapses.
+  assert.deepEqual(stripsShown(strips.slice(0, 3), 3), { shown: strips.slice(0, 3), more: 0 });
+  // When it does not, "+N more" takes one of the lines.
   const { shown, more } = stripsShown(strips, 3);
-  assert.deepEqual(shown.map(t => t.id), ['t0', 't1', 't2']);
-  assert.equal(more, 5);
+  assert.deepEqual(shown.map(t => t.id), ['t0', 't1']);
+  assert.equal(more, 6);
   // Seen from the offerer's seat nothing awaits them, order is still stable.
-  assert.equal(stripsShown(tradeStrips(s, 0, []), 3).more, 5);
+  assert.equal(stripsShown(tradeStrips(s, 0, []), 3).more, 6);
   // Awaiting-you comes before waiting-on-them whatever the ids say.
   const mixed = [{ id: 'a', mine: false }, { id: 'b', mine: true }, { id: 'c', mine: false }, { id: 'd', mine: true }];
-  assert.deepEqual(stripsShown(mixed, 3).shown.map(t => t.id), ['b', 'd', 'a']);
-  assert.equal(stripsShown([], 1).more, 0);
+  assert.deepEqual(stripsShown(mixed, 3), { shown: [mixed[1], mixed[3]], more: 2 });
+  assert.equal(stripsShown([], 3).more, 0);
+});
+
+test('the strip cap is the number measured at 375px (three one-line rows)', () => {
+  assert.equal(STRIP_CAP, 3);
 });
 
 test('with eight deals live only STRIP_CAP are drawn, the rest collapse, and the story and decision survive', () => {
   const h = mount(capped(), 0);   // seat 0 is to roll, so the decision has its button
   const drawn = h.__dc.strips.children.filter(n => n.classes.has('dc-deal'));
-  assert.equal(drawn.length, STRIP_CAP);
+  assert.equal(drawn.length, STRIP_CAP - 1);   // the "+N more" line takes the third row
   const more = h.__dc.strips.children.find(n => n.classes.has('dc-more'));
-  assert.equal(more.textContent, `+${8 - STRIP_CAP} more`);
+  assert.equal(more.textContent, `+${8 - (STRIP_CAP - 1)} more`);
   assert.ok(buttonsIn(h.__dc.decision).some(b => /roll/i.test(b.textContent)));
   // The story always keeps two lines of room: the stylesheet gives the feed a
   // minimum height (the fake DOM has no layout, so this is the guard on it).

@@ -894,21 +894,31 @@ body {
   flex-direction: column;
   gap: 0.2rem;
 }
-.dc-dealwhy { margin-top: 0.15rem; color: var(--muted); font-size: 0.9em; line-height: 1.2; }
 .dc-more { text-align: center; color: var(--muted); font-size: clamp(0.58rem, 2.6vw, 0.72rem); }
+/* The whole line is one button: it opens the deal in the sheet. */
 .dc-deal {
   flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  width: 100%;
   min-width: 0;
+  margin: 0;
   padding: 0.25rem 0.3rem;
   background: var(--surface);
+  color: var(--text);
   border: 1px solid var(--line);
   border-radius: 0.5rem;
+  font: inherit;
   font-size: clamp(0.58rem, 2.6vw, 0.72rem);
+  text-align: left;
+  cursor: pointer;
 }
+.dc-deal:disabled { cursor: default; opacity: 0.8; }
+.dc-dealwhy { color: var(--muted); }
 .dc-deal.is-answer { border-left: 2px solid var(--accent); }
 .dc-deal.is-waiting { opacity: 0.75; }
 .dc-deal.is-stale { border-style: dashed; }
-.dc-dealrow { display: flex; align-items: center; gap: 0.3rem; min-width: 0; }
 .dc-dt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dc-pill {
   flex: 0 0 auto;
@@ -920,8 +930,6 @@ body {
   font-weight: 650;
 }
 .dc-deal.is-waiting .dc-pill, .dc-deal.is-stale .dc-pill { background: var(--line); color: var(--muted); }
-.dc-dealbtns { display: flex; gap: 0.2rem; margin-top: 0.2rem; }
-.dc-dealbtns .btn.dc-btn { min-height: 1.6rem; padding: 0.15rem 0.3rem; font-size: clamp(0.58rem, 2.6vw, 0.72rem); }
 .dc-newdeal { flex: none; text-align: center; }
 .dc-newdeal-btn { margin: 0; padding: 0.1rem 0.3rem; font-size: clamp(0.6rem, 2.7vw, 0.75rem); }
 .dc-newdeal-btn:disabled { opacity: 0.45; cursor: default; }

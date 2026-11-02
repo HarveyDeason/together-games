@@ -400,9 +400,12 @@ export function cardFor(state, mySeat, sq, names) {
 export const DEALS_OPEN = false;
 const NOT_OPEN = 'Deals are not open yet';
 
-/** How many strips the centre draws; the rest collapse into one "+N more"
- *  line. Chosen from what fits at 375px beside the feed's minimum and the decision. */
-export const STRIP_CAP = 1;
+/** How many one-line rows the strips region may hold (a "+N more" line counts
+ *  as one). At 375px a strip is 25px, "+N more" about 16px, and with the decision
+ *  (90px) and the feed's 2-line minimum (38px) intact the region has room for 3
+ *  strips (80px) or 2 strips plus "+N more" (69px); 3 strips plus "+N more"
+ *  (98px) pushes + New deal out of the centre. */
+export const STRIP_CAP = 3;
 
 /** dealProblem results that mean the deal can never be executed as written:
  *  the deal records each square's ownership and mortgage state at offer time,
@@ -447,26 +450,35 @@ export function tradeStrips(state, mySeat, names) {
     const asks = dealSummary(trade, offerer) || 'nothing';
     const text = stale ? `${who}: this deal is no longer possible` : `${who}: ${gives} for ${asks}`;
 
+    // Why a blocked Accept is blocked, shown on the strip itself.
+    let note = '';
+    // Tapping the strip opens the deal in the sheet (task 10): until then, or for a watcher, it cannot.
+    const tap = !seated ? { disabled: true, why: 'Only the players can open a deal' }
+      : !DEALS_OPEN ? { disabled: true, why: NOT_OPEN } : { disabled: false, why: '' };
     let buttons = [];
     if (seated && mine) {
       buttons = [dealButton(id, 'trade-decline', 'Decline')];
       if (!stale) {
         const why = acceptBlock(state, trade, problem, names, mySeat);
+        note = why;
         buttons.unshift(dealButton(id, 'trade-accept', 'Accept', why ? { disabled: true, why } : {}));
         buttons.splice(1, 0, { type: 'trade-counter', label: 'Counter', id, opens: true, action: null, ...(DEALS_OPEN ? {} : { disabled: true, why: NOT_OPEN }) });
       }
     } else if (seated) {
       buttons = [dealButton(id, 'trade-cancel', 'Cancel')];
     }
-    return { id, text, badge: stale ? 'stale' : mine ? 'answer' : 'waiting', stale, mine, buttons };
+    return { id, text, badge: stale ? 'stale' : mine ? 'answer' : 'waiting', stale, mine, buttons, note, tap };
   });
 }
 
 /** The strips to draw and how many are left out: deals awaiting you first,
- *  then the ones you are waiting on, each group in id order. Pure. */
+ *  then the ones you are waiting on, each group in id order. `cap` is how many
+ *  lines of room there are: when everything fits, everything is drawn; when it
+ *  does not, the "+N more" line takes one of those lines, so cap - 1 strips show. Pure. */
 export function stripsShown(strips, cap = STRIP_CAP) {
   const ordered = [...strips.filter((t) => t.mine), ...strips.filter((t) => !t.mine)];
-  return { shown: ordered.slice(0, cap), more: Math.max(0, ordered.length - cap) };
+  if (ordered.length <= cap) return { shown: ordered, more: 0 };
+  return { shown: ordered.slice(0, cap - 1), more: ordered.length - (cap - 1) };
 }
 
 /** Whether `+ New deal` can be opened by mySeat now, and if not, why. */
@@ -675,29 +687,18 @@ function paintStrips(world) {
   const { shown: list, more } = stripsShown(everyDeal);
   strips.hidden = everyDeal.length === 0;
   for (const t of list) {
-    // Keyed on the deal id, which a counter keeps, so a strip does not jump.
-    const row = el(doc, 'div', `dc-deal is-${t.badge}`);
+    // One line per deal, and the whole line is the tap target: it opens the
+    // deal in the sheet, where Accept / Counter / Decline live. Keyed on the
+    // id, which a counter keeps, so a strip does not jump.
+    const row = openerButton(world, { label: '', ...t.tap }, { open: t.id }, `dc-deal is-${t.badge}`);
     row.dataset.trade = t.id;
-    const line = el(doc, 'div', 'dc-dealrow');
-    const dt = el(doc, 'span', 'dc-dt', t.text);
-    dt.setAttribute('title', t.text);
-    line.appendChild(dt);
-    line.appendChild(el(doc, 'span', 'dc-pill', PILL[t.badge]));
-    row.appendChild(line);
-    if (t.buttons.length) {
-      const btns = el(doc, 'div', 'dc-dealbtns');
-      for (const spec of t.buttons) {
-        const b = spec.opens
-          ? openerButton(world, spec, { counter: t.id }, 'btn dc-btn dc-btn-secondary')
-          : actionButton(world, spec, () => spec.action);
-        b.dataset.type = spec.type;
-        btns.appendChild(b);
-      }
-      row.appendChild(btns);
-      // A title is invisible on a phone, so the Accept reason is drawn on the strip too.
-      const accept = t.buttons.find((b) => b.type === 'trade-accept' && b.disabled && b.why);
-      if (accept) row.appendChild(el(doc, 'div', 'dc-dealwhy', accept.why));
-    }
+    const dt = el(doc, 'span', 'dc-dt', '');
+    // A title is invisible on a phone, so why Accept is blocked leads the line.
+    if (t.note) dt.appendChild(el(doc, 'span', 'dc-dealwhy', `${t.note} · `));
+    dt.appendChild(el(doc, 'span', 'dc-dealtext', t.text));
+    row.appendChild(dt);
+    row.appendChild(el(doc, 'span', 'dc-pill', PILL[t.badge]));
+    row.setAttribute('title', [t.tap.why, t.note, t.text].filter(Boolean).join(' · '));
     strips.appendChild(row);
   }
   if (more > 0) strips.appendChild(el(doc, 'div', 'dc-more', `+${more} more`));

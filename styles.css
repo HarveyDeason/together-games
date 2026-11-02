@@ -1037,7 +1037,9 @@ body {
 .dc-astanding { display: flex; align-items: center; justify-content: space-between; gap: 0.3rem; }
 .dc-abidder { display: flex; flex-direction: column; min-width: 0; }
 .dc-aamt { font-weight: 700; font-size: clamp(0.85rem, 4vw, 1rem); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.dc-awho { font-size: clamp(0.58rem, 2.5vw, 0.68rem); color: var(--seat1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dc-awho { font-size: clamp(0.58rem, 2.5vw, 0.68rem); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dc-awho[data-seat="0"] { color: var(--seat0); }
+.dc-awho[data-seat="1"] { color: var(--seat1); }
 .dc-astepline { flex: none; display: flex; gap: 0.25rem; align-items: stretch; }
 .dc-astep, .dc-abid, .dc-apass {
   margin: 0;

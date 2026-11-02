@@ -324,6 +324,7 @@ export function auctionFor(state, mySeat, step, names) {
     worth: sq.price,
     standing,
     standingBy,
+    standingSeat: state.aucBy,
     min,
     step: amount,
     youHave: cash,
@@ -1220,7 +1221,11 @@ function paintAuction(world) {
   const standing = el(doc, 'div', 'dc-astanding');
   const bidder = el(doc, 'span', 'dc-abidder');
   bidder.appendChild(el(doc, 'span', 'dc-aamt', p.standingBy ? sterling(p.standing) : 'No bid yet'));
-  if (p.standingBy) bidder.appendChild(el(doc, 'span', 'dc-awho', p.standingBy));
+  if (p.standingBy) {
+    const who = el(doc, 'span', 'dc-awho', p.standingBy);
+    who.dataset.seat = String(p.standingSeat);   // the seat's own colour, as on the chips and tiles
+    bidder.appendChild(who);
+  }
   standing.appendChild(bidder);
   panel.appendChild(standing);
 

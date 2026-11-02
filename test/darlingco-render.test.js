@@ -1726,9 +1726,25 @@ test('the auction styles exist, the lot is lit, and nothing explanatory is dimme
     assert.ok(new RegExp(`\\.${cls}\\b`).test(css), `${cls} has no style`);
   }
   assert.match(css, /\.dc-tile\[data-lot\]/);
-  const rule = (sel) => (new RegExp(`${sel.replace(/\./g, '\\.')}\\s*\\{([^}]*)\\}`).exec(css) || [])[1] || '';
-  assert.ok(!/opacity/.test(rule('.dc-anote')), 'the note is dimmed');
-  assert.ok(!/opacity/.test(rule('.dc-abid:disabled') + rule('.dc-apass:disabled') + rule('.dc-astep:disabled')), 'a disabled control text is dimmed');
+  // Every rule whose selector list mentions a panel class, grouped selectors included.
+  const panel = [...css.matchAll(/([^{}]+)\{([^}]*)\}/g)].filter((m) => /\.dc-a[a-z]*\b/.test(m[1].replace(/\/\*[\s\S]*?\*\//g, '')));
+  assert.ok(panel.length >= 15, `only ${panel.length} panel rules found`);
+  for (const m of panel) assert.ok(!/opacity/.test(m[2]), `opacity in the auction panel rule: ${m[1].trim()}`);
+});
+
+test('the standing bid is coloured by whose it is, not always the opponent', () => {
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  assert.match(css, /\.dc-awho\[data-seat="0"\]\s*\{[^}]*--seat0/);
+  assert.match(css, /\.dc-awho\[data-seat="1"\]\s*\{[^}]*--seat1/);
+  const bid = ok(act(auction(24, { actor: 1 }), { type: 'bid', amount: 60 }, 1));
+  assert.equal(auctionFor(bid, 0, 70, NM).standingSeat, 1);
+  assert.equal(auctionFor(auction(24), 0, 10, NM).standingSeat, -1);
+  const { host } = container();
+  renderBoard(bid, host, { mySeat: 0, names: NM, onAction: () => {} });
+  assert.equal(all(host.__dc.decision).find((n) => n.classes.has('dc-awho')).dataset.seat, '1');
+  const mine = ok(act(auction(24, { actor: 0 }), { type: 'bid', amount: 60 }, 0));
+  renderBoard(mine, host, { mySeat: 0, names: NM, onAction: () => {} });
+  assert.equal(all(host.__dc.decision).find((n) => n.classes.has('dc-awho')).dataset.seat, '0');
 });
 
 test('a live auction takes one strip row from the deals, and what is queued is still counted', () => {

@@ -970,12 +970,15 @@ body {
 .dc-dchip .dc-chipname { font-size: 0.75rem; color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dc-dchip.is-on { background: #232536; color: var(--text); border-color: var(--accent); }
 .dc-dchip.is-on::after { content: '\2713'; font-size: 0.65rem; color: var(--accent); }
-.dc-dchip:disabled { cursor: default; opacity: 0.55; }
+.dc-dchip:disabled { cursor: default; }
+/* Dim only what identifies the chip; the reason stays at full strength, since a
+   dimmed ancestor would multiply into it. */
+.dc-dchip:disabled .dc-chipsw, .dc-dchip:disabled .dc-chipname { opacity: 0.55; }
 .dc-dchip.is-static { cursor: default; background: #232536; color: var(--text); border-color: #393d50; }
 .dc-dchip.is-money { font-variant-numeric: tabular-nums; }
 .dc-chipnote { flex: none; font-size: 0.62rem; color: var(--muted); }
 /* The reason a chip cannot be used is part of the chip: a title is invisible on a phone. */
-.dc-chipwhy { opacity: 0.85; }
+.dc-chipwhy { color: var(--muted); }
 .dc-stepwhy { margin-top: 0.3rem; font-size: 0.62rem; color: var(--muted); }
 .dc-cashrow { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.6rem; }
 .dc-step {
@@ -1003,7 +1006,7 @@ body {
   background: var(--bg);
   font-variant-numeric: tabular-nums;
 }
-.dc-cashbox.is-zero { color: #5b6075; }
+.dc-cashbox.is-zero { color: var(--muted); }
 /* The foot sticks to the bottom of the scrolling sheet, so Send / Accept is
    always in reach however many properties the shelves hold. */
 .dc-sheetfoot {

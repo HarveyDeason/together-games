@@ -627,10 +627,11 @@ export function dealSheetFor(state, mySeat, draft, names) {
   const trades = readTrades(state);
   const answering = draft.id !== '';
   let problem = '';
-  if (!seated) problem = 'Only the players can make deals';
-  else if (state.phase === 'over') problem = 'The game is over';
+  // The watcher, game-over and cap rules live in canOpenDeal. A counter is not a
+  // new deal, so the cap is left out of its check by showing it no deals.
+  const gate = canOpenDeal(answering ? { ...state, trades: {} } : state, mySeat);
+  if (!gate.ok) problem = gate.why;
   else if (answering && (!trades[draft.id] || trades[draft.id].awaits !== mySeat)) problem = 'This deal has changed. Close it and look again';
-  else if (!answering && Object.keys(trades).length >= MAX_TRADES) problem = 'Eight deals is the limit';
   else {
     const code = dealProblem(state, { props: draft.props, cash: draft.cash, outs0: draft.outs0, outs1: draft.outs1, awaits: 1 - mySeat });
     if (code) problem = problemWords(state, mySeat, names, draft, code);

@@ -1,9 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SQUARES, SETS, STATION_RENT, UTIL_MULT } from '../src/games/darlingco-board.js';
+import { readFileSync } from 'node:fs';
+import { SQUARES, SETS, STATION_RENT, UTIL_MULT, MAX_DEAL_CASH } from '../src/games/darlingco-board.js';
+import { createInitialState } from '../src/games/darlingco.js';
 import {
   BLANK_OWN, BLANK_BUILT, BLANK_MORTG, BLANK_PROPS, dealChar, dealDest, dealWasMortgaged, dealSquares, setChar, ownerOf, housesOn, isMortgaged,
-  squaresOwnedBy, ownsFullSet, countKind, rentFor, netWorth, canBuild, canSell
+  squaresOwnedBy, ownsFullSet, countKind, rentFor, netWorth, canBuild, canSell, dealProblem
 } from '../src/games/darlingco-state.js';
 
 // Build a state without playing to it. own: {sq: seat}, built: {sq: n}, mortg: [sq...]
@@ -13,6 +15,18 @@ function mk({ cash = [1500, 1500], own = {}, built = {}, mortg = [] } = {}) {
   for (const [sq, n] of Object.entries(built)) b = setChar(b, Number(sq), String(n));
   for (const sq of mortg) m = setChar(m, sq, '1');
   return { cash, own: o, built: b, mortg: m };
+}
+// A fresh state with these squares owned: { square: seat }.
+function owned(map) {
+  let o = BLANK_OWN;
+  for (const [sq, seat] of Object.entries(map)) o = setChar(o, Number(sq), String(seat));
+  return { ...createInitialState(), own: o };
+}
+// A trade from { square: [destSeat, wasMortgaged] } and a signed cash (seat 0 frame).
+function deal(squareMap, cash) {
+  let props = BLANK_PROPS;
+  for (const [sq, [seat, mortgaged]] of Object.entries(squareMap)) props = setChar(props, Number(sq), dealChar(seat, mortgaged));
+  return { props, cash, outs0: 0, outs1: 0, awaits: 1 };
 }
 const own = (sqs, seat = 0) => Object.fromEntries(sqs.map(s => [s, seat]));
 
@@ -242,4 +256,106 @@ test('dealSquares lists every square in the deal, ascending, and nothing else', 
   let p = setChar(BLANK_PROPS, 24, dealChar(0, false));
   p = setChar(p, 6, dealChar(1, true));
   assert.deepEqual(dealSquares(p), [6, 24]);
+});
+
+test('a plain property-for-cash deal is legal', () => {
+  const s = owned({ 24: 1 });
+  assert.equal(dealProblem(s, deal({ 24: [0, false] }, 200)), '');
+});
+
+test('an empty deal is refused', () => {
+  assert.equal(dealProblem(createInitialState(), deal({}, 0)), 'empty-deal');
+});
+
+test('a deal of cash alone, or of a get-out card alone, is not empty', () => {
+  const s = { ...createInitialState(), outCards: ['lj', ''] };
+  assert.equal(dealProblem(s, deal({}, 50)), '');
+  assert.equal(dealProblem(s, { ...deal({}, 0), outs0: 1 }), '');
+});
+
+test('a square going to the seat that already owns it is stale', () => {
+  const s = owned({ 24: 1 });
+  assert.equal(dealProblem(s, deal({ 24: [1, false] }, 0)), 'trade-stale');
+});
+
+test('an unowned square cannot be in a deal', () => {
+  assert.equal(dealProblem(createInitialState(), deal({ 24: [0, false] }, 0)), 'trade-stale');
+});
+
+test('a property mortgaged since the offer was made makes the deal stale', () => {
+  const s = owned({ 24: 1 });
+  const offered = deal({ 24: [0, false] }, 200);               // clear when offered
+  const since = { ...s, mortg: setChar(s.mortg, 24, '1') };
+  assert.equal(dealProblem(since, offered), 'trade-stale');
+});
+
+test('a property un-mortgaged since the offer was made is stale too', () => {
+  const s = { ...owned({ 24: 1 }), mortg: setChar(BLANK_MORTG, 24, '1') };
+  const offered = deal({ 24: [0, true] }, 200);
+  assert.equal(dealProblem(s, offered), '');                   // unchanged: fine
+  assert.equal(dealProblem({ ...s, mortg: BLANK_MORTG }, offered), 'trade-stale');
+});
+
+test('a mortgaged property can be traded as it is', () => {
+  const s = { ...owned({ 24: 1 }), mortg: setChar(BLANK_MORTG, 24, '1') };
+  assert.equal(dealProblem(s, deal({ 24: [0, true] }, 0)), '');
+});
+
+test('a property with a building on it cannot be traded', () => {
+  const s = { ...owned({ 21: 1, 23: 1, 24: 1 }), built: setChar(BLANK_BUILT, 24, '1') };
+  assert.equal(dealProblem(s, deal({ 24: [0, false] }, 0)), 'trade-built');
+});
+
+test('a building anywhere in the colour set blocks the whole set from being traded', () => {
+  // The rule mortgaging already applies. It is what keeps a split set clear.
+  const s = { ...owned({ 21: 1, 23: 1, 24: 1 }), built: setChar(BLANK_BUILT, 21, '1') };
+  assert.equal(dealProblem(s, deal({ 24: [0, false] }, 0)), 'trade-built');
+});
+
+test('a station needs only itself clear, having no colour set', () => {
+  const s = owned({ 5: 1 });
+  assert.equal(dealProblem(s, deal({ 5: [0, false] }, 0)), '');
+});
+
+test('the payer must hold the cash at the moment the deal is checked', () => {
+  const s = { ...owned({ 24: 1 }), cash: [100, 1500] };
+  assert.equal(dealProblem(s, deal({ 24: [0, false] }, 200)), 'cannot-afford');
+  assert.equal(dealProblem({ ...s, cash: [200, 1500] }, deal({ 24: [0, false] }, 200)), '');
+});
+
+test('the cash sign is read in seat 0 frame, so the other payer is checked too', () => {
+  const s = { ...owned({ 24: 0 }), cash: [1500, 10] };
+  assert.equal(dealProblem(s, deal({ 24: [1, false] }, -200)), 'cannot-afford');
+});
+
+test('a seat cannot hand over a get-out card it does not hold', () => {
+  const s = { ...createInitialState(), outCards: ['', 'jb'] };
+  assert.equal(dealProblem(s, { ...deal({}, 0), outs0: 1 }), 'no-card');
+  assert.equal(dealProblem(s, { ...deal({}, 0), outs1: 1 }), '');
+  assert.equal(dealProblem(s, { ...deal({}, 0), outs1: 2 }), 'no-card');
+});
+
+test('a malformed deal is refused outright, never half-read', () => {
+  const s = owned({ 24: 1 });
+  const good = deal({ 24: [0, false] }, 200);
+  for (const props of ['', '.'.repeat(39), '.'.repeat(41), 'x'.repeat(40), '2'.repeat(40), 40, null]) {
+    assert.equal(dealProblem(s, { ...good, props }), 'bad-deal', String(props));
+  }
+  for (const cash of [1.5, NaN, Infinity, '200', null, MAX_DEAL_CASH + 1, -MAX_DEAL_CASH - 1]) {
+    assert.equal(dealProblem(s, { ...good, cash }), 'bad-deal', String(cash));
+  }
+  for (const outs of [1.5, NaN, -1, 3, '1', null]) {
+    assert.equal(dealProblem(s, { ...good, outs0: outs }), 'bad-deal', String(outs));
+    assert.equal(dealProblem(s, { ...good, outs1: outs }), 'bad-deal', String(outs));
+  }
+  for (const awaits of [-1, 2, 0.5, '1', null]) {
+    assert.equal(dealProblem(s, { ...good, awaits }), 'bad-deal', String(awaits));
+  }
+});
+
+test('the deal cash cap is the same as the cap on a player holding cash', () => {
+  // A lower cap would silently refuse a rich player's legitimate deal.
+  const rules = JSON.parse(readFileSync(new URL('../firebase-rules.json', import.meta.url), 'utf8'));
+  const v = rules.rules.rooms.$code.game.state.cash.$index['.validate'];
+  assert.equal(Number(/<= (\d+)/.exec(v)[1]), MAX_DEAL_CASH);
 });

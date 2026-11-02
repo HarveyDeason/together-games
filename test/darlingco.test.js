@@ -2,9 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { SQUARES, LJ_CARDS, JB_CARDS, MAX_LOG, MAX_LOG_LINE, START_CASH, JAIL_FINE, MAX_TRADES, MAX_DEAL_CASH } from '../src/games/darlingco-board.js';
-import { rentFor, netWorth, setChar, dealChar, BLANK_OWN, BLANK_PROPS } from '../src/games/darlingco-state.js';
+import { rentFor, netWorth, setChar, dealChar, ownerOf, isMortgaged, BLANK_OWN, BLANK_MORTG, BLANK_PROPS } from '../src/games/darlingco-state.js';
 import {
-  meta, createInitialState, getStatus, nextStarter, shuffleOrder, logged, readLog, readTrades, applyAction, sendToJail, applyCard
+  meta, createInitialState, getStatus, nextStarter, shuffleOrder, logged, readLog, readTrades, applyAction, sendToJail, applyCard, dealSummary
 } from '../src/games/darlingco.js';
 
 const sorted = (s) => [...s].sort().join('');
@@ -1373,4 +1373,144 @@ test('every trade action counts a move, which is what bounds tradeSeq', () => {
   const cancelled = ok(act(second, { type: 'trade-cancel', id: 't1' }, 0));
   assert.equal(cancelled.moves, second.moves + 1);
   assert.ok(cancelled.tradeSeq <= cancelled.moves);
+});
+
+// ---- Task 5: accepting a deal ----
+
+const propsOf = (squareMap) => counterTerms(squareMap, 0).props;
+
+test('accepting moves the property and the cash, and clears the deal', () => {
+  const s = { ...owned({ 24: 1 }), cash: [1500, 1500] };
+  const done = ok(act(ok(offer(s, 0, { 24: [0, false] }, 200)), { type: 'trade-accept', id: 't0' }, 1));
+  assert.equal(ownerOf(done, 24), 0);
+  assert.deepEqual(done.cash, [1300, 1700]);
+  assert.deepEqual(readTrades(done), {});
+});
+
+test('properties can go both ways in one deal', () => {
+  const s = owned({ 24: 1, 6: 0 });
+  let t = ok(offer(s, 0, { 24: [0, false], 6: [1, false] }, 0));
+  t = ok(act(t, { type: 'trade-accept', id: 't0' }, 1));
+  assert.equal(ownerOf(t, 24), 0);
+  assert.equal(ownerOf(t, 6), 1);
+});
+
+test('cash moves the other way when the sign is negative', () => {
+  const s = { ...owned({ 24: 0 }), cash: [1500, 1500] };
+  const done = ok(act(ok(offer(s, 0, { 24: [1, false] }, -300)), { type: 'trade-accept', id: 't0' }, 1));
+  assert.equal(ownerOf(done, 24), 1);
+  assert.deepEqual(done.cash, [1800, 1200]);
+});
+
+test('a mortgaged property arrives still mortgaged, with no fee', () => {
+  const s = { ...owned({ 24: 1 }), mortg: setChar(BLANK_MORTG, 24, '1'), cash: [1500, 1500] };
+  const done = ok(act(ok(offer(s, 0, { 24: [0, true] }, 0)), { type: 'trade-accept', id: 't0' }, 1));
+  assert.equal(ownerOf(done, 24), 0);
+  assert.ok(isMortgaged(done, 24));
+  assert.deepEqual(done.cash, [1500, 1500]);
+});
+
+test('a get-out card changes hands and the new holder can use it', () => {
+  const s = { ...createInitialState(), outCards: ['lj', ''], jail: [0, 2], turn: 1, actor: 1 };
+  let t = ok(act(s, { type: 'trade-offer', props: BLANK_PROPS, cash: 0, outs0: 1, outs1: 0 }, 0));
+  t = ok(act(t, { type: 'trade-accept', id: 't0' }, 1));
+  assert.deepEqual(t.outCards, ['', 'lj']);
+  const freed = ok(act(t, { type: 'jail-card' }, 1));
+  assert.equal(freed.jail[1], 0);
+});
+
+test('accepting is refused, with its reason, when the deal has gone stale', () => {
+  const s = owned({ 24: 1 });
+  const offered = ok(offer(s, 0, { 24: [0, false] }, 0));
+  const moved = { ...offered, own: setChar(offered.own, 24, '0') };      // it moved in between
+  assert.equal(act(moved, { type: 'trade-accept', id: 't0' }, 1).error, 'trade-stale');
+  const mortgaged = { ...offered, mortg: setChar(offered.mortg, 24, '1') };
+  assert.equal(act(mortgaged, { type: 'trade-accept', id: 't0' }, 1).error, 'trade-stale');
+  const built = { ...offered, built: setChar(offered.built, 24, '1') };
+  assert.equal(act(built, { type: 'trade-accept', id: 't0' }, 1).error, 'trade-built');
+});
+
+test('accepting is refused when the payer has spent the cash since offering', () => {
+  const offered = ok(offer({ ...owned({ 24: 1 }), cash: [1500, 1500] }, 0, { 24: [0, false] }, 400));
+  const broke = { ...offered, cash: [100, 1500] };
+  assert.equal(act(broke, { type: 'trade-accept', id: 't0' }, 1).error, 'cannot-afford');
+  assert.equal(ownerOf(broke, 24), 1);                                   // nothing moved
+});
+
+test('only the seat being asked may accept', () => {
+  const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 0));
+  assert.equal(act(s, { type: 'trade-accept', id: 't0' }, 0).error, 'not-your-trade');
+});
+
+test('accepting leaves every other live deal standing', () => {
+  let s = owned({ 24: 1, 21: 1 });
+  s = ok(offer(s, 0, { 24: [0, false] }, 0));
+  s = ok(offer(s, 0, { 21: [0, false] }, 0));
+  s = ok(act(s, { type: 'trade-accept', id: 't0' }, 1));
+  assert.deepEqual(Object.keys(readTrades(s)), ['t1']);
+});
+
+test('a deal can settle a rent demand that cash alone could not', () => {
+  // The moment trading exists for: owing more than you hold. Seat 0 pays 800 (positive, seat 0's frame) for square 31.
+  let s = { ...owned({ 24: 0, 31: 1 }), cash: [1500, 300], phase: 'pay', actor: 1, turn: 0, owed: 900, owedTo: 0 };
+  s = ok(act(s, { type: 'trade-offer', props: propsOf({ 31: [0, false] }), cash: 800, outs0: 0, outs1: 0 }, 1));
+  s = ok(act(s, { type: 'trade-accept', id: 't0' }, 0));
+  assert.equal(s.cash[1], 1100);
+  assert.equal(s.phase, 'pay');
+  const paid = ok(act(s, { type: 'pay' }, 1));
+  assert.equal(paid.cash[1], 200);
+  assert.equal(paid.phase, 'end');
+});
+
+test('two get-out cards swapped in one deal destroys neither', () => {
+  const s = { ...createInitialState(), outCards: ['lj', 'jb'] };
+  let t = ok(act(s, { type: 'trade-offer', props: BLANK_PROPS, cash: 0, outs0: 1, outs1: 1 }, 0));
+  t = ok(act(t, { type: 'trade-accept', id: 't0' }, 1));
+  assert.deepEqual(t.outCards, ['jb', 'lj']);
+  assert.equal(t.outCards.join('').length, 4);
+});
+
+test('a seat holding both cards can hand over one, or both', () => {
+  const s = { ...createInitialState(), outCards: ['ljjb', ''] };
+  const one = ok(act(ok(act(s, { type: 'trade-offer', props: BLANK_PROPS, cash: 0, outs0: 1, outs1: 0 }, 0)), { type: 'trade-accept', id: 't0' }, 1));
+  assert.deepEqual(one.outCards, ['jb', 'lj']);
+  const both = ok(act(ok(act(s, { type: 'trade-offer', props: BLANK_PROPS, cash: 0, outs0: 2, outs1: 0 }, 0)), { type: 'trade-accept', id: 't0' }, 1));
+  assert.deepEqual(both.outCards, ['', 'ljjb']);
+  assert.ok(both.outCards.every(h => h.length <= 4));     // the rules cap on outCards
+});
+
+test('the biggest deal imaginable still logs inside the line cap', () => {
+  // A line over the cap is rejected by the database SILENTLY.
+  const longest = SQUARES.reduce((a, q) => (q.price !== undefined && q.name.length > a.length ? q.name : a), '');
+  const sides = [0, 1].map(seat => dealSummary({
+    props: BLANK_PROPS, cash: seat === 1 ? MAX_DEAL_CASH : 0, outs0: 2, outs1: 2, awaits: 1
+  }, seat));
+  for (const line of [`Player 1 gets ${longest} and £${MAX_DEAL_CASH} and 2 get-out cards.`, ...sides.map(x => `Player 1 gets ${x}.`)]) {
+    assert.ok(line.length <= MAX_LOG_LINE, `${line.length}: ${line}`);
+  }
+});
+
+test('a completed deal logs the acceptance and a line for each side that gets something', () => {
+  const s = { ...owned({ 24: 1 }), cash: [1500, 1500] };
+  const done = ok(act(ok(offer(s, 0, { 24: [0, false] }, 200)), { type: 'trade-accept', id: 't0' }, 1));
+  const tail = readLog(done).slice(-3);
+  assert.match(tail[0], /^Player 2 accepts the deal\.$/);
+  assert.match(tail[1], /^Player 1 gets Balloons at Sunrise\.$/);
+  assert.match(tail[2], /^Player 2 gets £200\.$/);
+  for (const line of readLog(done)) assert.ok(line.length <= MAX_LOG_LINE);
+});
+
+test('a one-sided gift logs only the side that gets something', () => {
+  const s = owned({ 24: 1 });
+  const done = ok(act(ok(offer(s, 0, { 24: [0, false] }, 0)), { type: 'trade-accept', id: 't0' }, 1));
+  const tail = readLog(done).slice(-2);
+  assert.match(tail[0], /accepts the deal/);
+  assert.match(tail[1], /^Player 1 gets Balloons at Sunrise\.$/);
+});
+
+test('accepting counts a move too, keeping tradeSeq under moves', () => {
+  const offered = ok(offer({ ...owned({ 24: 1 }), cash: [1500, 1500] }, 0, { 24: [0, false] }, 200));
+  const done = ok(act(offered, { type: 'trade-accept', id: 't0' }, 1));
+  assert.equal(done.moves, offered.moves + 1);
+  assert.ok(done.tradeSeq <= done.moves);
 });

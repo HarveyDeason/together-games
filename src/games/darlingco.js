@@ -15,7 +15,7 @@ import {
 } from './darlingco-board.js';
 import {
   BLANK_OWN, BLANK_BUILT, BLANK_MORTG, setChar, ownerOf, isMortgaged, rentFor,
-  housesOn, canBuild, canSell, netWorth, dealProblem
+  housesOn, canBuild, canSell, netWorth, dealProblem, dealDest, dealSquares
 } from './darlingco-state.js';
 
 export const meta = { id: GAME_ID, name: GAME_NAME, seats: 2 };
@@ -498,7 +498,40 @@ function doTally(state, type, seat) {
  *  ones); every other action still meets 'not-your-turn'. Every one counts a
  *  move: tradeSeq can never exceed moves, and that is all that keeps tradeSeq
  *  under the database's cap, where an over-cap write fails silently. */
-const TRADE_ACTIONS = ['trade-offer', 'trade-counter', 'trade-cancel', 'trade-decline'];
+const TRADE_ACTIONS = ['trade-offer', 'trade-counter', 'trade-cancel', 'trade-decline', 'trade-accept'];
+
+/** One side of a deal in words: what `seat` receives, '' when nothing.
+ *  Bounded: a name, an amount of at most 7 digits and a count of cards. */
+export function dealSummary(trade, seat) {
+  const mine = dealSquares(trade.props).filter(sq => dealDest(trade.props, sq) === seat);
+  const parts = [];
+  if (mine.length === 1) parts.push(SQUARES[mine[0]].name);
+  else if (mine.length > 1) parts.push(`${mine.length} places`);
+  // cash is in seat 0's frame: positive means seat 0 pays seat 1.
+  const gets = seat === 1 ? Math.max(trade.cash, 0) : Math.max(-trade.cash, 0);
+  if (gets > 0) parts.push(`£${gets}`);
+  const cards = seat === 1 ? trade.outs0 : trade.outs1;   // outsN is what seat N hands over
+  if (cards === 1) parts.push('a get-out card');
+  else if (cards > 1) parts.push(`${cards} get-out cards`);
+  return parts.join(' and ');
+}
+
+/** Move everything a deal carries. Ownership is the only per-square string
+ *  that changes: nothing in a deal is built on, and a mortgaged property
+ *  arrives still mortgaged. Both hands are read before either is written. */
+export function applyDeal(state, trade) {
+  let own = state.own;
+  for (const sq of dealSquares(trade.props)) own = setChar(own, sq, String(dealDest(trade.props, sq)));
+  const payer = trade.cash > 0 ? 0 : 1;
+  const amount = Math.abs(trade.cash);
+  const cash = [...state.cash];
+  cash[payer] -= amount;
+  cash[1 - payer] += amount;
+  const [h0, h1] = state.outCards;
+  const cut0 = trade.outs0 * 2, cut1 = trade.outs1 * 2;
+  const outCards = [h0.slice(cut0) + h1.slice(0, cut1), h1.slice(cut1) + h0.slice(0, cut0)];
+  return { ...state, own, cash, outCards };
+}
 
 function doTrade(state, action, seat) {
   if (seat !== 0 && seat !== 1) return { error: 'not-your-turn' };
@@ -524,8 +557,18 @@ function doTrade(state, action, seat) {
   const deal = trades[id];
   const { [id]: _gone, ...rest } = trades;
 
-  // Task 5 adds a 'trade-accept' case here (and to TRADE_ACTIONS).
   switch (action.type) {
+    case 'trade-accept': { // only the seat being asked; the terms are checked again, as the board may have moved on
+      if (deal.awaits !== seat) return { error: 'not-your-trade' };
+      const problem = dealProblem(state, deal);
+      if (problem) return { error: problem };
+      let next = say({ ...applyDeal(state, deal), moves: state.moves + 1, trades: rest }, `${who} accepts the deal.`);
+      for (const s of [0, 1]) {
+        const got = dealSummary(deal, s);
+        if (got) next = say(next, `Player ${s + 1} gets ${got}.`);
+      }
+      return { state: next };
+    }
     case 'trade-cancel': // the seat waiting on an answer takes the deal back
       if (deal.awaits === seat) return { error: 'not-your-trade' };
       return { state: say({ ...counted, trades: rest }, `${who} takes their deal back.`) };

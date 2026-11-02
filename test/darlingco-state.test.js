@@ -312,6 +312,12 @@ test('a building anywhere in the colour set blocks the whole set from being trad
   assert.equal(dealProblem(s, deal({ 24: [0, false] }, 0)), 'trade-built');
 });
 
+test('a building on the other seat square of a split set still blocks the trade', () => {
+  // Owner-blind: the rule exists so a set split between two owners can never carry buildings.
+  const s = { ...owned({ 21: 0, 23: 0, 24: 1 }), built: setChar(BLANK_BUILT, 21, '1') };
+  assert.equal(dealProblem(s, deal({ 24: [0, false] }, 0)), 'trade-built');
+});
+
 test('a station needs only itself clear, having no colour set', () => {
   const s = owned({ 5: 1 });
   assert.equal(dealProblem(s, deal({ 5: [0, false] }, 0)), '');

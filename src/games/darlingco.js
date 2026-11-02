@@ -11,11 +11,11 @@
 
 import {
   GAME_ID, GAME_NAME, START_CASH, LJ_CARDS, JB_CARDS, MAX_LOG, MAX_LOG_LINE, SQUARES,
-  GO_PAY, JAIL_FINE, JAIL_SQUARE, SETS, LJ_NAME, JB_NAME
+  GO_PAY, JAIL_FINE, JAIL_SQUARE, SETS, LJ_NAME, JB_NAME, MAX_TRADES
 } from './darlingco-board.js';
 import {
   BLANK_OWN, BLANK_BUILT, BLANK_MORTG, setChar, ownerOf, isMortgaged, rentFor,
-  housesOn, canBuild, canSell, netWorth
+  housesOn, canBuild, canSell, netWorth, dealProblem
 } from './darlingco-state.js';
 
 export const meta = { id: GAME_ID, name: GAME_NAME, seats: 2 };
@@ -490,6 +490,58 @@ function doTally(state, type, seat) {
     : `Tallied up: Player ${winner + 1} is ahead, ${Math.max(mine, theirs)} to ${Math.min(mine, theirs)}.`) };
 }
 
+/** The trade actions belong to whoever is at the table, like the tally ones:
+ *  either seat may open a deal at any moment, even mid-debt, because trading
+ *  runs alongside the game and never touches turn, actor or phase. Who may
+ *  answer is decided by the deal's `awaits`, not by the actor. applyAction
+ *  routes these ahead of the actor guard, and only these (with the tally
+ *  ones); every other action still meets 'not-your-turn'. Every one counts a
+ *  move: tradeSeq can never exceed moves, and that is all that keeps tradeSeq
+ *  under the database's cap, where an over-cap write fails silently. */
+const TRADE_ACTIONS = ['trade-offer', 'trade-counter', 'trade-cancel', 'trade-decline'];
+
+function doTrade(state, action, seat) {
+  if (seat !== 0 && seat !== 1) return { error: 'not-your-turn' };
+  const who = `Player ${seat + 1}`;
+  const counted = { ...state, moves: state.moves + 1 };
+  const trades = readTrades(state);
+  const terms = { props: action.props, cash: action.cash, outs0: action.outs0, outs1: action.outs1 };
+
+  if (action.type === 'trade-offer') {
+    if (Object.keys(trades).length >= MAX_TRADES) return { error: 'too-many-trades' };
+    const offered = { ...terms, awaits: 1 - seat };
+    const problem = dealProblem(state, offered);
+    if (problem) return { error: problem };
+    // Ids come from the counter and are never reused, so a stale id never meets a new deal.
+    const id = `t${state.tradeSeq}`;
+    const next = { ...counted, tradeSeq: state.tradeSeq + 1, trades: { ...trades, [id]: offered } };
+    return { state: say(next, `${who} offers a deal.`) };
+  }
+
+  // Own-property check: a bare lookup would find Object.prototype's members.
+  const id = action.id;
+  if (typeof id !== 'string' || !Object.prototype.hasOwnProperty.call(trades, id)) return { error: 'no-such-trade' };
+  const deal = trades[id];
+  const { [id]: _gone, ...rest } = trades;
+
+  // Task 5 adds a 'trade-accept' case here (and to TRADE_ACTIONS).
+  switch (action.type) {
+    case 'trade-cancel': // the seat waiting on an answer takes the deal back
+      if (deal.awaits === seat) return { error: 'not-your-trade' };
+      return { state: say({ ...counted, trades: rest }, `${who} takes their deal back.`) };
+    case 'trade-decline': // only the seat being asked may decline
+      if (deal.awaits !== seat) return { error: 'not-your-trade' };
+      return { state: say({ ...counted, trades: rest }, `${who} declines the deal.`) };
+    default: { // trade-counter: same id, so the strip on screen stays put
+      if (deal.awaits !== seat) return { error: 'not-your-trade' };
+      const countered = { ...terms, awaits: 1 - seat };
+      const problem = dealProblem(state, countered);
+      if (problem) return { error: problem };
+      return { state: say({ ...counted, trades: { ...trades, [id]: countered } }, `${who} counters.`) };
+    }
+  }
+}
+
 /** Bankruptcy is declared, never computed: nothing here or in 'pay' ever
  *  decides that a player cannot settle. Only this action ends the game so. */
 function doBankrupt(state, seat) {
@@ -503,6 +555,7 @@ export function applyAction(state, action, seat) {
   if (state.phase === 'over') return { error: 'game-over' };
   const type = action && action.type;
   if (TALLY_ACTIONS.includes(type)) return doTally(state, type, seat);
+  if (TRADE_ACTIONS.includes(type)) return doTrade(state, action, seat);
   if (seat !== state.actor) return { error: 'not-your-turn' };
   if (SIDE_ACTIONS.includes(type)) {
     if (!SIDE_PHASES.includes(state.phase)) return { error: 'wrong-phase' };

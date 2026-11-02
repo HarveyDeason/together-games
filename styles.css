@@ -741,7 +741,7 @@ body {
    the one that is clipped. */
 .dc-feed {
   flex: 1 1 0;
-  min-height: 0;
+  min-height: 2.4rem;   /* always two lines of the story: deals never starve it */
   margin: 0;
   padding: 0;
   list-style: none;
@@ -886,17 +886,16 @@ body {
 }
 
 /* ---- Darling & Co. live deals: one strip per deal, between story and decision.
-   Follows trade-flow.html panel 1. The list shrinks and scrolls before it can
-   push the decision (flex: none) out of the centre. ---------------------------- */
+   Follows trade-flow.html panel 1. Only STRIP_CAP strips are drawn, the rest
+   collapse to "+N more"; the feed keeps two lines and the decision is pinned. */
 .dc-deals {
-  flex: 0 1 auto;
-  min-height: 2.1rem;
+  flex: none;
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
-  overflow-y: auto;
-  overscroll-behavior: contain;
 }
+.dc-dealwhy { margin-top: 0.15rem; color: var(--muted); font-size: 0.9em; line-height: 1.2; }
+.dc-more { text-align: center; color: var(--muted); font-size: clamp(0.58rem, 2.6vw, 0.72rem); }
 .dc-deal {
   flex: none;
   min-width: 0;

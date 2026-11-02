@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { gridCell, edgeOf, buildBoard, paintTile, decisionFor, feedLines, propertyFor, cardFor, walkPath, chipParts, tradeStrips, canOpenDeal } from '../src/games/darlingco-render.js';
+import { gridCell, edgeOf, buildBoard, paintTile, decisionFor, feedLines, propertyFor, cardFor, walkPath, chipParts, tradeStrips, canOpenDeal, stripsShown, STRIP_CAP, DEALS_OPEN } from '../src/games/darlingco-render.js';
+import { readFileSync } from 'node:fs';
 import { createInitialState, render, applyAction } from '../src/games/darlingco.js';
 import { setChar, BLANK_PROPS, dealChar } from '../src/games/darlingco-state.js';
 import { SQUARES, SETS, STATION_RENT } from '../src/games/darlingco-board.js';
@@ -990,21 +991,70 @@ test('a drawn strip button that cannot be pressed is disabled and says why', () 
 test('the New deal entry is under the strips, disabled with a reason at the cap, and absent for a watcher', () => {
   const h = mount(owned(Object.fromEntries(CAP_SQUARES.map(q => [q, 1]))), 0);
   const entry = () => buttonsIn(h.__dc.newDeal).find(b => /new deal/i.test(b.textContent));
-  assert.equal(entry().disabled, false);
+  // Until task 10 draws the deal sheet it is disabled, with the same reason as the card's button.
+  assert.equal(DEALS_OPEN, false);
+  assert.equal(entry().disabled, true);
+  assert.match(entry().attrs.title, /not open yet/i);
   entry().click();
-  assert.equal(h.__dc.sheetMode, 'deal');
+  assert.equal(h.__dc.sheetMode, 'property');   // a disabled button does nothing
   const s = capped();
   render(s, h, { mySeat: 0, names: ['Ann', 'Bo'], onAction: () => {} });
-  assert.equal(h.__dc.strips.children.length, 8);
   assert.equal(entry().disabled, true);
-  assert.ok(entry().attrs.title.length > 0);
+  assert.match(entry().attrs.title, /limit/i);   // at the cap the rule's reason wins
   render(s, h, { mySeat: null, names: ['Ann', 'Bo'], onAction: () => {} });
   assert.equal(entry(), undefined);
   assert.deepEqual(buttonsIn(h.__dc.strips), []);
 });
 
-test('with eight deals live the decision is still drawn with its buttons', () => {
-  const h = mount(capped(), 0);
-  assert.equal(h.__dc.strips.children.length, 8);
+test('Counter is drawn disabled with a reason until the deal sheet exists', () => {
+  const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));
+  const counter = tradeStrips(s, 1, [])[0].buttons.find(b => b.type === 'trade-counter');
+  assertDisabledWithReason(counter);
+  const h = mount(s, 1);
+  const b = buttonsIn(h.__dc.strips).find(x => x.dataset.type === 'trade-counter');
+  assert.equal(b.disabled, true);
+  assert.ok(b.attrs.title.length > 0);
+  b.click();
+  assert.equal(h.__dc.sheetMode, 'property');
+});
+
+test('a disabled Accept shows its reason as visible text on the strip, not only as a title', () => {
+  const offered = ok(offer({ ...owned({ 24: 1 }), cash: [1500, 1500] }, 0, { 24: [0, false] }, 200));
+  const h = mount(inAuction(offered), 1);
+  const strip = h.__dc.strips.children[0];
+  const visible = all(strip).filter(n => n.classes.has('dc-dealwhy')).map(n => n.textContent);
+  assert.equal(visible.length, 1);
+  assert.match(visible[0], /auction/i);
+  // and an enabled Accept draws no such line
+  const live = mount(offered, 1).__dc.strips.children[0];
+  assert.equal(all(live).filter(n => n.classes.has('dc-dealwhy')).length, 0);
+});
+
+test('deals awaiting you are drawn first, and the overflow collapses to +N more', () => {
+  const s = capped();           // seat 0 offered all eight, so they all await seat 1
+  const strips = tradeStrips(s, 1, []);
+  const { shown, more } = stripsShown(strips, 3);
+  assert.deepEqual(shown.map(t => t.id), ['t0', 't1', 't2']);
+  assert.equal(more, 5);
+  // Seen from the offerer's seat nothing awaits them, order is still stable.
+  assert.equal(stripsShown(tradeStrips(s, 0, []), 3).more, 5);
+  // Awaiting-you comes before waiting-on-them whatever the ids say.
+  const mixed = [{ id: 'a', mine: false }, { id: 'b', mine: true }, { id: 'c', mine: false }, { id: 'd', mine: true }];
+  assert.deepEqual(stripsShown(mixed, 3).shown.map(t => t.id), ['b', 'd', 'a']);
+  assert.equal(stripsShown([], 1).more, 0);
+});
+
+test('with eight deals live only STRIP_CAP are drawn, the rest collapse, and the story and decision survive', () => {
+  const h = mount(capped(), 0);   // seat 0 is to roll, so the decision has its button
+  const drawn = h.__dc.strips.children.filter(n => n.classes.has('dc-deal'));
+  assert.equal(drawn.length, STRIP_CAP);
+  const more = h.__dc.strips.children.find(n => n.classes.has('dc-more'));
+  assert.equal(more.textContent, `+${8 - STRIP_CAP} more`);
   assert.ok(buttonsIn(h.__dc.decision).some(b => /roll/i.test(b.textContent)));
+  // The story always keeps two lines of room: the stylesheet gives the feed a
+  // minimum height (the fake DOM has no layout, so this is the guard on it).
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  const feedRule = /\.dc-feed\s*\{([^}]*)\}/.exec(css)[1];
+  const min = /min-height:\s*([\d.]+)rem/.exec(feedRule);
+  assert.ok(min && Number(min[1]) >= 2.2, 'the feed has no minimum height of two story lines');
 });

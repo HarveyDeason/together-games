@@ -395,9 +395,24 @@ export function cardFor(state, mySeat, sq, names) {
 // refusal the engine could give is worked out here first, so a button that
 // cannot work is disabled with a reason instead of being pressed and shaken.
 
+/** Until the deal sheet exists (task 10) Counter and + New deal are drawn
+ *  disabled, as the card's deal button is. Task 10 flips this. */
+export const DEALS_OPEN = false;
+const NOT_OPEN = 'Deals are not open yet';
+
+/** How many strips the centre draws; the rest collapse into one "+N more"
+ *  line. Chosen from what fits at 375px beside the feed's minimum and the decision. */
+export const STRIP_CAP = 1;
+
 /** dealProblem results that mean the deal can never be executed as written:
- *  the squares moved, or were mortgaged. The rest (cash, a card, houses) can
- *  recover, so Accept stays but is disabled with its reason. */
+ *  the deal records each square's ownership and mortgage state at offer time,
+ *  and that has moved. Decline is the only honest answer.
+ *  The rest are RECOVERABLE, so they are deliberately NOT here: with
+ *  'cannot-afford' the payer can mortgage or sell to raise the cash, with
+ *  'trade-built' a building can be sold off the set, and with 'no-card' a card
+ *  can be won back. Accept stays on the strip, disabled, with the reason
+ *  spelled out, which tells the player what to fix. Do not "simplify" this to
+ *  "any dealProblem means stale". */
 const DEAD_DEAL = ['trade-stale', 'bad-deal', 'empty-deal'];
 
 const dealButton = (id, type, label, extra = {}) => ({ type, label, action: { type, id }, ...extra });
@@ -438,13 +453,20 @@ export function tradeStrips(state, mySeat, names) {
       if (!stale) {
         const why = acceptBlock(state, trade, problem, names, mySeat);
         buttons.unshift(dealButton(id, 'trade-accept', 'Accept', why ? { disabled: true, why } : {}));
-        buttons.splice(1, 0, { type: 'trade-counter', label: 'Counter', id, opens: true, action: null });
+        buttons.splice(1, 0, { type: 'trade-counter', label: 'Counter', id, opens: true, action: null, ...(DEALS_OPEN ? {} : { disabled: true, why: NOT_OPEN }) });
       }
     } else if (seated) {
       buttons = [dealButton(id, 'trade-cancel', 'Cancel')];
     }
-    return { id, text, badge: stale ? 'stale' : mine ? 'answer' : 'waiting', stale, buttons };
+    return { id, text, badge: stale ? 'stale' : mine ? 'answer' : 'waiting', stale, mine, buttons };
   });
+}
+
+/** The strips to draw and how many are left out: deals awaiting you first,
+ *  then the ones you are waiting on, each group in id order. Pure. */
+export function stripsShown(strips, cap = STRIP_CAP) {
+  const ordered = [...strips.filter((t) => t.mine), ...strips.filter((t) => !t.mine)];
+  return { shown: ordered.slice(0, cap), more: Math.max(0, ordered.length - cap) };
 }
 
 /** Whether `+ New deal` can be opened by mySeat now, and if not, why. */
@@ -649,8 +671,9 @@ function openerButton(world, spec, draft, className) {
 function paintStrips(world) {
   const { strips, newDeal, state, mySeat, doc } = world;
   clear(strips);
-  const list = tradeStrips(state, mySeat, world.names);
-  strips.hidden = list.length === 0;
+  const everyDeal = tradeStrips(state, mySeat, world.names);
+  const { shown: list, more } = stripsShown(everyDeal);
+  strips.hidden = everyDeal.length === 0;
   for (const t of list) {
     // Keyed on the deal id, which a counter keeps, so a strip does not jump.
     const row = el(doc, 'div', `dc-deal is-${t.badge}`);
@@ -671,15 +694,19 @@ function paintStrips(world) {
         btns.appendChild(b);
       }
       row.appendChild(btns);
+      // A title is invisible on a phone, so the Accept reason is drawn on the strip too.
+      const accept = t.buttons.find((b) => b.type === 'trade-accept' && b.disabled && b.why);
+      if (accept) row.appendChild(el(doc, 'div', 'dc-dealwhy', accept.why));
     }
     strips.appendChild(row);
   }
+  if (more > 0) strips.appendChild(el(doc, 'div', 'dc-more', `+${more} more`));
 
   clear(newDeal);
   newDeal.hidden = (mySeat !== 0 && mySeat !== 1) || state.phase === 'over';
   if (!newDeal.hidden) {
     const can = canOpenDeal(state, mySeat);
-    const b = openerButton(world, { label: '+ New deal', disabled: !can.ok, why: can.why }, { counter: null },
+    const b = openerButton(world, { label: '+ New deal', disabled: !can.ok || !DEALS_OPEN, why: can.ok ? (DEALS_OPEN ? '' : NOT_OPEN) : can.why }, { counter: null },
       'link-btn dc-newdeal-btn');
     b.dataset.type = 'new-deal';
     newDeal.appendChild(b);

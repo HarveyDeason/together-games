@@ -880,8 +880,23 @@ body {
   100% { right: 70%; opacity: 0; transform: translate(0, -50%) scale(0.8); }
 }
 
+/* A traded tile turns over to its new owner's colour; a won lot thumps down. */
+.dc-tile.dc-flip { animation: dc-flip 420ms ease-in-out; z-index: 2; }
+@keyframes dc-flip {
+  0% { transform: scaleX(1); }
+  50% { transform: scaleX(0.05); }
+  100% { transform: scaleX(1); }
+}
+.dc-tile.dc-gavel { animation: dc-gavel 480ms cubic-bezier(0.3, 1.4, 0.5, 1); z-index: 2; }
+@keyframes dc-gavel {
+  0% { transform: translateY(-30%) scale(1.35); }
+  45% { transform: translateY(6%) scale(0.88); }
+  70% { transform: translateY(-2%) scale(1.06); }
+  100% { transform: translateY(0) scale(1); }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .dc-tok, .dc-tile.dc-pop .dc-houses, .dc-coin { animation: none; }
+  .dc-tok, .dc-tile.dc-pop .dc-houses, .dc-coin, .dc-tile.dc-flip, .dc-tile.dc-gavel { animation: none; }
   .dc-coin { display: none; }
 }
 

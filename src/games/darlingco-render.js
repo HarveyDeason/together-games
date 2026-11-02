@@ -757,6 +757,9 @@ export function dealReviewFor(state, mySeat, id, names) {
 const STEP_MS = 90;     // one square
 const POP_MS = 420;
 const COIN_MS = 650;
+const FLIP_MS = 420;    // one tile turning over
+const FLIP_GAP_MS = 220; // between one traded tile and the next
+const GAVEL_MS = 480;
 const MAX_WALK = 12;    // beyond this a move is a jump (jail, a card), not a walk
 
 const prefersReducedMotion = () =>
@@ -841,7 +844,7 @@ function buildWorld(doc, host) {
 
   const world = {
     doc, root, bar, chips, potChip, tiles, dice, feed, sheet, strips, decision, newDeal, room,
-    selected: -1, bidStep: null, bidKey: '', sheetMode: 'property', draft: null, reviewId: null, pending: false, busy: false, generation: 0, animatedKey: null,
+    selected: -1, bidStep: null, bidKey: '', sheetMode: 'property', draft: null, reviewId: null, pending: false, busy: false, generation: 0, flipGeneration: 0, hold: null, animatedKey: null,
     shown: null, builtSeen: null, state: null, mySeat: null, names: [], onAction: () => {}
   };
   tiles.forEach((tile, i) => {
@@ -1313,7 +1316,7 @@ function paint(world) {
 
   // Tokens are drawn where the walk has got to, not where the state says they
   // end up: the state, with the positions shown so far.
-  const view = world.shown ? { ...state, pos: world.shown } : state;
+  const view = viewOf(world);
   world.tiles.forEach((tile, i) => {
     paintTile(tile, view, i);
     if (i === world.selected) tile.classList.add('is-picked');
@@ -1328,6 +1331,19 @@ function paint(world) {
   paintSheet(world);
   paintStrips(world);
   paintRoom(world, paintDecision(world));
+}
+
+/** The state as the board should show it right now: tokens where the walk has
+ *  got to, and a traded tile still in its old owner's colour until its turn
+ *  to flip comes round. */
+function viewOf(world) {
+  let view = world.shown ? { ...world.state, pos: world.shown } : world.state;
+  if (world.hold) {
+    let own = view.own;
+    for (const [sq, was] of Object.entries(world.hold)) own = setChar(own, Number(sq), String(was));
+    view = { ...view, own };
+  }
+  return view;
 }
 
 /** The room calls this on every snapshot. The scene is built once and cached
@@ -1364,6 +1380,70 @@ function noteChanges(world, prev) {
     && s.cash[prev.owedTo] > prev.cash[prev.owedTo]) {
     flick(world, 1 - prev.owedTo, prev.owedTo, prev.owed);
   }
+  if (prev && motionOn()) {
+    // A lot that was under the hammer and now has an owner: the gavel comes down.
+    // A plain purchase never had an auction behind it, so it does not.
+    if (prev.phase === 'auction' && prev.aucSq >= 0 && ownerOf(prev, prev.aucSq) < 0 && ownerOf(s, prev.aucSq) >= 0) {
+      gavel(world.tiles[prev.aucSq]);
+    }
+    const flips = flipOrder(prev, s);
+    if (flips.length) {
+      flipTiles(world, prev, flips);
+      for (const seat of [0, 1]) {
+        const gain = s.cash[seat] - prev.cash[seat];
+        if (gain > 0 && s.cash[1 - seat] < prev.cash[1 - seat]) flick(world, 1 - seat, seat, gain);
+      }
+    }
+  }
+}
+
+/** The squares whose owner changed from one seat to another, in board order.
+ *  A square nobody owned is not a flip: that is a purchase, and has its own
+ *  treatment. */
+export function flipOrder(prev, next) {
+  const out = [];
+  for (let i = 0; i < SQUARES.length; i++) {
+    const was = ownerOf(prev, i), now = ownerOf(next, i);
+    if (was >= 0 && now >= 0 && was !== now) out.push(i);
+  }
+  return out;
+}
+
+function gavel(tile) {
+  tile.classList.add('dc-gavel');
+  setTimeout(() => tile.classList.remove('dc-gavel'), GAVEL_MS);
+}
+
+/** Turn each traded tile over in turn. The tiles are held in their old colour
+ *  and let go one at a time; the chain carries its own generation (separate
+ *  from the walk's, so a dice roll cannot strand a held tile) and a newer
+ *  chain replaces the hold wholesale. It ends by painting the LATEST state. */
+function flipTiles(world, prev, squares) {
+  const generation = ++world.flipGeneration;
+  const superseded = () => world.flipGeneration !== generation;
+  world.hold = Object.fromEntries(squares.map((sq) => [sq, ownerOf(prev, sq)]));
+  let n = 0;
+  const turn = () => {
+    if (superseded()) return;
+    try {
+      const sq = squares[n++];
+      const tile = world.tiles[sq];
+      if (world.hold) delete world.hold[sq];
+      tile.classList.add('dc-flip');
+      setTimeout(() => tile.classList.remove('dc-flip'), FLIP_MS);
+      if (n < squares.length) {
+        paintTile(tile, viewOf(world), sq);
+        setTimeout(turn, FLIP_GAP_MS);
+      } else {
+        world.hold = null;
+        paint(world);
+      }
+    } catch (e) {
+      world.hold = null; // never leave a tile stuck in its old colour
+      throw e;
+    }
+  };
+  turn();
 }
 
 function pop(tile) {
@@ -1437,7 +1517,7 @@ function animate(world) {
 /** Between steps only the tokens change; repaint just the tiles that hold one
  *  (or held one) rather than all forty. */
 function paintTokens(world) {
-  const view = { ...world.state, pos: world.shown };
+  const view = viewOf(world);
   world.tiles.forEach((tile, i) => {
     const has = tile.dcTokens.some((t) => Array.from(tile.children).some((c) => Array.from(c.children).includes(t)));
     if (has || view.pos.includes(i)) paintTile(tile, view, i);

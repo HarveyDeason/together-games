@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { gridCell, edgeOf, buildBoard, paintTile, decisionFor, feedLines, propertyFor, cardFor, walkPath, chipParts, tradeStrips, canOpenDeal, stripsShown, STRIP_CAP, DEALS_OPEN, auctionFor,
-  dealSheetFor, dealReviewFor, nudgeCash, toggleChip, draftFromDeal, tidyDraft } from '../src/games/darlingco-render.js';
+  dealSheetFor, dealReviewFor, flipOrder, nudgeCash, toggleChip, draftFromDeal, tidyDraft } from '../src/games/darlingco-render.js';
 import { readFileSync } from 'node:fs';
 import { createInitialState, render, applyAction } from '../src/games/darlingco.js';
 import { setChar, BLANK_PROPS, BLANK_BUILT, dealChar, dealDest } from '../src/games/darlingco-state.js';
@@ -1756,4 +1756,162 @@ test('a live auction takes one strip row from the deals, and what is queued is s
   const more = live.__dc.strips.children.find(n => n.classes.has('dc-more'));
   assert.equal(more.textContent, `+${8 - (STRIP_CAP - 2)} more`);
   assert.ok(text(live.__dc.decision).includes(SQUARES[31].name));
+});
+
+
+// ---- things that move: the deal flip and the gavel --------------------------
+// Real timers, polled to a ceiling (never a fixed sleep then an assertion).
+async function until(cond, what, ceilingMs = 5000) {
+  const start = Date.now();
+  while (!cond()) {
+    if (Date.now() - start > ceilingMs) assert.fail(`timed out after ${ceilingMs}ms waiting for: ${what}`);
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+function withReducedMotion(fn) {
+  const real = globalThis.matchMedia;
+  globalThis.matchMedia = () => ({ matches: true });
+  try { return fn(); } finally { globalThis.matchMedia = real; }
+}
+const tradedHands = (squares) => {
+  // seat 1 owns every square; seat 0 is offered them all for 200.
+  const s = { ...owned(Object.fromEntries(squares.map((q) => [q, 1]))), cash: [1500, 1500] };
+  const o = ok(offer(s, 0, Object.fromEntries(squares.map((q) => [q, [0, false]])), 200));
+  return { before: s, done: ok(act(o, { type: 'trade-accept', id: 't0' }, 1)) };
+};
+const FLIP_OPTS = { mySeat: 1, names: [], onAction: () => {} };
+const coinsOf = (host) => all(host).filter((n) => n.classes.has('dc-coin'));
+
+test('flipOrder names every tile that changed hands, in board order, and nothing else', () => {
+  const before = owned({ 6: 0, 24: 1, 31: 1 });
+  const after = { ...before, own: setChar(setChar(before.own, 24, '0'), 6, '1') };
+  assert.deepEqual(flipOrder(before, after), [6, 24]);
+  assert.deepEqual(flipOrder(before, before), []);
+});
+
+test('a property bought at auction is not counted as a flip', () => {
+  const before = createInitialState();
+  const after = { ...before, own: setChar(before.own, 24, '0') };
+  assert.deepEqual(flipOrder(before, after), []);
+});
+
+test('a completed deal flips the tiles and settles on the new colours', async () => {
+  const { host } = container();
+  const { before, done } = tradedHands([24]);
+  renderBoard(before, host, FLIP_OPTS);
+  renderBoard(done, host, FLIP_OPTS);
+  assert.ok(host.__dc.tiles[24].classList.contains('dc-flip'), 'the traded tile turns over');
+  await until(() => host.__dc.tiles[24].dataset.own === '0', 'the traded tile to settle on its new owner');
+  await until(() => !host.__dc.tiles[24].classList.contains('dc-flip'), 'the flip to clear');
+  assert.equal(host.__dc.hold, null);
+});
+
+test('traded tiles hold their old colour until their turn, then flip one after another', async () => {
+  const { host } = container();
+  const { before, done } = tradedHands([6, 24]);
+  renderBoard(before, host, FLIP_OPTS);
+  renderBoard(done, host, FLIP_OPTS);
+  const t = host.__dc.tiles;
+  assert.equal(t[6].dataset.own, '0');
+  assert.equal(t[24].dataset.own, '1', 'the second tile has not had its turn yet');
+  await until(() => t[24].dataset.own === '0', 'the second tile to flip');
+  assert.equal(t[6].dataset.own, '0');
+});
+
+test('the money flicks towards the seat that was paid, and a re-delivered state starts no second flip', () => {
+  const { host } = container();
+  const { before, done } = tradedHands([24]);
+  renderBoard(before, host, FLIP_OPTS);
+  renderBoard(done, host, FLIP_OPTS);
+  assert.equal(coinsOf(host).length, 1);
+  assert.equal(coinsOf(host)[0].dataset.to, '1');
+  assert.equal(coinsOf(host)[0].textContent, '+200');
+  const gen = host.__dc.flipGeneration;
+  renderBoard({ ...done, scoredAt: 1 }, host, FLIP_OPTS);
+  assert.equal(host.__dc.flipGeneration, gen);
+  assert.equal(coinsOf(host).length, 1);
+});
+
+test('a superseded flip chain stops at its next tick and cannot release what the newer chain holds', () => {
+  // Driven by the timer queue: only the OLD chain's pending timers are run, one by one.
+  withTimers((timers) => {
+    const { host } = container();
+    const { before, done } = tradedHands([6, 24, 31]);
+    renderBoard(before, host, FLIP_OPTS);
+    renderBoard(done, host, FLIP_OPTS);
+    const oldTimers = timers.pending();
+    // Mid-chain, 6 and 24 go back to seat 1: a newer chain, holding 24 for its second turn.
+    const back = { ...done, moves: done.moves + 1, own: setChar(setChar(done.own, 6, '1'), 24, '1') };
+    renderBoard(back, host, FLIP_OPTS);
+    const t = host.__dc.tiles;
+    assert.equal(t[24].dataset.own, '0', 'the newer chain is still holding 24');
+    for (let i = 0; i < oldTimers; i++) timers.step();
+    assert.equal(t[24].dataset.own, '0', 'the superseded chain did not release it');
+    timers.flush();
+    assert.deepEqual([t[6].dataset.own, t[24].dataset.own, t[31].dataset.own], ['1', '1', '0']);
+    assert.equal(host.__dc.hold, null);
+  });
+});
+
+test('a won lot thumps once, and not again when the same state is re-delivered', async () => {
+  const { host } = container();
+  let a = auction(24, { cash: [1500, 1500], actor: 1, turn: 0 });
+  a = ok(act(a, { type: 'bid', amount: 60 }, 1));
+  const opts = { mySeat: 0, names: [], onAction: () => {} };
+  renderBoard(a, host, opts);
+  const won = ok(act(a, { type: 'pass' }, 0));
+  renderBoard(won, host, opts);
+  await until(() => host.__dc.tiles[24].classList.contains('dc-gavel'), 'the gavel on the won lot');
+  assert.ok(!host.__dc.tiles[24].classList.contains('dc-flip'), 'a win is a gavel, not a flip');
+  await until(() => !host.__dc.tiles[24].classList.contains('dc-gavel'), 'the gavel to clear');
+  renderBoard({ ...won, scoredAt: 1 }, host, opts);
+  assert.ok(!host.__dc.tiles[24].classList.contains('dc-gavel'));
+});
+
+test('an ordinary purchase neither flips nor takes the gavel', () => {
+  const { host } = container();
+  const s = { ...fresh(), phase: 'buy', pendingBuy: 24, pos: [24, 0], actor: 0, turn: 0, cash: [1500, 1500] };
+  const opts = { mySeat: 0, names: [], onAction: () => {} };
+  renderBoard(s, host, opts);
+  renderBoard(ok(act(s, { type: 'buy' }, 0)), host, opts);
+  assert.equal(host.__dc.tiles[24].dataset.own, '0');
+  assert.ok(!host.__dc.tiles[24].classList.contains('dc-flip'));
+  assert.ok(!host.__dc.tiles[24].classList.contains('dc-gavel'));
+});
+
+test('nothing animates when the player has asked for reduced motion', () => {
+  const { host } = container();
+  const { before, done } = tradedHands([24]);
+  renderBoard(before, host, FLIP_OPTS);
+  withReducedMotion(() => {
+    renderBoard(done, host, FLIP_OPTS);
+    assert.equal(host.__dc.tiles[24].dataset.own, '0');
+    assert.ok(!host.__dc.tiles[24].classList.contains('dc-flip'));
+    assert.equal(coinsOf(host).length, 0);
+  });
+});
+
+test('reduced motion also spares the gavel, and the lot still ends owned', () => {
+  const { host } = container();
+  let a = auction(24, { cash: [1500, 1500], actor: 1, turn: 0 });
+  a = ok(act(a, { type: 'bid', amount: 60 }, 1));
+  const opts = { mySeat: 0, names: [], onAction: () => {} };
+  renderBoard(a, host, opts);
+  withReducedMotion(() => {
+    renderBoard(ok(act(a, { type: 'pass' }, 0)), host, opts);
+    assert.equal(host.__dc.tiles[24].dataset.own, '1');
+    assert.ok(!host.__dc.tiles[24].classList.contains('dc-gavel'));
+  });
+});
+
+test('the stylesheet gives the flip and the gavel an animation, and reduced motion switches both off', () => {
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  for (const cls of ['dc-flip', 'dc-gavel']) {
+    assert.match(css, new RegExp(`\\.dc-tile\\.${cls}\\s*\\{[^}]*animation:\\s*${cls}\\b`), `${cls} animates`);
+    assert.match(css, new RegExp(`@keyframes ${cls}\\b`), `${cls} has keyframes`);
+  }
+  const at = css.indexOf('@media (prefers-reduced-motion: reduce) {\n  .dc-tok, .dc-tile.dc-pop');
+  assert.ok(at >= 0, 'the reduced-motion block is where the test expects it');
+  const rule = css.slice(at, css.indexOf('}', at));
+  assert.ok(rule.includes('.dc-tile.dc-flip') && rule.includes('.dc-tile.dc-gavel') && /animation:\s*none/.test(rule), 'both are switched off');
 });

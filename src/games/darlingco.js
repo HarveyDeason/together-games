@@ -532,13 +532,14 @@ function doTrade(state, action, seat) {
     case 'trade-decline': // only the seat being asked may decline
       if (deal.awaits !== seat) return { error: 'not-your-trade' };
       return { state: say({ ...counted, trades: rest }, `${who} declines the deal.`) };
-    default: { // trade-counter: same id, so the strip on screen stays put
+    case 'trade-counter': { // same id, so the strip on screen stays put
       if (deal.awaits !== seat) return { error: 'not-your-trade' };
       const countered = { ...terms, awaits: 1 - seat };
       const problem = dealProblem(state, countered);
       if (problem) return { error: problem };
       return { state: say({ ...counted, trades: { ...trades, [id]: countered } }, `${who} counters.`) };
     }
+    default: return { error: 'unknown-action' };
   }
 }
 

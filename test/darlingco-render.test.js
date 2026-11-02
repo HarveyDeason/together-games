@@ -1277,6 +1277,8 @@ test('every disabled control on the builder says why, and the engine agrees with
   const base = { ...owned({ 24: 1, 21: 0, 23: 0 }), cash: [1500, 1500] };
   const mine = (sq, dest = 1) => propsOf({ [sq]: [dest, false] });
   const withDeal = ok(offer(base, 1, { 24: [0, false] }, 200));   // t0 awaits seat 0
+  let cappedFor0 = owned(Object.fromEntries(CAP_SQUARES.map(q => [q, 1])));
+  for (const q of CAP_SQUARES) cappedFor0 = ok(offer(cappedFor0, 1, { [q]: [0, false] }, 0));
   const cases = [
     ['an empty deal', base, 0, emptyDraft(), true],
     ['a legal gift', base, 0, { ...emptyDraft(), props: mine(21) }, false],
@@ -1287,6 +1289,8 @@ test('every disabled control on the builder says why, and the engine agrees with
     ['a watcher', base, null, { ...emptyDraft(), props: mine(21) }, true],
     ['at the deal limit', capped(), 0, { ...emptyDraft(), props: propsOf({ 1: [0, false] }) }, true],
     ['a counter that is legal', withDeal, 0, { ...emptyDraft(), props: propsOf({ 24: [0, false] }), cash: 100, id: 't0' }, false],
+    // Eight deals live, one of them awaiting seat 0 (offered by seat 1): a counter adds none, so it is allowed at the cap.
+    ['a counter at the deal limit', cappedFor0, 0, { ...emptyDraft(), props: propsOf({ 1: [0, false] }), id: 't0' }, false],
     ['a counter whose deal is gone', base, 0, { ...emptyDraft(), props: mine(21), id: 't0' }, true],
     ['a counter of a deal that awaits the other seat', withDeal, 1, { ...emptyDraft(), props: propsOf({ 24: [1, false] }), id: 't0' }, true]
   ];

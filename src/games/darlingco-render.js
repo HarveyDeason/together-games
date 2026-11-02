@@ -498,10 +498,11 @@ export function stripsShown(strips, cap = STRIP_CAP) {
 }
 
 /** Whether `+ New deal` can be opened by mySeat now, and if not, why. */
-export function canOpenDeal(state, mySeat) {
+export function canOpenDeal(state, mySeat, { counter = false } = {}) {
   if (mySeat !== 0 && mySeat !== 1) return { ok: false, why: 'Only the players can make deals' };
   if (state.phase === 'over') return { ok: false, why: 'The game is over' };
-  if (Object.keys(readTrades(state)).length >= MAX_TRADES) return { ok: false, why: 'Eight deals is the limit' };
+  // A counter replaces a deal under its own id, so it never adds one and the cap does not apply.
+  if (!counter && Object.keys(readTrades(state)).length >= MAX_TRADES) return { ok: false, why: 'Eight deals is the limit' };
   return { ok: true, why: '' };
 }
 
@@ -628,8 +629,8 @@ export function dealSheetFor(state, mySeat, draft, names) {
   const answering = draft.id !== '';
   let problem = '';
   // The watcher, game-over and cap rules live in canOpenDeal. A counter is not a
-  // new deal, so the cap is left out of its check by showing it no deals.
-  const gate = canOpenDeal(answering ? { ...state, trades: {} } : state, mySeat);
+  // new deal, so the cap is left out of its check.
+  const gate = canOpenDeal(state, mySeat, { counter: answering });
   if (!gate.ok) problem = gate.why;
   else if (answering && (!trades[draft.id] || trades[draft.id].awaits !== mySeat)) problem = 'This deal has changed. Close it and look again';
   else {

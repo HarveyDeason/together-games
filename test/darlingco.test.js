@@ -1358,3 +1358,19 @@ test('a deal id that does not exist, or is not an id at all, is refused', () => 
   }
   assert.deepEqual(Object.keys(readTrades(s)), ['t0']);
 });
+
+test('every trade action counts a move, which is what bounds tradeSeq', () => {
+  // tradeSeq can only ever reach `moves`, and the rules file caps moves at
+  // 50000: that is the whole reason tradeSeq's cap of 100000 is safe.
+  const base = { ...owned({ 24: 1, 21: 1 }), cash: [1500, 1500] };
+  const offered = ok(offer(base, 0, { 24: [0, false] }, 200));
+  assert.equal(offered.moves, base.moves + 1);
+  const countered = ok(act(offered, { ...counterTerms({ 24: [0, false] }, 300), type: 'trade-counter', id: 't0' }, 1));
+  assert.equal(countered.moves, offered.moves + 1);
+  const declined = ok(act(countered, { type: 'trade-decline', id: 't0' }, 0));
+  assert.equal(declined.moves, countered.moves + 1);
+  const second = ok(offer(declined, 0, { 21: [0, false] }, 0));
+  const cancelled = ok(act(second, { type: 'trade-cancel', id: 't1' }, 0));
+  assert.equal(cancelled.moves, second.moves + 1);
+  assert.ok(cancelled.tradeSeq <= cancelled.moves);
+});

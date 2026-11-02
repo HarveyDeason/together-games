@@ -1387,8 +1387,13 @@ function noteChanges(world, prev) {
       gavel(world.tiles[prev.aucSq]);
     }
     const flips = flipOrder(prev, s);
-    if (flips.length) {
-      flipTiles(world, prev, flips);
+    if (flips.length) flipTiles(world, prev, flips);
+    // Money changing hands in an accepted deal flicks whether or not a tile went
+    // with it. A deal is accepted when its id leaves the open deals and cash moved
+    // (a decline, cancel or counter moves no cash).
+    const open = (st) => Object.keys(st.trades || {});
+    const closed = open(prev).some((id) => !open(s).includes(id));
+    if (closed) {
       for (const seat of [0, 1]) {
         const gain = s.cash[seat] - prev.cash[seat];
         if (gain > 0 && s.cash[1 - seat] < prev.cash[1 - seat]) flick(world, 1 - seat, seat, gain);

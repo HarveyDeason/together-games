@@ -1777,7 +1777,7 @@ const tradedHands = (squares) => {
   // seat 1 owns every square; seat 0 is offered them all for 200.
   const s = { ...owned(Object.fromEntries(squares.map((q) => [q, 1]))), cash: [1500, 1500] };
   const o = ok(offer(s, 0, Object.fromEntries(squares.map((q) => [q, [0, false]])), 200));
-  return { before: s, done: ok(act(o, { type: 'trade-accept', id: 't0' }, 1)) };
+  return { before: s, offered: o, done: ok(act(o, { type: 'trade-accept', id: 't0' }, 1)) };
 };
 const FLIP_OPTS = { mySeat: 1, names: [], onAction: () => {} };
 const coinsOf = (host) => all(host).filter((n) => n.classes.has('dc-coin'));
@@ -1820,8 +1820,9 @@ test('traded tiles hold their old colour until their turn, then flip one after a
 
 test('the money flicks towards the seat that was paid, and a re-delivered state starts no second flip', () => {
   const { host } = container();
-  const { before, done } = tradedHands([24]);
+  const { before, offered, done } = tradedHands([24]);
   renderBoard(before, host, FLIP_OPTS);
+  renderBoard(offered, host, FLIP_OPTS);
   renderBoard(done, host, FLIP_OPTS);
   assert.equal(coinsOf(host).length, 1);
   assert.equal(coinsOf(host)[0].dataset.to, '1');
@@ -1914,4 +1915,39 @@ test('the stylesheet gives the flip and the gavel an animation, and reduced moti
   assert.ok(at >= 0, 'the reduced-motion block is where the test expects it');
   const rule = css.slice(at, css.indexOf('}', at));
   assert.ok(rule.includes('.dc-tile.dc-flip') && rule.includes('.dc-tile.dc-gavel') && /animation:\s*none/.test(rule), 'both are switched off');
+});
+
+test('an accepted deal of money alone flicks a coin, once, and not again on a re-delivered state', () => {
+  const { host } = container();
+  const s = { ...fresh(), cash: [1500, 1500] };
+  const o = ok(offer(s, 0, {}, 200));
+  const done = ok(act(o, { type: 'trade-accept', id: 't0' }, 1));
+  assert.deepEqual(flipOrder(s, done), [], 'no tile changes hands');
+  assert.notDeepEqual(done.cash, s.cash, 'cash moved');
+  renderBoard(s, host, FLIP_OPTS);
+  renderBoard(o, host, FLIP_OPTS);
+  renderBoard(done, host, FLIP_OPTS);
+  assert.equal(coinsOf(host).length, 1);
+  renderBoard({ ...done, scoredAt: 1 }, host, FLIP_OPTS);
+  assert.equal(coinsOf(host).length, 1, 'the same state delivered twice is still one coin');
+});
+
+test('a declined deal moves no money and flicks nothing', () => {
+  const { host } = container();
+  const s = { ...fresh(), cash: [1500, 1500] };
+  const o = ok(offer(s, 0, {}, 200));
+  renderBoard(o, host, FLIP_OPTS);
+  renderBoard(ok(act(o, { type: 'trade-decline', id: 't0' }, 1)), host, FLIP_OPTS);
+  assert.equal(coinsOf(host).length, 0);
+});
+
+test('a money-only deal flicks nothing under reduced motion', () => {
+  const { host } = container();
+  const s = { ...fresh(), cash: [1500, 1500] };
+  const o = ok(offer(s, 0, {}, 200));
+  const done = ok(act(o, { type: 'trade-accept', id: 't0' }, 1));
+  renderBoard(s, host, FLIP_OPTS);
+  renderBoard(o, host, FLIP_OPTS);
+  withReducedMotion(() => renderBoard(done, host, FLIP_OPTS));
+  assert.equal(coinsOf(host).length, 0);
 });

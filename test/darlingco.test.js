@@ -1189,8 +1189,37 @@ test('the auction and deal bounds in the rules file cover the engine constants',
   const cap = (v) => Number(/<= (\d+)/.exec(v)[1]);
   assert.ok(cap(st.aucBid['.validate']) >= MAX_DEAL_CASH);
   assert.ok(cap(st.aucPass['.validate']) >= 2);
+  // tradeSeq: ids are never reused, so the counter climbs past MAX_TRADES.
+  // The live-deal cap of 8 is unrelated; the counter must cover every id the
+  // pattern admits (up to 6 digits), so its ceiling must be at least 99999.
   assert.ok(cap(st.tradeSeq['.validate']) > MAX_TRADES);
+  assert.ok(cap(st.tradeSeq['.validate']) >= 99999, `tradeSeq cap ${cap(st.tradeSeq['.validate'])}`);
+  // Lower and upper bounds, read as a pair so a missing floor also fails.
+  const bounds = (v) => {
+    const m = />= (-?\d+) && newData\.val\(\) <= (-?\d+)/.exec(v);
+    assert.ok(m, v);
+    return [Number(m[1]), Number(m[2])];
+  };
+  // aucSq: highest square index is 39; -1 is the no-auction sentinel.
+  assert.equal(SQUARES.length - 1, 39);
+  const [aucLo, aucHi] = bounds(st.aucSq['.validate']);
+  assert.ok(aucLo <= -1, `aucSq floor ${aucLo} must admit -1`);
+  assert.ok(aucHi >= SQUARES.length - 1, `aucSq ceiling ${aucHi} must admit 39`);
+  // outs0/outs1: two get-out-of-jail cards exist and one seat can hold both.
+  for (const k of ['outs0', 'outs1']) {
+    const [lo, hi] = bounds(st.trades.$tradeId[k]['.validate']);
+    assert.ok(lo <= 0 && hi >= 2, `${k} bounds ${lo}..${hi} must admit 0..2`);
+  }
   assert.equal(st.trades.$tradeId.props['.validate'], 'newData.isString() && newData.val().length === 40');
+});
+
+test('the deal cash bound in the rules file is exactly the engine cash ceiling, both ways', () => {
+  const rules = JSON.parse(readFileSync(new URL('../firebase-rules.json', import.meta.url), 'utf8'));
+  const v = rules.rules.rooms.$code.game.state.trades.$tradeId.cash['.validate'];
+  const m = /val\(\) >= (-?\d+) && newData\.val\(\) <= (-?\d+)/.exec(v);
+  assert.ok(m, v);
+  assert.equal(Number(m[1]), -MAX_DEAL_CASH);
+  assert.equal(Number(m[2]), MAX_DEAL_CASH);
 });
 
 test('the trade id pattern admits ids well past the live-deal cap, since ids are never reused', () => {
@@ -1198,7 +1227,7 @@ test('the trade id pattern admits ids well past the live-deal cap, since ids are
   const v = rules.rules.rooms.$code.game.state.trades.$tradeId['.validate'];
   const pattern = new RegExp(/\/(\^t.*?\$)\//.exec(v)[1]);
   for (const n of [0, 9, 10, 99, 1000, 99999]) assert.ok(pattern.test(`t${n}`), `t${n}`);
-  for (const bad of ['0', '1', 't', 'tx', 't-1', 'tt0']) assert.ok(!pattern.test(bad), bad);
+  for (const bad of ['0', '1', 't', 'tx', 't-1', 'tt0', 't1000000']) assert.ok(!pattern.test(bad), bad);
 });
 
 test('no trade id can look like an array index', () => {

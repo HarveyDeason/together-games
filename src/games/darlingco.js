@@ -467,11 +467,12 @@ const SIDE_PHASES = ['roll', 'end', 'pay', 'auction'];
  *  bidder's cash only when it is made. Letting build or unmortgage through
  *  would let a player bid everything and then spend it, and the other
  *  player's pass would hand them a lot they cannot pay for.
- *  Why a bid stays affordable until it wins: side actions need
- *  seat === state.actor, and the actor alternates during an auction, so each
- *  player can only raise cash on their own bidding turn. Nothing that spends
- *  or moves cash (build, unmortgage, trade-accept) runs while it is live, so
- *  nothing can reduce the bidder's cash between the bid and the close. */
+ *  Why a bid stays affordable until it wins, in two facts: every action that
+ *  spends or moves cash (build, unmortgage, trade-accept) is refused while an
+ *  auction is live, and the only cash-changing actions still admitted (sell,
+ *  mortgage) can only increase cash. So a bid checked against cash when it
+ *  is made cannot be undercut before the closing pass charges it. Who may
+ *  act (the actor gate) is incidental to this and plays no part in it. */
 const RAISE_ACTIONS = ['sell', 'mortgage'];
 
 /** Ending the game leaves nothing dangling in the saved state. `trades: {}`

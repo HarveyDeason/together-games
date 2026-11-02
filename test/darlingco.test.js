@@ -1666,7 +1666,19 @@ test('a malformed bid is refused and the standing bid is untouched', () => {
   assert.equal(a.aucBy, 1);
 });
 
-test('you can mortgage and sell mid-auction to raise a bid', () => {
+test('you can sell a building mid-auction to raise a bid', () => {
+  const full = { 21: 1, 23: 1, 24: 1 };
+  const built = setChar(createInitialState().built, 21, '1');
+  const a = auction(31, { own: owned(full).own, built, cash: [1500, 100], actor: 1, turn: 0 });
+  const raised = ok(act(a, { type: 'sell', square: 21 }, 1));
+  assert.ok(raised.cash[1] > 100);
+  assert.equal(raised.built[21], '0');
+  assert.equal(raised.phase, 'auction');
+  assert.equal(raised.actor, 1);
+  assert.equal(ok(act(raised, { type: 'bid', amount: raised.cash[1] - (raised.cash[1] % BID_STEP) }, 1)).aucBy, 1);
+});
+
+test('you can mortgage mid-auction to raise a bid', () => {
   const a = auction(31, { own: owned({ 21: 1, 23: 1 }).own, cash: [1500, 100], actor: 1, turn: 0 });
   const raised = ok(act(a, { type: 'mortgage', square: 21 }, 1));
   assert.ok(raised.cash[1] > 100);
@@ -1692,6 +1704,8 @@ test('build and unmortgage still work in the phases they always did', () => {
   for (const phase of ['roll', 'end', 'pay']) {
     const s = { ...owned(full), cash: [1500, 1500], phase, actor: 0, turn: 0 };
     assert.equal(ok(act(s, { type: 'build', square: 21 }, 0)).built[21], '1');
+    const m = { ...s, mortg: setChar(s.mortg, 23, '1') };
+    assert.equal(ok(act(m, { type: 'unmortgage', square: 23 }, 0)).mortg[23], '0');
   }
 });
 
@@ -1702,6 +1716,7 @@ test('a deal cannot be accepted while an auction is live, but can be offered', (
   const countered = ok(act(a, { ...counterTerms({ 24: [0, false] }, 300), type: 'trade-counter', id: 't0' }, 1));
   assert.equal(readTrades(countered).t0.cash, 300);
   assert.equal(ok(act(countered, { type: 'trade-cancel', id: 't0' }, 1)).tradeSeq, countered.tradeSeq);
+  assert.deepEqual(readTrades(ok(act(a, { type: 'trade-decline', id: 't0' }, 1))), {});
 });
 
 test('the deal can be accepted the moment the auction finishes', () => {
@@ -1718,13 +1733,15 @@ test('ending the game clears every live deal and closes any auction', () => {
     (s) => act(s, { type: 'bankrupt' }, s.actor),
     (s) => act(act(s, { type: 'offer-tally' }, 0).state, { type: 'accept-tally' }, 1)
   ]) {
-    let s = auction(31, { own: owned({ 24: 1 }).own, cash: [1500, 1500], phase: 'pay', actor: 0, turn: 0, owed: 50, owedTo: -1 });
+    let s = auction(31, { own: owned({ 24: 1 }).own, cash: [1500, 1500], phase: 'pay', actor: 0, turn: 0, owed: 50, owedTo: -1, aucBid: 100, aucBy: 1, aucPass: 1 });
     s = ok(act(s, { type: 'trade-offer', props: propsOf({ 24: [0, false] }), cash: 200, outs0: 0, outs1: 0 }, 0));
     const over = ok(ender(s));
     assert.equal(over.phase, 'over');
     assert.deepEqual(readTrades(over), {});
     assert.equal(over.aucSq, -1);
+    assert.equal(over.aucBid, 0);
     assert.equal(over.aucBy, -1);
+    assert.equal(over.aucPass, 0);
   }
 });
 
@@ -1745,5 +1762,4 @@ test('calling it with an auction and a deal both live leaves neither in the save
   assert.equal(over.aucSq, -1);
   assert.equal(over.aucBid, 0);
   assert.equal(over.aucBy, -1);
-  assert.equal(over.aucPass, 0);
 });

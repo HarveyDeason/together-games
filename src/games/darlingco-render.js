@@ -1154,7 +1154,8 @@ function paintStrips(world) {
   const { strips, newDeal, state, mySeat, doc } = world;
   clear(strips);
   const everyDeal = tradeStrips(state, mySeat, world.names);
-  const { shown: list, more, moreMine } = stripsShown(everyDeal);
+  // A live auction is the urgent thing: it takes one strip's room, and "+N more" says what is queued.
+  const { shown: list, more, moreMine } = stripsShown(everyDeal, state.phase === 'auction' ? STRIP_CAP - 1 : STRIP_CAP);
   strips.hidden = everyDeal.length === 0;
   for (const t of list) {
     // One line per deal, and the whole line is the tap target: it opens the

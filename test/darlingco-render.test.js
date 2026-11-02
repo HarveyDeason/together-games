@@ -1730,3 +1730,14 @@ test('the auction styles exist, the lot is lit, and nothing explanatory is dimme
   assert.ok(!/opacity/.test(rule('.dc-anote')), 'the note is dimmed');
   assert.ok(!/opacity/.test(rule('.dc-abid:disabled') + rule('.dc-apass:disabled') + rule('.dc-astep:disabled')), 'a disabled control text is dimmed');
 });
+
+test('a live auction takes one strip row from the deals, and what is queued is still counted', () => {
+  const rows = (h) => h.__dc.strips.children.filter(n => n.classes.has('dc-deal') || n.classes.has('dc-more'));
+  const quiet = mount(capped(), 0);
+  const live = mount(inAuction(capped()), 0);
+  assert.equal(rows(quiet).length, STRIP_CAP);
+  assert.equal(rows(live).length, STRIP_CAP - 1);
+  const more = live.__dc.strips.children.find(n => n.classes.has('dc-more'));
+  assert.equal(more.textContent, `+${8 - (STRIP_CAP - 2)} more`);
+  assert.ok(text(live.__dc.decision).includes(SQUARES[31].name));
+});

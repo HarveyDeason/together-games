@@ -695,3 +695,19 @@ test("chipParts keeps the name and the money apart, and marks your own chip", ()
   assert.deepEqual(chipParts(names, 1, 0, 44), { name: "Shruti", cash: "44" });
   assert.deepEqual(chipParts(undefined, 1, 1, 0), { name: "Player 2 (you)", cash: "0" });
 });
+
+test('the Free Parking tile shows the pot, and nothing extra when it is empty', () => {
+  const s = fresh();
+  s.pot = 0;
+  const { tiles } = buildBoard(doc);
+  const potv = (t) => all(t).find((n) => n.classes.has('dc-potv'));
+  paintTile(tiles[20], s, 20);
+  assert.equal(text(potv(tiles[20])), '');
+  s.pot = 345;
+  paintTile(tiles[20], s, 20);
+  assert.equal(text(potv(tiles[20])), '345');
+  s.pot = 0;
+  paintTile(tiles[20], s, 20);
+  assert.equal(text(potv(tiles[20])), '');
+  assert.equal(potv(tiles[6]), undefined);
+});

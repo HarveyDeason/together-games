@@ -121,8 +121,8 @@ export const JB_CARDS = [
   { code: '8', text: 'A rug, shipped home from Cappadocia. Pay 100.', effect: { k: 'cash', amount: -100 } },
   { code: '9', text: 'Biryani for the whole table. Pay 30.', effect: { k: 'cash', amount: -30 } },
   { code: 'a', text: 'Madame at Customs asks you to step aside. Go to Jail.', effect: { k: 'jail' } },
-  { code: 'b', text: 'Back to Keynsham High Street, darling. Collect GO if you pass.', effect: { k: 'move', to: 1 } },
-  { code: 'c', text: 'Back to Bristol Temple Meads for the train home. Collect GO if you pass.', effect: { k: 'move', to: 5 } },
+  { code: 'b', text: 'Move to Keynsham High Street, darling. Collect GO if you pass.', effect: { k: 'move', to: 1 } },
+  { code: 'c', text: 'Move to Bristol Temple Meads for the train home. Collect GO if you pass.', effect: { k: 'move', to: 5 } },
   { code: 'd', text: 'Hot air gets into the roof. Pay 40 per house, 115 per hotel.', effect: { k: 'perBuilding', house: 40, hotel: 115 } },
   { code: 'e', text: 'Zero Mile selfie, two thumbs up. Collect 20.', effect: { k: 'cash', amount: 20 } },
   { code: 'f', text: 'Get out of Jail free. Keep it until you need it.', effect: { k: 'out' } }

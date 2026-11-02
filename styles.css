@@ -623,6 +623,16 @@ body {
 }
 .dc-tile[data-built="5"] .dc-houses { font-size: clamp(5px, 1.3vw, 9px); }
 
+/* The Free Parking pot shares the houses row (corners have no buildings), in
+   the same gold as the money in the chip row. */
+.dc-potv {
+  grid-area: h;
+  font: 700 clamp(6px, 1.7vw, 11px)/1.1 ui-monospace, Menlo, monospace;
+  color: #ffdf8a;
+  text-align: center;
+  white-space: nowrap;
+}
+
 /* Mortgaged: hatched and dimmed, with an M in the houses row. */
 .dc-tile.is-mortgaged {
   background-image: repeating-linear-gradient(135deg, transparent 0 3px, rgba(0, 0, 0, 0.55) 3px 5px);

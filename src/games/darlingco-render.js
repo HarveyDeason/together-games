@@ -42,6 +42,8 @@ function clear(node) {
   node.innerHTML = '';
 }
 
+const FREE_PARKING = 20;
+
 /** Builds the forty empty tiles in grid positions. Not yet painted. */
 export function buildBoard(doc) {
   const board = el(doc, 'div', 'dc-board');
@@ -65,6 +67,8 @@ export function buildBoard(doc) {
     }
     tile.appendChild(el(doc, 'span', 'dc-houses'));
     tile.appendChild(el(doc, 'span', 'dc-mort'));
+    // Free Parking alone carries the pot, in the row corners leave empty.
+    if (i === FREE_PARKING) tile.appendChild(el(doc, 'span', 'dc-potv'));
     tile.appendChild(el(doc, 'span', 'dc-ic', set ? set.icon : sq.icon));
     tile.appendChild(el(doc, 'span', 'dc-nm', sq.name));
     tile.appendChild(el(doc, 'span', 'dc-toks'));
@@ -101,6 +105,10 @@ export function paintTile(tile, state, i) {
   part(tile, 'dc-houses').textContent = built === 5 ? '🏨' : '▲'.repeat(built);
 
   part(tile, 'dc-mort').textContent = mortgaged ? 'M' : '';
+
+  // Only the Free Parking tile has this node; an empty pot shows nothing.
+  const potv = part(tile, 'dc-potv');
+  if (potv) potv.textContent = state.pot > 0 ? String(state.pot) : '';
 
   // Both token elements are made once and put in or taken out of the tile, so
   // a repaint never needs a document and a shared square shows both.

@@ -775,8 +775,15 @@ const FACES = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
 /** A button that disables itself while its write is in flight and always
  *  comes back: a failed write leaves no snapshot to re-render from, so
  *  re-enabling from the promise is the only thing that stops it being
- *  stranded disabled for ever. */
-function actionButton(world, spec, buildAction, className, onSent) {
+ *  stranded disabled for ever.
+ *
+ *  It deliberately does NOT know whether the write landed. world.onAction is
+ *  main-room's submitAction, which on a refusal (the engine said no, or the
+ *  transaction failed) shakes the board and RETURNS NORMALLY: the promise
+ *  never rejects, so "resolved" means nothing. Whether a move happened is
+ *  read from state, by whoever cares (see sendLanded, for the builder's Send).
+ *  `onSend`, if given, runs just before the write, to record what to look for. */
+function actionButton(world, spec, buildAction, className, onSend) {
   const b = el(world.doc, 'button', className || `btn dc-btn dc-btn-${spec.kind || 'secondary'}`, spec.label);
   b.type = 'button';
   b.disabled = !!spec.disabled || world.pending || world.busy;
@@ -785,13 +792,14 @@ function actionButton(world, spec, buildAction, className, onSent) {
     if (b.disabled) return;
     b.disabled = true;
     world.pending = true;
+    if (onSend) onSend();
     let sent;
     try { sent = world.onAction(buildAction()); } catch (e) { sent = Promise.reject(e); }
-    // onSent runs only when the write went through, so a failed send leaves the sheet (and the draft) open.
-    Promise.resolve(sent).then(() => { if (onSent) onSent(); }, () => {}).then(() => {
+    Promise.resolve(sent).then(() => {}, () => {}).then(() => {
       world.pending = false;
       b.disabled = false;
-      paint(world);
+      paint(world);       // the sheet closes here if the state shows the send landed
+      world.sent = null;  // and the question is over either way: a later snapshot is someone else's move
     });
   });
   return b;
@@ -838,7 +846,7 @@ function buildWorld(doc, host) {
 
   const world = {
     doc, root, bar, chips, potChip, tiles, dice, feed, sheet, strips, decision, newDeal, room,
-    selected: -1, bidStep: null, bidKey: '', sheetMode: 'property', draft: null, reviewId: null, pending: false, busy: false, generation: 0, flipGeneration: 0, hold: null, animatedKey: null,
+    selected: -1, bidStep: null, bidKey: '', sheetMode: 'property', draft: null, reviewId: null, sent: null, pending: false, busy: false, generation: 0, flipGeneration: 0, hold: null, animatedKey: null,
     shown: null, builtSeen: null, state: null, mySeat: null, names: [], onAction: () => {}
   };
   tiles.forEach((tile, i) => {
@@ -868,6 +876,18 @@ function paintSheet(world) {
   if (world.sheetMode === 'deal') paintBuilder(world);
   else if (world.sheetMode === 'review') paintReview(world);
   else paintCard(world);
+}
+
+/** Did the builder's Send land? Read from state, never from the write's promise
+ *  (a refusal does not reject: see actionButton). `sent` is what the builder
+ *  recorded as it sent: { id: '' | the deal being countered, seq: tradeSeq then }.
+ *  A new offer landed when the counter moved on; a counter landed when the deal
+ *  is gone or now waits on the other seat. Pure. */
+export function sendLanded(state, mySeat, sent) {
+  if (!sent) return false;
+  if (sent.id === '') return (state.tradeSeq ?? 0) > sent.seq;
+  const deal = readTrades(state)[sent.id];
+  return !deal || deal.awaits !== mySeat;
 }
 
 /** Back to the plain board: no sheet, no draft, nothing selected. */
@@ -947,6 +967,13 @@ function stepButton(world, label, step, spec, onTap) {
 function paintBuilder(world) {
   const { state, mySeat, names, doc } = world;
   if (!world.draft || (mySeat !== 0 && mySeat !== 1)) { world.sheetMode = 'property'; world.draft = null; paintCard(world); return; }
+  // A send that landed has put the deal out of the draft's hands: the sheet closes itself. One that
+  // was refused leaves the draft as it was, and the problem line below says what changed.
+  if (sendLanded(state, mySeat, world.sent)) {
+    world.sheetMode = 'property'; world.draft = null; world.sent = null; world.selected = -1;
+    paintCard(world);
+    return;
+  }
   world.draft = tidyDraft(state, mySeat, world.draft);
   const draft = world.draft;
   const sheet0 = dealSheetFor(state, mySeat, draft, names);
@@ -1005,7 +1032,8 @@ function paintBuilder(world) {
   back.dataset.type = 'cancel';
   back.addEventListener('click', cancel);
   row.appendChild(back);
-  const send = actionButton(world, sheet0.send, () => sheet0.send.action, 'btn dc-btn dc-btn-primary', () => closeSheet(world));
+  const send = actionButton(world, sheet0.send, () => sheet0.send.action, 'btn dc-btn dc-btn-primary',
+    () => { world.sent = { id: draft.id, seq: world.state.tradeSeq ?? 0 }; });
   send.dataset.type = sheet0.send.type;
   row.appendChild(send);
   foot.appendChild(problems);
@@ -1025,7 +1053,9 @@ function readOnlyChip(world, text, colour, extra) {
 function paintReview(world) {
   const { state, mySeat, names, doc } = world;
   const r = world.reviewId ? dealReviewFor(state, mySeat, world.reviewId, names) : null;
-  if (!r) { world.sheetMode = 'property'; world.reviewId = null; paintCard(world); return; }
+  // The deal is gone (answered here or there): back to the board. Accept, Decline and Cancel rely on this
+  // rather than closing on a resolved write, which a refusal also does.
+  if (!r) { world.sheetMode = 'property'; world.reviewId = null; world.selected = -1; paintCard(world); return; }
   const restore = resetSheet(world);
   const { sheet } = world;
   sheet.appendChild(sheetHead(world, r.title, 'close', () => closeSheet(world)));
@@ -1063,7 +1093,7 @@ function paintReview(world) {
         if (trade) openBuilder(world, draftFromDeal(trade, r.id));
       });
     } else {
-      btn = actionButton(world, { ...b, kind }, () => b.action, undefined, () => closeSheet(world));
+      btn = actionButton(world, { ...b, kind }, () => b.action);
     }
     btn.dataset.type = b.type;
     row.appendChild(btn);

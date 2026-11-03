@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { gridCell, edgeOf, buildBoard, paintTile, decisionFor, feedLines, propertyFor, cardFor, walkPath, chipParts, tradeStrips, canOpenDeal, stripsShown, STRIP_CAP, auctionFor,
+import { gridCell, edgeOf, buildBoard, paintTile, decisionFor, feedLines, propertyFor, cardFor, walkPath, chipParts, tradeStrips, canOpenDeal, sendLanded, stripsShown, STRIP_CAP, auctionFor,
   dealSheetFor, dealReviewFor, flipOrder, nudgeCash, toggleChip, draftFromDeal, tidyDraft } from '../src/games/darlingco-render.js';
 import { readFileSync } from 'node:fs';
 import { createInitialState, render, applyAction } from '../src/games/darlingco.js';
-import { setChar, BLANK_PROPS, BLANK_BUILT, dealChar, dealDest } from '../src/games/darlingco-state.js';
+import { setChar, BLANK_MORTG, BLANK_PROPS, BLANK_BUILT, dealChar, dealDest } from '../src/games/darlingco-state.js';
 import { SQUARES, SETS, STATION_RENT, MIN_BID, BID_STEP, MAX_TRADES } from '../src/games/darlingco-board.js';
 
 // Minimal DOM stub, same reasoning as tictactoe-render.test.js: no jsdom.
@@ -1350,9 +1350,11 @@ test('a counter keeps the deal\'s id and is sent as a counter, which the engine 
   assert.equal(sent[0].type, 'trade-counter');
   assert.equal(sent[0].id, 't0');
   assert.equal(sent[0].cash, 150);
-  assert.equal(applyAction(s, sent[0], 1).error, undefined);
+  const landed = ok(applyAction(s, sent[0], 1));
+  renderBoard(landed, host, { mySeat: 1, names: NAMES, onAction });   // the snapshot the write produces
   await settle();
-  assert.equal(host.__dc.sheet.hidden, true);        // sent, so the sheet closes
+  assert.equal(host.__dc.sheet.hidden, true);        // it landed, so the sheet closes itself
+  assert.equal(host.__dc.draft, null);
 });
 
 test('a deal can be built from nothing, sent, and the other seat answers it', async () => {
@@ -1378,6 +1380,7 @@ test('a deal can be built from nothing, sent, and the other seat answers it', as
   assert.equal(dealDest(sent[0].props, 24), 1);
   assert.equal(dealDest(sent[0].props, 6), 0);
   const after = ok(applyAction(s, sent[0], 0));
+  renderBoard(after, host, { mySeat: 0, names: NAMES, onAction });    // the snapshot the write produces
   await settle();
   assert.equal(host.__dc.sheet.hidden, true);
   // the other phone now sees the strip and can accept from the review face
@@ -1388,6 +1391,84 @@ test('a deal can be built from nothing, sent, and the other seat answers it', as
   byType(other.__dc.sheet, 'trade-accept').click();
   assert.deepEqual(accepted, [{ type: 'trade-accept', id: 't0' }]);
   assert.equal(applyAction(after, accepted[0], 1).error, undefined);
+});
+
+test('a refused send leaves the sheet and the whole draft open, and it can be sent again', async () => {
+  // main-room's submitAction shakes the board on a refusal and RETURNS NORMALLY: the promise
+  // resolves exactly as it does for a landed write, so only state can say which happened.
+  const { host } = container();
+  const sent = [];
+  const s = { ...owned({ 24: 0, 21: 0, 6: 1 }), cash: [1500, 1500] };
+  const onAction = (a) => { sent.push(a); return Promise.resolve(); };
+  renderBoard(s, host, { mySeat: 0, names: NAMES, onAction });
+  buttonsIn(host.__dc.newDeal).find((b) => /new deal/i.test(b.textContent)).click();
+  bySquare(host.__dc.sheet, 24).click();
+  bySquare(host.__dc.sheet, 21).click();
+  bySquare(host.__dc.sheet, 6).click();
+  byStep(host.__dc.sheet, 'give-up').click();
+  const draft = host.__dc.draft;
+  byType(host.__dc.sheet, 'trade-offer').click();
+  assert.equal(sent.length, 1);
+  // Meanwhile the other player mortgaged the property being asked for: the engine would say trade-stale.
+  const raced = { ...s, mortg: setChar(BLANK_MORTG, 6, '1') };
+  assert.equal(applyAction(raced, sent[0], 0).error, 'trade-stale');
+  renderBoard(raced, host, { mySeat: 0, names: NAMES, onAction });
+  await settle();                                     // the refusal settles like any write
+  assert.equal(host.__dc.sent, null);                 // and leaves nothing behind to close a later sheet
+  assert.equal(host.__dc.sheetMode, 'deal');
+  assert.equal(host.__dc.sheet.hidden, false);
+  // all three squares and the cash survive (the paint re-stamps the mortgage the other player made)
+  for (const sq of [24, 21, 6]) assert.notEqual(dealDest(host.__dc.draft.props, sq), -1, `square ${sq} dropped`);
+  assert.equal(host.__dc.draft.cash, draft.cash);
+  // and the draft can simply be sent again, now as a deal the engine takes
+  const resend = byType(host.__dc.sheet, 'trade-offer');
+  assert.equal(resend.disabled, false);
+  resend.click();
+  assert.equal(sent.length, 2);
+  assert.equal(applyAction(raced, sent[1], 0).error, undefined);
+});
+
+test('a refused send does not close the sheet when another deal lands afterwards', async () => {
+  const { host } = container();
+  const s = { ...owned({ 24: 0, 6: 1 }), cash: [1500, 1500] };
+  const onAction = () => Promise.resolve();
+  renderBoard(s, host, { mySeat: 0, names: NAMES, onAction });
+  buttonsIn(host.__dc.newDeal)[0].click();
+  bySquare(host.__dc.sheet, 24).click();
+  byType(host.__dc.sheet, 'trade-offer').click();
+  await settle();                                     // refused: state never moved
+  assert.equal(host.__dc.sheetMode, 'deal');
+  const theirs = ok(offer(s, 1, { 6: [0, false] }, 0));   // their offer arrives later
+  renderBoard(theirs, host, { mySeat: 0, names: NAMES, onAction });
+  assert.equal(host.__dc.sheetMode, 'deal');
+});
+
+test('sendLanded reads state: a new offer moves the counter, a counter hands the deal to the other seat', () => {
+  assert.equal(sendLanded(fresh(), 0, null), false);
+  assert.equal(sendLanded({ ...fresh(), tradeSeq: 0 }, 0, { id: '', seq: 0 }), false);
+  assert.equal(sendLanded({ ...fresh(), tradeSeq: 1 }, 0, { id: '', seq: 0 }), true);
+  const { tradeSeq, ...legacy } = fresh();            // a game that began before deals existed
+  assert.equal(sendLanded(legacy, 0, { id: '', seq: 0 }), false);
+  const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));   // awaits seat 1
+  assert.equal(sendLanded(s, 1, { id: 't0', seq: 1 }), false);          // seat 1 still holds it
+  assert.equal(sendLanded(s, 0, { id: 't0', seq: 1 }), true);           // it now waits on the other seat
+  assert.equal(sendLanded({ ...s, trades: {} }, 1, { id: 't0', seq: 1 }), true);   // gone
+});
+
+test('a refused Accept leaves the review open, and a landed one closes it with the deal', async () => {
+  const { host } = container();
+  const s = { ...ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200)), cash: [1500, 1500] };
+  const onAction = () => Promise.resolve();
+  renderBoard(s, host, { mySeat: 1, names: NAMES, onAction });
+  host.__dc.strips.children[0].click();
+  byType(host.__dc.sheet, 'trade-accept').click();
+  await settle();                                     // refused: state never moved
+  assert.equal(host.__dc.sheetMode, 'review');
+  assert.equal(host.__dc.sheet.hidden, false);
+  byType(host.__dc.sheet, 'trade-decline').click();
+  renderBoard(ok(applyAction(s, { type: 'trade-decline', id: 't0' }, 1)), host, { mySeat: 1, names: NAMES, onAction });
+  await settle();
+  assert.equal(host.__dc.sheet.hidden, true);
 });
 
 test('sending a deal passes the draft through as the action', () => {

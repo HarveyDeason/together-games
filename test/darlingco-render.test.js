@@ -1443,10 +1443,33 @@ test('a refused send does not close the sheet when another deal lands afterwards
   assert.equal(host.__dc.sheetMode, 'deal');
 });
 
+test('an incoming offer from the other player arriving while our send is refused does not close the sheet', async () => {
+  const { host } = container();
+  const s = { ...owned({ 24: 0, 6: 1 }), cash: [1500, 1500] };
+  let release;
+  const onAction = () => new Promise((r) => { release = r; });
+  renderBoard(s, host, { mySeat: 0, names: NAMES, onAction });
+  buttonsIn(host.__dc.newDeal)[0].click();
+  bySquare(host.__dc.sheet, 24).click();
+  const draft = host.__dc.draft;
+  byType(host.__dc.sheet, 'trade-offer').click();             // in flight, and about to be refused
+  assert.notEqual(host.__dc.sent, null);
+  renderBoard(ok(offer(s, 1, { 6: [0, false] }, 0)), host, { mySeat: 0, names: NAMES, onAction });   // theirs lands first
+  assert.equal(host.__dc.sheetMode, 'deal');
+  assert.deepEqual(host.__dc.draft, draft);
+  release();
+  await settle();
+  assert.equal(host.__dc.sheetMode, 'deal');
+  assert.deepEqual(host.__dc.draft, draft);
+});
+
 test('sendLanded reads state: a new offer moves the counter, a counter hands the deal to the other seat', () => {
   assert.equal(sendLanded(fresh(), 0, null), false);
   assert.equal(sendLanded({ ...fresh(), tradeSeq: 0 }, 0, { id: '', seq: 0 }), false);
-  assert.equal(sendLanded({ ...fresh(), tradeSeq: 1 }, 0, { id: '', seq: 0 }), true);
+  const mine = ok(offer(owned({ 24: 0 }), 0, { 24: [1, false] }, 0));        // t0, awaiting seat 1
+  assert.equal(sendLanded(mine, 0, { id: '', seq: 0 }), true);
+  assert.equal(sendLanded(mine, 1, { id: '', seq: 0 }), false);            // to seat 1 it is the other player's
+  assert.equal(sendLanded(mine, 0, { id: '', seq: 1 }), false);            // an older id is not this send
   const { tradeSeq, ...legacy } = fresh();            // a game that began before deals existed
   assert.equal(sendLanded(legacy, 0, { id: '', seq: 0 }), false);
   const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));   // awaits seat 1

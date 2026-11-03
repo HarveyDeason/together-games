@@ -881,12 +881,18 @@ function paintSheet(world) {
 /** Did the builder's Send land? Read from state, never from the write's promise
  *  (a refusal does not reject: see actionButton). `sent` is what the builder
  *  recorded as it sent: { id: '' | the deal being countered, seq: tradeSeq then }.
- *  A new offer landed when the counter moved on; a counter landed when the deal
- *  is gone or now waits on the other seat. Pure. */
+ *  A new offer landed when an open deal numbered at or after `seq` awaits the
+ *  other seat: tradeSeq is one counter for both players, so a bare rise could be
+ *  THEIR offer arriving while ours was refused, but their offers always await
+ *  me, and a counter keeps an older id, so only my own new offer fits. A counter
+ *  landed when the deal is gone or now waits on the other seat. Pure. */
 export function sendLanded(state, mySeat, sent) {
   if (!sent) return false;
-  if (sent.id === '') return (state.tradeSeq ?? 0) > sent.seq;
-  const deal = readTrades(state)[sent.id];
+  const open = readTrades(state);
+  if (sent.id === '') {
+    return Object.keys(open).some((id) => Number(id.slice(1)) >= sent.seq && open[id].awaits !== mySeat);
+  }
+  const deal = open[sent.id];
   return !deal || deal.awaits !== mySeat;
 }
 
@@ -1032,6 +1038,9 @@ function paintBuilder(world) {
   back.dataset.type = 'cancel';
   back.addEventListener('click', cancel);
   row.appendChild(back);
+  // world.sent is cleared when the write settles. If the snapshot of a landed send is late, it will
+  // not close the sheet either, and pressing Send again makes a duplicate offer under a new id:
+  // legal and recoverable by Cancel, not a corrupt write.
   const send = actionButton(world, sheet0.send, () => sheet0.send.action, 'btn dc-btn dc-btn-primary',
     () => { world.sent = { id: draft.id, seq: world.state.tradeSeq ?? 0 }; });
   send.dataset.type = sheet0.send.type;
@@ -1470,9 +1479,12 @@ function flipTiles(world, prev, squares) {
         paint(world);
       }
     } catch (e) {
-      // Never leave a tile stuck in its old colour, and never rethrow: the first turn() runs
-      // synchronously from the snapshot handler, which has no try/catch, so a throw would
-      // abandon the rest of that paint with the board half drawn. Losing a flourish is cheap.
+      // Never rethrow: the first turn() runs synchronously from the snapshot handler, which has no
+      // try/catch, so a throw would abandon the rest of that paint with the board half drawn.
+      // Clearing the hold releases the tiles, and for a throw in that first turn() renderBoard
+      // paints straight after, so none stays in its old colour. A throw in a later setTimeout turn
+      // leaves the remaining held tiles in their old colour until the next snapshot repaints.
+      // Losing a flourish is cheap.
       world.hold = null;
     }
   };

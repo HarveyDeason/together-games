@@ -1905,6 +1905,17 @@ test('a completed deal flips the tiles and settles on the new colours', async ()
   assert.equal(host.__dc.hold, null);
 });
 
+test('a flip that throws is swallowed, releases the hold, and does not abandon the paint', () => {
+  const { host } = container();
+  const { before, done } = tradedHands([24]);
+  renderBoard(before, host, FLIP_OPTS);
+  const real = host.__dc.tiles[24].classList;
+  host.__dc.tiles[24].classList = { ...real, add(c) { if (c === 'dc-flip') throw new Error('flip failed'); return real.add(c); }, remove: (c) => real.remove(c), contains: (c) => real.contains(c), toggle: (...a) => real.toggle?.(...a) };
+  assert.doesNotThrow(() => renderBoard(done, host, FLIP_OPTS));
+  assert.equal(host.__dc.hold, null, 'no tile is left held in its old colour');
+  assert.equal(host.__dc.tiles[24].dataset.own, '0', 'and the paint carried on to the new owner');
+});
+
 test('traded tiles hold their old colour until their turn, then flip one after another', async () => {
   const { host } = container();
   const { before, done } = tradedHands([6, 24]);

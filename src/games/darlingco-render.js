@@ -1470,8 +1470,10 @@ function flipTiles(world, prev, squares) {
         paint(world);
       }
     } catch (e) {
-      world.hold = null; // never leave a tile stuck in its old colour
-      throw e;
+      // Never leave a tile stuck in its old colour, and never rethrow: the first turn() runs
+      // synchronously from the snapshot handler, which has no try/catch, so a throw would
+      // abandon the rest of that paint with the board half drawn. Losing a flourish is cheap.
+      world.hold = null;
     }
   };
   turn();

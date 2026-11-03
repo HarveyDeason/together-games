@@ -1906,7 +1906,9 @@ test('reduced motion also spares the gavel, and the lot still ends owned', () =>
 });
 
 test('the stylesheet gives the flip and the gavel an animation, and reduced motion switches both off', () => {
-  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  // git can check styles.css out with CRLF endings; match on LF so the guard
+  // tests the rules, not the line endings.
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   for (const cls of ['dc-flip', 'dc-gavel']) {
     assert.match(css, new RegExp(`\\.dc-tile\\.${cls}\\s*\\{[^}]*animation:\\s*${cls}\\b`), `${cls} animates`);
     assert.match(css, new RegExp(`@keyframes ${cls}\\b`), `${cls} has keyframes`);
@@ -1950,4 +1952,19 @@ test('a money-only deal flicks nothing under reduced motion', () => {
   renderBoard(o, host, FLIP_OPTS);
   withReducedMotion(() => renderBoard(done, host, FLIP_OPTS));
   assert.equal(coinsOf(host).length, 0);
+});
+
+test('rent paid with no deal closing flicks one coin, through the debt path only', () => {
+  const { host } = container();
+  const owing = { ...fresh(), moves: 6, phase: 'pay', actor: 0, owed: 120, owedTo: 1, cash: [800, 500] };
+  const paid = ok(act(owing, 'pay', 0));
+  assert.deepEqual(Object.keys(paid.trades || {}), Object.keys(owing.trades || {}), 'no deal opened or closed');
+  assert.deepEqual(flipOrder(owing, paid), [], 'no tile changes hands');
+  renderBoard(owing, host, FLIP_OPTS);
+  renderBoard(paid, host, FLIP_OPTS);
+  assert.equal(coinsOf(host).length, 1, 'one coin, not one per path');
+  assert.equal(coinsOf(host)[0].dataset.to, '1');
+  assert.equal(coinsOf(host)[0].textContent, '+120');
+  renderBoard({ ...paid, scoredAt: 1 }, host, FLIP_OPTS);
+  assert.equal(coinsOf(host).length, 1, 'a re-delivered state adds no coin');
 });

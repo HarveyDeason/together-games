@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { gridCell, edgeOf, buildBoard, paintTile, decisionFor, feedLines, propertyFor, cardFor, walkPath, chipParts, tradeStrips, canOpenDeal, stripsShown, STRIP_CAP, DEALS_OPEN, auctionFor,
+import { gridCell, edgeOf, buildBoard, paintTile, decisionFor, feedLines, propertyFor, cardFor, walkPath, chipParts, tradeStrips, canOpenDeal, stripsShown, STRIP_CAP, auctionFor,
   dealSheetFor, dealReviewFor, flipOrder, nudgeCash, toggleChip, draftFromDeal, tidyDraft } from '../src/games/darlingco-render.js';
 import { readFileSync } from 'node:fs';
 import { createInitialState, render, applyAction } from '../src/games/darlingco.js';
 import { setChar, BLANK_PROPS, BLANK_BUILT, dealChar, dealDest } from '../src/games/darlingco-state.js';
-import { SQUARES, SETS, STATION_RENT, MIN_BID, BID_STEP } from '../src/games/darlingco-board.js';
+import { SQUARES, SETS, STATION_RENT, MIN_BID, BID_STEP, MAX_TRADES } from '../src/games/darlingco-board.js';
 
 // Minimal DOM stub, same reasoning as tictactoe-render.test.js: no jsdom.
 function makeEl(tag) {
@@ -1052,12 +1052,14 @@ test('a strip whose Accept is blocked says why on its single line, and in its ti
 test('the New deal entry is under the strips, disabled with a reason at the cap, and absent for a watcher', () => {
   const h = mount(owned(Object.fromEntries(CAP_SQUARES.map(q => [q, 1]))), 0);
   const entry = () => buttonsIn(h.__dc.newDeal).find(b => /new deal/i.test(b.textContent));
-  assert.equal(DEALS_OPEN, true);
   assert.equal(entry().disabled, false);
   const s = capped();
   render(s, h, { mySeat: 0, names: ['Ann', 'Bo'], onAction: () => {} });
   assert.equal(entry().disabled, true);
   assert.match(entry().attrs.title, /limit/i);   // at the cap the rule's reason wins
+  // Phones have no hover: the reason must also be visible text beside the button.
+  assert.match(text(h.__dc.newDeal), /limit/i);
+  assert.match(text(h.__dc.newDeal), new RegExp(String(MAX_TRADES)));
   render(s, h, { mySeat: null, names: ['Ann', 'Bo'], onAction: () => {} });
   assert.equal(entry(), undefined);
   assert.ok(h.__dc.newDeal.hidden);
@@ -1730,6 +1732,22 @@ test('the auction styles exist, the lot is lit, and nothing explanatory is dimme
   const panel = [...css.matchAll(/([^{}]+)\{([^}]*)\}/g)].filter((m) => /\.dc-a[a-z]*\b/.test(m[1].replace(/\/\*[\s\S]*?\*\//g, '')));
   assert.ok(panel.length >= 15, `only ${panel.length} panel rules found`);
   for (const m of panel) assert.ok(!/opacity/.test(m[2]), `opacity in the auction panel rule: ${m[1].trim()}`);
+});
+
+test('no deal-strip rule dims explanatory text by opacity; only the deal summary may be dimmed', () => {
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  // Every rule with a selector on a strip (.dc-deal, .dc-dealwhy, .dc-dealtext) or on the reason beside + New deal.
+  const rules = [...bare.matchAll(/([^{}]+)\{([^}]*)\}/g)].filter((m) => /\.dc-(deal[a-z]*|newdealwhy)\b/.test(m[1]));
+  assert.ok(rules.length >= 5, `only ${rules.length} strip rules found`);
+  for (const m of rules) {
+    if (!/opacity/.test(m[2])) continue;
+    // An opacity on the strip dims every child, the reason line included: only the summary's own selector may carry one.
+    for (const sel of m[1].split(',').map((x) => x.trim())) {
+      assert.ok(/\.dc-dealtext$/.test(sel), `opacity would dim explanatory text via: ${sel}`);
+    }
+  }
+  assert.match(bare, /\.dc-newdealwhy\s*\{/);
 });
 
 test('the standing bid is coloured by whose it is, not always the opponent', () => {

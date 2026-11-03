@@ -470,12 +470,6 @@ export function cardFor(state, mySeat, sq, names) {
 // refusal the engine could give is worked out here first, so a button that
 // cannot work is disabled with a reason instead of being pressed and shaken.
 
-/** The deal sheet is open for business. Kept as a flag (rather than deleted) so
- *  Counter, the strip tap, + New deal and the card's deal button can still be
- *  shut together, each with a reason, should the sheet ever need pulling. */
-export const DEALS_OPEN = true;
-const NOT_OPEN = 'Deals are not open yet';
-
 /** How many one-line rows the strips region may hold (a "+N more" line counts
  *  as one). At 375px a strip is 25px, "+N more" about 16px, and with the decision
  *  (90px) and the feed's 2-line minimum (38px) intact the region has room for 3
@@ -533,7 +527,7 @@ export function tradeStrips(state, mySeat, names) {
     // Tapping the strip opens the deal in the sheet. A watcher cannot, and a finished game has no deal left to answer.
     const tap = !seated ? { disabled: true, why: 'Only the players can open a deal' }
       : state.phase === 'over' ? { disabled: true, why: 'The game is over' }
-      : !DEALS_OPEN ? { disabled: true, why: NOT_OPEN } : { disabled: false, why: '' };
+      : { disabled: false, why: '' };
     let buttons = [];
     if (seated && mine) {
       buttons = [dealButton(id, 'trade-decline', 'Decline')];
@@ -541,7 +535,7 @@ export function tradeStrips(state, mySeat, names) {
         const why = acceptBlock(state, trade, problem, names, mySeat);
         note = why;
         buttons.unshift(dealButton(id, 'trade-accept', 'Accept', why ? { disabled: true, why } : {}));
-        buttons.splice(1, 0, { type: 'trade-counter', label: 'Counter', id, opens: true, action: null, ...(DEALS_OPEN ? {} : { disabled: true, why: NOT_OPEN }) });
+        buttons.splice(1, 0, { type: 'trade-counter', label: 'Counter', id, opens: true, action: null });
       }
     } else if (seated) {
       buttons = [dealButton(id, 'trade-cancel', 'Cancel')];
@@ -574,7 +568,7 @@ export function canOpenDeal(state, mySeat, { counter = false } = {}) {
   if (mySeat !== 0 && mySeat !== 1) return { ok: false, why: 'Only the players can make deals' };
   if (state.phase === 'over') return { ok: false, why: 'The game is over' };
   // A counter replaces a deal under its own id, so it never adds one and the cap does not apply.
-  if (!counter && Object.keys(readTrades(state)).length >= MAX_TRADES) return { ok: false, why: 'Eight deals is the limit' };
+  if (!counter && Object.keys(readTrades(state)).length >= MAX_TRADES) return { ok: false, why: `The limit is ${MAX_TRADES} deals` };
   return { ok: true, why: '' };
 }
 
@@ -1126,7 +1120,7 @@ function paintCard(world) {
     // Opens the builder with this square already on its shelf. Only a square somebody
     // owns, outside a built set, can be dealt for; otherwise the reason is the text.
     const can = canOpenDeal(state, mySeat);
-    const why = !DEALS_OPEN ? NOT_OPEN : !can.ok ? can.why
+    const why = !can.ok ? can.why
       : ownerOf(state, c.square) < 0 ? 'Nobody owns this yet' : builtReason(state, c.square);
     if (why) sheet.appendChild(el(doc, 'div', 'dc-detail', why));
     const row = el(doc, 'div', 'dc-btns');
@@ -1182,10 +1176,12 @@ function paintStrips(world) {
   newDeal.hidden = (mySeat !== 0 && mySeat !== 1) || state.phase === 'over';
   if (!newDeal.hidden) {
     const can = canOpenDeal(state, mySeat);
-    const b = openerButton(world, { label: '+ New deal', disabled: !can.ok || !DEALS_OPEN, why: can.ok ? (DEALS_OPEN ? '' : NOT_OPEN) : can.why }, () => openBuilder(world, blankDraft()),
+    const b = openerButton(world, { label: '+ New deal', disabled: !can.ok, why: can.why }, () => openBuilder(world, blankDraft()),
       'link-btn dc-newdeal-btn');
     b.dataset.type = 'new-deal';
     newDeal.appendChild(b);
+    // A title is invisible on a phone, so the reason the button is greyed is also text beside it.
+    if (!can.ok) newDeal.appendChild(el(doc, 'span', 'dc-newdealwhy', can.why));
   }
 }
 

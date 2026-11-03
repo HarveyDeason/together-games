@@ -929,10 +929,12 @@ body {
   text-align: left;
   cursor: pointer;
 }
-.dc-deal:disabled { cursor: default; opacity: 0.8; }
+/* Dim identity (the deal summary), never the reason: an opacity on the strip itself would
+   dim .dc-dealwhy with it, the only place a watcher is told why the strip is inert. */
+.dc-deal:disabled { cursor: default; }
+.dc-deal:disabled .dc-dealtext, .dc-deal.is-waiting .dc-dealtext { opacity: 0.8; }
 .dc-dealwhy { color: var(--muted); }
 .dc-deal.is-answer { border-left: 2px solid var(--accent); }
-.dc-deal.is-waiting { opacity: 0.75; }
 .dc-deal.is-stale { border-style: dashed; }
 .dc-dt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dc-pill {
@@ -948,6 +950,7 @@ body {
 .dc-newdeal { flex: none; text-align: center; }
 .dc-newdeal-btn { margin: 0; padding: 0.1rem 0.3rem; font-size: clamp(0.6rem, 2.7vw, 0.75rem); }
 .dc-newdeal-btn:disabled { opacity: 0.45; cursor: default; }
+.dc-newdealwhy { margin-left: 0.4rem; color: var(--muted); font-size: clamp(0.6rem, 2.7vw, 0.75rem); }
 
 /* ---- Darling & Co. deal sheet: builder and review, drawn inside .dc-sheet ----
    trade-builder.html option A ("two shelves") and trade-flow.html panel 2. Each

@@ -29,9 +29,9 @@ export const MAX_LOG = 6;
  *  log entries in firebase-rules.json: a longer write is rejected silently. */
 export const MAX_LOG_LINE = 150;
 
-/** Most open trade offers at once. Must agree with the bound on `trades` in
- *  firebase-rules.json (added with the trade actions): a larger write is
- *  rejected silently. */
+/** Most open trade offers at once. The engine enforces it ('too-many-trades');
+ *  firebase-rules.json deliberately has no count bound on `trades`, as the
+ *  per-id validator (`$tradeId`) is enough. */
 export const MAX_TRADES = 8;
 /** Lowest opening bid at auction, and the smallest raise. Both must agree with
  *  the `aucBid` validator in firebase-rules.json. */

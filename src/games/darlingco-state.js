@@ -162,7 +162,7 @@ export function dealProblem(state, trade) {
     if (group.some(q => housesOn(state, q) > 0)) return 'trade-built';
   }
 
-  if (state.cash[cash > 0 ? 0 : 1] < Math.abs(cash)) return 'cannot-afford';
+  if (cash !== 0 && state.cash[cash > 0 ? 0 : 1] < Math.abs(cash)) return 'cannot-afford';
 
   if (outs0 > state.outCards[0].length / 2 || outs1 > state.outCards[1].length / 2) return 'no-card';
   return '';

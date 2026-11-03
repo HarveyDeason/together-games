@@ -1194,10 +1194,12 @@ test('the auction and deal bounds in the rules file cover the engine constants',
   assert.ok(cap(st.aucBid['.validate']) >= MAX_DEAL_CASH);
   assert.ok(cap(st.aucPass['.validate']) >= 2);
   // tradeSeq: ids are never reused, so the counter climbs past MAX_TRADES.
-  // The live-deal cap of 8 is unrelated; the counter must cover every id the
-  // pattern admits (up to 6 digits), so its ceiling must be at least 99999.
+  // The real bound is not the id pattern's 6 digits: every trade action counts
+  // a move, so tradeSeq <= moves <= the cap on `moves`. The counter's own cap
+  // must therefore be at least the cap on `moves`, and that is all it needs.
+  const movesCap = cap(st.moves['.validate']);
   assert.ok(cap(st.tradeSeq['.validate']) > MAX_TRADES);
-  assert.ok(cap(st.tradeSeq['.validate']) >= 99999, `tradeSeq cap ${cap(st.tradeSeq['.validate'])}`);
+  assert.ok(cap(st.tradeSeq['.validate']) >= movesCap, `tradeSeq cap ${cap(st.tradeSeq['.validate'])} must cover moves cap ${movesCap}`);
   // Lower and upper bounds, read as a pair so a missing floor also fails.
   const bounds = (v) => {
     const m = />= (-?\d+) && newData\.val\(\) <= (-?\d+)/.exec(v);
@@ -1287,6 +1289,21 @@ test('a deal awaits the other seat, and ids come from the counter and never repe
   s = ok(offer(s, 0, { 24: [0, false] }, 0));
   assert.deepEqual(Object.keys(readTrades(s)).sort(), ['t1', 't2']);   // t0 is not reused
   assert.equal(s.tradeSeq, 3);
+});
+
+test('a game that began before deals existed still opens its first deal', () => {
+  // Firebase delivers state raw, so a mid-play game has no tradeSeq key at all.
+  const { tradeSeq, ...legacy } = owned({ 24: 1 });
+  assert.equal('tradeSeq' in legacy, false);
+  const s = ok(offer(legacy, 0, { 24: [0, false] }, 0));
+  assert.deepEqual(Object.keys(readTrades(s)), ['t0']);
+  assert.equal(s.tradeSeq, 1);
+  assert.equal(Number.isFinite(s.tradeSeq), true);
+});
+
+test('a properties-only deal is not misread as cannot-afford when a seat is on negative cash', () => {
+  const s = { ...owned({ 24: 1 }), cash: [1500, -5] };
+  assert.equal(offer(s, 0, { 24: [0, false] }, 0).error, undefined);
 });
 
 test('an illegal deal is refused with its reason and nothing is stored', () => {

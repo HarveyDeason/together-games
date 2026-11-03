@@ -617,8 +617,12 @@ function doTrade(state, action, seat) {
     const problem = dealProblem(state, offered);
     if (problem) return { error: problem };
     // Ids come from the counter and are never reused, so a stale id never meets a new deal.
-    const id = `t${state.tradeSeq}`;
-    const next = { ...counted, tradeSeq: state.tradeSeq + 1, trades: { ...trades, [id]: offered } };
+    // tradeSeq is absent on a game that began before deals existed (the room reads state raw
+    // off Firebase, with no migration): default it here, or the first id is 'tundefined' and
+    // the counter NaN, and the write is rejected silently.
+    const seq = state.tradeSeq ?? 0;
+    const id = `t${seq}`;
+    const next = { ...counted, tradeSeq: seq + 1, trades: { ...trades, [id]: offered } };
     return { state: say(next, `${who} offers a deal.`) };
   }
 

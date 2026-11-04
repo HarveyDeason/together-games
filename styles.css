@@ -699,11 +699,20 @@ body {
 /* ---- Darling & Co. centre: the story, with the decision pinned under it --- */
 .dc-game { width: 100%; max-width: 100%; }
 
-.dc-bar { display: flex; gap: 0.35rem; margin-bottom: 0.4rem; }
+.dc-bar {
+  display: flex;
+  /* Rather than truncate a name, let the pot drop to its own line. On a 375px
+     phone all three fit; the wrap is the escape hatch for longer names. */
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-bottom: 0.4rem;
+}
 .dc-chip {
-  flex: 1 1 0;
+  /* Basis from the content, so a long name like Lakshmi Pujan takes the room it
+     needs and a short one like Shruti gives it up. They still fill the row. */
+  flex: 1 1 auto;
   min-width: 0;
-  padding: 0.3rem 0.45rem;
+  padding: 0.3rem 0.4rem;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 0.5rem;
@@ -721,7 +730,7 @@ body {
 .dc-chip.s0 { border-left: 4px solid var(--seat0); }
 .dc-chip.s1 { border-left: 4px solid var(--seat1); }
 .dc-chip.is-turn { border-color: var(--accent); }
-.dc-pot { color: #ffdf8a; flex: 1.1 1 0; }
+.dc-pot { color: #ffdf8a; }
 
 .dc-mid {
   display: flex;

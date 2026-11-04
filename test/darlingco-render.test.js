@@ -86,8 +86,8 @@ test('the board builds forty tiles', () => {
 test('a colour set shows its stripe colour and its icon', () => {
   const t = tileFor(fresh(), 6);
   const stripe = all(t).find((n) => n.classes.has('dc-stripe'));
-  assert.equal(stripe.style.background, SETS.bristol.colour);
-  assert.ok(all(t).some((n) => n.textContent === SETS.bristol.icon));
+  assert.equal(stripe.style.background, SETS[SQUARES[6].set].colour);
+  assert.ok(all(t).some((n) => n.textContent === SETS[SQUARES[6].set].icon));
 });
 test('squares that are not in a set have no stripe', () => {
   assert.ok(!all(tileFor(fresh(), 5)).some((n) => n.classes.has('dc-stripe')));
@@ -725,8 +725,8 @@ test('a card shows the whole rent ladder with the rent now payable marked', () =
   const s = owned({ 24: 1 });
   const c = cardFor(s, 0, 24, ['Harvey', 'Shruti']);
   assert.equal(c.title, SQUARES[24].name);
-  assert.equal(c.setName, SETS.cappadocia.name);
-  assert.equal(c.setColour, SETS.cappadocia.colour);
+  assert.equal(c.setName, SETS[SQUARES[24].set].name);
+  assert.equal(c.setColour, SETS[SQUARES[24].set].colour);
   assert.deepEqual(c.rows.filter(r => r.now).map(r => r.amount), [SQUARES[24].rent[0]]);
   assert.ok(c.rows.some(r => r.amount === SQUARES[24].rent[5]));
   assert.ok(c.rows.some(r => r.amount === SQUARES[24].house));

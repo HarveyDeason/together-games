@@ -69,10 +69,10 @@ test("squaresOwnedBy lists a seat's squares in board order", () => {
 });
 
 test('ownsFullSet needs every square of the set', () => {
-  assert.equal(ownsFullSet(mk({ own: own([1]) }), 0, 'home'), false);
-  assert.equal(ownsFullSet(mk({ own: own([1, 3]) }), 0, 'home'), true);
-  assert.equal(ownsFullSet(mk({ own: { 1: 0, 3: 1 } }), 0, 'home'), false);
-  assert.equal(ownsFullSet(mk({ own: own([1, 3], 1) }), 0, 'home'), false);
+  assert.equal(ownsFullSet(mk({ own: own([1]) }), 0, SQUARES[1].set), false);
+  assert.equal(ownsFullSet(mk({ own: own([1, 3]) }), 0, SQUARES[1].set), true);
+  assert.equal(ownsFullSet(mk({ own: { 1: 0, 3: 1 } }), 0, SQUARES[1].set), false);
+  assert.equal(ownsFullSet(mk({ own: own([1, 3], 1) }), 0, SQUARES[1].set), false);
 });
 
 test('countKind counts stations and utilities for a seat', () => {
@@ -221,7 +221,7 @@ test('queries never mutate the state', () => {
   const st = mk({ own: own([1, 3]), built: { 1: 1 } });
   const snap = JSON.stringify(st);
   rentFor(st, 1, 7); netWorth(st, 0); canBuild(st, 0, 3); canSell(st, 0, 1);
-  squaresOwnedBy(st, 0); ownsFullSet(st, 0, 'home'); countKind(st, 0, 'stn');
+  squaresOwnedBy(st, 0); ownsFullSet(st, 0, SQUARES[1].set); countKind(st, 0, 'stn');
   assert.equal(JSON.stringify(st), snap);
 });
 

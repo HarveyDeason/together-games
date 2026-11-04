@@ -715,7 +715,7 @@ test('a card does nothing until it is acknowledged', () => {
 
 test('acknowledging a cash card pays out', () => {
   const s = ok(cardOk(drawLJ('b')));
-  assert.equal(s.cash[0], START_CASH + 150);
+  assert.equal(s.cash[0], START_CASH + 50); // 'b' is the collect-50 card
   assert.equal(s.phase, 'end');
   assert.equal(s.pendingCard, -1);
   assert.equal(s.pendingDeck, '');
@@ -760,37 +760,40 @@ test('a move card that passes GO collects, and one that does not, does not', () 
   const s = ok(cardOk(drawLJ('0')));
   assert.deepEqual(s.pos, [0, 0]);
   assert.equal(s.cash[0], START_CASH + 200);
-  const t = ok(cardOk(drawLJ('4'))); // 7 -> 8, forwards, no GO
-  assert.equal(t.pos[0], 8);
+  const t = ok(cardOk(drawLJ('a'))); // 7 -> 19 Balloons at Sunrise, forwards, no GO
+  assert.equal(t.pos[0], 19);
   assert.equal(t.cash[0], START_CASH);
-  // Jiggly Boo 'Back to Keynsham High Street' from 17 passes GO on the way round.
-  const u = ok(cardOk(drawJB('b')));
-  assert.equal(u.pos[0], 1);
+  // Lovely Jubbly 'Advance to LinkedIn' from 7 (square 5) passes GO on the way round.
+  const u = ok(cardOk(drawLJ('1')));
+  assert.equal(u.pos[0], 5);
   assert.equal(u.cash[0], START_CASH + 200);
 });
 
 test('a move card runs the landing: an unowned property is offered for sale', () => {
-  const s = ok(cardOk(drawLJ('4')));
+  const s = ok(cardOk(drawLJ('a')));
   assert.equal(s.phase, 'buy');
-  assert.equal(s.pendingBuy, 8);
+  assert.equal(s.pendingBuy, 19);
 });
 
 test('a card that moves you to someone else’s property raises a rent demand', () => {
-  const s = ok(cardOk(drawLJ('4', { own: ownAt([[8, '1']]) })));
+  const s = ok(cardOk(drawLJ('a', { own: ownAt([[19, '1']]) })));
   assert.equal(s.phase, 'pay');
   assert.equal(s.owedTo, 1);
-  assert.equal(s.owed, 6);
+  assert.equal(s.owed, SQUARES[19].rent[0]);
   assert.equal(s.actor, 0);
 });
 
 test('a card that moves you to your own property raises nothing', () => {
-  assert.equal(ok(cardOk(drawLJ('4', { own: ownAt([[8, '0']]) }))).phase, 'end');
+  assert.equal(ok(cardOk(drawLJ('a', { own: ownAt([[19, '0']]) }))).phase, 'end');
 });
 
 test('a back card moves back and never collects GO', () => {
-  const s = ok(cardOk(drawLJ('8'))); // 7 back 5 = 2, a Jiggly Boo square
+  const s = ok(cardOk(drawLJ('d', { pos: [29, 0] }))); // 29 -> 36 (LJ), back 3 = 33, a Jiggly Boo square
   assert.equal(s.cash[0], START_CASH);
-  assert.equal(s.pos[0], 2);
+  assert.equal(s.pos[0], 33);
+  const two = ok(cardOk(drawLJ('8'))); // 7 back 2 = 5, LinkedIn: back-N honours N
+  assert.equal(two.pos[0], 5);
+  assert.equal(two.cash[0], START_CASH);
   const t = ok(cardOk(drawLJ('7'))); // 7 back 3 = 4, Excess Baggage
   assert.equal(t.pos[0], 4);
   assert.equal(t.phase, 'pay');
@@ -841,13 +844,13 @@ test('a card that costs money you can afford opens a debt that pays into the pot
 });
 
 test('a card that costs money you do not have opens a debt you can sell against', () => {
-  const s = ok(cardOk(drawJB('8', { cash: [20, 1500], own: ownAt([[5, '0']]) })));
+  const s = ok(cardOk(drawJB('c', { cash: [20, 1500], own: ownAt([[5, '0']]) })));
   assert.equal(s.phase, 'pay');
-  assert.equal(s.owed, 100);
+  assert.equal(s.owed, 30);
   assert.equal(applyAction(s, { type: 'pay' }, 0).error, 'cannot-afford');
   const sold = ok(applyAction(s, { type: 'mortgage', square: 5 }, 0));
   assert.equal(sold.cash[0], 120);
-  assert.equal(ok(applyAction(sold, { type: 'pay' }, 0)).cash[0], 20);
+  assert.equal(ok(applyAction(sold, { type: 'pay' }, 0)).cash[0], 90);
 });
 
 test('a per-building card charges by houses and hotels, as a debt', () => {
@@ -1527,7 +1530,7 @@ test('a completed deal logs the acceptance and a line for each side that gets so
   const done = ok(act(ok(offer(s, 0, { 24: [0, false] }, 200)), { type: 'trade-accept', id: 't0' }, 1));
   const tail = readLog(done).slice(-3);
   assert.match(tail[0], /^Player 2 accepts the deal\.$/);
-  assert.match(tail[1], /^Player 1 gets Balloons at Sunrise\.$/);
+  assert.equal(tail[1], `Player 1 gets ${SQUARES[24].name}.`);
   assert.match(tail[2], /^Player 2 gets £200\.$/);
   for (const line of readLog(done)) assert.ok(line.length <= MAX_LOG_LINE);
 });
@@ -1537,7 +1540,7 @@ test('a one-sided gift logs only the side that gets something', () => {
   const done = ok(act(ok(offer(s, 0, { 24: [0, false] }, 0)), { type: 'trade-accept', id: 't0' }, 1));
   const tail = readLog(done).slice(-2);
   assert.match(tail[0], /accepts the deal/);
-  assert.match(tail[1], /^Player 1 gets Balloons at Sunrise\.$/);
+  assert.equal(tail[1], `Player 1 gets ${SQUARES[24].name}.`);
 });
 
 test('accepting counts a move too, keeping tradeSeq under moves', () => {

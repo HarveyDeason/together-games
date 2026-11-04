@@ -6,8 +6,12 @@
 // attributes set here: data-edge, data-own, data-built, and .is-mortgaged.
 
 import {
-  SQUARES, SETS, STATION_RENT, UTIL_MULT, GAME_NAME, JAIL_FINE, LJ_CARDS, JB_CARDS, LJ_NAME, JB_NAME, MAX_TRADES, MAX_DEAL_CASH, MIN_BID, BID_STEP
+  SQUARES, SETS, STATION_RENT, UTIL_MULT, GAME_NAME, JAIL_FINE, LJ_CARDS, JB_CARDS, LJ_NAME, JB_NAME, MAX_TRADES, MAX_DEAL_CASH, MIN_BID, BID_STEP, PARKING_SQUARE
 } from './darlingco-board.js';
+
+/** What the pot square is called, read from the board so a rename reaches the
+ *  chip and the "owed to" lines too, not just the tile. */
+const POT_NAME = () => SQUARES[PARKING_SQUARE].name;
 import { readLog, readTrades, dealSummary } from './darlingco.js';
 import {
   ownerOf, housesOn, isMortgaged, ownsFullSet, countKind, rentFor, canBuild, canSell, netWorth, dealProblem,
@@ -219,7 +223,7 @@ export function decisionFor(state, mySeat, names) {
         return done(`${them} is deciding`, sq ? `Whether to buy ${sq.name} for ${sq.price}.` : 'Whether to buy.');
       }
       case 'pay': {
-        const to = state.owedTo < 0 ? 'the Free Parking pot' : seatName(names, state.owedTo);
+        const to = state.owedTo < 0 ? `the ${POT_NAME()} pot` : seatName(names, state.owedTo);
         return done(`${them} owes ${state.owed}`, `${state.owed} owed to ${to}. They may sell or mortgage to raise it.`);
       }
       case 'card': {
@@ -244,7 +248,7 @@ export function decisionFor(state, mySeat, names) {
         buttons, true);
     }
     case 'pay': {
-      const to = state.owedTo < 0 ? 'the Free Parking pot' : seatName(names, state.owedTo);
+      const to = state.owedTo < 0 ? `the ${POT_NAME()} pot` : seatName(names, state.owedTo);
       const can = cash >= state.owed;
       const buttons = [];
       if (can) buttons.push({ type: 'pay', label: `Pay ${state.owed}`, kind: 'primary' });
@@ -1346,7 +1350,7 @@ function paint(world) {
     else chip.classList.remove('is-turn');
   }
   clear(world.potChip);
-  world.potChip.appendChild(el(world.doc, 'span', 'dc-chip-name', 'Free Parking'));
+  world.potChip.appendChild(el(world.doc, 'span', 'dc-chip-name', POT_NAME()));
   world.potChip.appendChild(el(world.doc, 'span', 'dc-chip-cash', String(state.pot)));
 
   // Tokens are drawn where the walk has got to, not where the state says they

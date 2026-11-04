@@ -1,9 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { gridCell, edgeOf, buildBoard, paintTile, decisionFor, feedLines, propertyFor, walkPath, chipParts } from '../src/games/darlingco-render.js';
+import { gridCell, edgeOf, buildBoard, paintTile, decisionFor, feedLines, propertyFor, cardFor, walkPath, chipParts, tradeStrips, canOpenDeal, sendLanded, stripsShown, STRIP_CAP, auctionFor,
+  dealSheetFor, dealReviewFor, flipOrder, nudgeCash, toggleChip, draftFromDeal, tidyDraft } from '../src/games/darlingco-render.js';
+import { readFileSync } from 'node:fs';
 import { createInitialState, render, applyAction } from '../src/games/darlingco.js';
-import { setChar } from '../src/games/darlingco-state.js';
-import { SQUARES, SETS } from '../src/games/darlingco-board.js';
+import { setChar, BLANK_MORTG, BLANK_PROPS, BLANK_BUILT, dealChar, dealDest } from '../src/games/darlingco-state.js';
+import { SQUARES, SETS, STATION_RENT, MIN_BID, BID_STEP, MAX_TRADES } from '../src/games/darlingco-board.js';
 
 // Minimal DOM stub, same reasoning as tictactoe-render.test.js: no jsdom.
 function makeEl(tag) {
@@ -710,4 +712,1392 @@ test('the Free Parking tile shows the pot, and nothing extra when it is empty', 
   paintTile(tiles[20], s, 20);
   assert.equal(text(potv(tiles[20])), '');
   assert.equal(potv(tiles[6]), undefined);
+});
+
+// ---- the property card -----------------------------------------------------
+const owned = (map) => {
+  const s = fresh();
+  for (const [sq, seat] of Object.entries(map)) s.own = setChar(s.own, Number(sq), String(seat));
+  return s;
+};
+
+test('a card shows the whole rent ladder with the rent now payable marked', () => {
+  const s = owned({ 24: 1 });
+  const c = cardFor(s, 0, 24, ['Harvey', 'Shruti']);
+  assert.equal(c.title, SQUARES[24].name);
+  assert.equal(c.setName, SETS.cappadocia.name);
+  assert.equal(c.setColour, SETS.cappadocia.colour);
+  assert.deepEqual(c.rows.filter(r => r.now).map(r => r.amount), [SQUARES[24].rent[0]]);
+  assert.ok(c.rows.some(r => r.amount === SQUARES[24].rent[5]));
+  assert.ok(c.rows.some(r => r.amount === SQUARES[24].house));
+  assert.ok(c.rows.some(r => r.amount === SQUARES[24].mortgage));
+});
+
+test('the marked rent follows the set, the houses and the mortgage', () => {
+  const full = owned({ 21: 1, 23: 1, 24: 1 });
+  const marked = (s, sq) => cardFor(s, 0, sq, []).rows.find(r => r.now).amount;
+  assert.equal(marked(full, 24), SQUARES[24].rent[0] * 2);
+  const built = { ...full, built: setChar(full.built, 24, '3') };
+  assert.equal(marked(built, 24), SQUARES[24].rent[3]);
+  const mortgaged = { ...full, mortg: setChar(full.mortg, 24, '1') };
+  assert.equal(marked(mortgaged, 24), 0);
+  assert.equal(cardFor(mortgaged, 0, 24, []).rows.filter(r => r.now).length, 1);
+});
+
+test('a station card counts the owner holdings and a utility card shows the multiples', () => {
+  const stations = owned({ 5: 1, 15: 1 });
+  assert.equal(cardFor(stations, 0, 5, []).rows.find(r => r.now).amount, STATION_RENT[1]);
+  const util = owned({ 12: 1 });
+  const rows = cardFor(util, 0, 12, []).rows;
+  assert.ok(rows.some(r => /dice/i.test(r.label)));
+  assert.equal(rows.filter(r => r.now).length, 1);
+});
+
+test('a card says who holds it and how much of the set they have', () => {
+  const s = owned({ 21: 1, 24: 1 });
+  assert.match(cardFor(s, 0, 24, ['Harvey', 'Shruti']).ownerLine, /Shruti/);
+  assert.match(cardFor(s, 0, 24, ['Harvey', 'Shruti']).ownerLine, /2 of 3/);
+  assert.match(cardFor(createInitialState(), 0, 24, []).ownerLine, /sale|unowned|nobody/i);
+  assert.deepEqual(cardFor(s, 0, 24, ['Harvey', 'Shruti']).footParts, ['Owned by Shruti', '2 of 3 in set']);
+});
+
+test('your own card carries the build and mortgage buttons; theirs carries a deal button', () => {
+  const mine = owned({ 24: 0 });
+  assert.deepEqual(cardFor(mine, 0, 24, []).buttons.map(b => b.type), propertyFor(mine, 0, 24).buttons.map(b => b.type));
+  assert.equal(cardFor(mine, 0, 24, []).dealButton, null);
+  const theirs = owned({ 24: 1 });
+  assert.deepEqual(cardFor(theirs, 0, 24, []).buttons, []);
+  assert.equal(cardFor(theirs, 0, 24, []).dealButton.square, 24);
+  assert.equal(cardFor(createInitialState(), 0, 24, []).dealButton.square, 24);
+});
+
+test('a square with no price has no card at all', () => {
+  for (const sq of [0, 2, 4, 7, 10, 17, 20, 22, 30, 33, 36, 38]) {
+    assert.equal(cardFor(createInitialState(), 0, sq, []), null, String(sq));
+  }
+});
+
+test('every priced square on the board produces a card with a marked row', () => {
+  const s = createInitialState();
+  for (let sq = 0; sq < 40; sq++) {
+    if (SQUARES[sq].price === undefined) continue;
+    const c = cardFor(s, 0, sq, []);
+    assert.ok(c && c.rows.length > 0, String(sq));
+    assert.equal(c.rows.filter(r => r.now).length, 1, SQUARES[sq].name);
+  }
+});
+
+test('tapping any priced tile opens its card, not only one you own', () => {
+  const h = mount(owned({ 24: 1 }), 0);
+  h.__dc.tiles[24].click();
+  assert.equal(h.__dc.selected, 24);
+  assert.ok(text(h.__dc.sheet).includes(SQUARES[24].name));
+  assert.equal(h.__dc.sheetMode, 'property');
+  h.__dc.tiles[0].click();   // GO has no card: the open one stays
+  assert.equal(h.__dc.selected, 24);
+});
+
+test('their card offers a deal and no build buttons; the unowned one is the same', () => {
+  const h = mount(owned({ 24: 1 }), 0);
+  h.__dc.tiles[24].click();
+  const labels = buttonsIn(h.__dc.sheet).map(b => b.textContent);
+  assert.ok(labels.includes('Offer a deal for this'));
+  assert.ok(!labels.some(l => /build|mortgage/i.test(l)));
+});
+
+test('the sheet is a bottom sheet over the board, not part of the centre', () => {
+  const h = mount(owned({ 24: 1 }), 0);
+  const w = h.__dc;
+  assert.ok(!all(w.root).some(n => n.classes.has('dc-mid') && all(n).includes(w.sheet)));
+  assert.ok(w.root.children.includes(w.sheet));
+});
+
+test('a sheet mode the card does not draw leaves the sheet and the selection alone', () => {
+  const h = mount(owned({ 24: 1 }), 0);
+  h.__dc.tiles[24].click();
+  const drawn = h.__dc.sheet.children.length;
+  h.__dc.sheetMode = 'deal';
+  render(owned({ 24: 1 }), h, { mySeat: 0, names: ['Ann', 'Bo'], onAction: () => {} });
+  assert.equal(h.__dc.selected, 24);
+  assert.equal(h.__dc.sheet.hidden, false);
+  assert.equal(h.__dc.sheet.children.length, drawn);
+});
+
+
+// ---- live deals in the centre ---------------------------------------------
+const ok = (r) => { assert.equal(r.error, undefined, r.error); return r.state; };
+const offer = (state, seat, squareMap, cash) => {
+  let props = BLANK_PROPS;
+  for (const [sq, [dest, mortgaged]] of Object.entries(squareMap)) props = setChar(props, Number(sq), dealChar(dest, mortgaged));
+  return applyAction(state, { type: 'trade-offer', props, cash, outs0: 0, outs1: 0 }, seat);
+};
+// Every disabled control must carry a reason, and every one is checked here.
+const assertDisabledWithReason = (b) => {
+  assert.equal(b.disabled, true, b.type);
+  assert.ok(typeof b.why === 'string' && b.why.length > 0, `${b.type} has no reason`);
+};
+const CAP_SQUARES = [1, 3, 6, 8, 9, 11, 13, 14];
+const capped = () => {
+  let s = owned(Object.fromEntries(CAP_SQUARES.map(q => [q, 1])));
+  for (const q of CAP_SQUARES) s = ok(offer(s, 0, { [q]: [0, false] }, 0));
+  return s;
+};
+const inAuction = (s) => ({ ...s, phase: 'auction', aucSq: 31, aucBid: 0, aucBy: -1, aucPass: 0, actor: 1, turn: 0 });
+
+test('a deal waiting on you is badged for an answer; one waiting on them is not', () => {
+  const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));
+  assert.deepEqual(tradeStrips(s, 1, []).map(x => x.badge), ['answer']);
+  assert.deepEqual(tradeStrips(s, 0, []).map(x => x.badge), ['waiting']);
+});
+
+test('the strip offers accept, counter and decline to the seat being asked', () => {
+  const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));
+  assert.deepEqual(tradeStrips(s, 1, [])[0].buttons.map(b => b.type).sort(),
+    ['trade-accept', 'trade-counter', 'trade-decline']);
+  assert.deepEqual(tradeStrips(s, 0, [])[0].buttons.map(b => b.type), ['trade-cancel']);
+});
+
+test('a strip says what the deal is, in both directions', () => {
+  const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));
+  const text = tradeStrips(s, 1, ['Harvey', 'Shruti'])[0].text;
+  assert.match(text, /Harvey/);
+  assert.ok(text.includes(SQUARES[24].name));
+  assert.match(text, /200/);
+});
+
+test('a deal that has gone stale is shown as such and only offers a decline', () => {
+  const offered = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));
+  const moved = { ...offered, own: setChar(offered.own, 24, '0') };
+  const strip = tradeStrips(moved, 1, [])[0];
+  assert.equal(strip.badge, 'stale');
+  assert.ok(strip.stale);
+  assert.deepEqual(strip.buttons.map(b => b.type), ['trade-decline']);
+  assert.match(strip.text, /no longer/i);
+  // The seat that offered it can still take it back.
+  assert.deepEqual(tradeStrips(moved, 0, [])[0].buttons.map(b => b.type), ['trade-cancel']);
+});
+
+test('a mortgaged-since-offered property also makes the deal stale', () => {
+  const offered = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));
+  const moved = { ...offered, mortg: setChar(offered.mortg, 24, '1') };
+  assert.equal(tradeStrips(moved, 1, [])[0].badge, 'stale');
+});
+
+test('accepting is offered as a disabled button with its reason, never as an error', () => {
+  const offered = ok(offer({ ...owned({ 24: 1 }), cash: [1500, 1500] }, 0, { 24: [0, false] }, 200));
+  const live = inAuction(offered);
+  const duringAuction = tradeStrips(live, 1, [])[0].buttons.find(b => b.type === 'trade-accept');
+  assertDisabledWithReason(duringAuction);
+  assert.match(duringAuction.why, /auction/i);
+  assert.equal(applyAction(live, { type: 'trade-accept', id: 't0' }, 1).error, 'auction-live');
+
+  const broke = { ...offered, cash: [10, 1500] };     // the offerer can no longer pay
+  const unaffordable = tradeStrips(broke, 1, [])[0].buttons.find(b => b.type === 'trade-accept');
+  assertDisabledWithReason(unaffordable);
+  assert.equal(applyAction(broke, { type: 'trade-accept', id: 't0' }, 1).error, 'cannot-afford');
+});
+
+test('every enabled strip button is accepted by the engine, and every disabled one is refused', () => {
+  const offered = ok(offer({ ...owned({ 24: 1 }), cash: [1500, 1500] }, 0, { 24: [0, false] }, 200));
+  // A deal that asks seat 1 for a get-out card nobody holds: the 'no-card' problem.
+  const noCard = { ...owned({ 24: 1 }), cash: [1500, 1500], tradeSeq: 1,
+    trades: { t0: { props: setChar(BLANK_PROPS, 24, dealChar(0, false)), cash: 200, outs0: 1, outs1: 0, awaits: 1 } } };
+  // Both seats' buttons per case, with the enabled/disabled split each must have. Counter
+  // opens the builder and sends nothing itself, so it is checked against the engine with the
+  // one counter that is legal whenever any is: a plain pound from the seat that is answering.
+  const cases = [
+    ['a live deal', offered, 4, 0],
+    ['an auction running', inAuction(offered), 3, 1],
+    ['the offerer cannot pay', { ...offered, cash: [10, 1500] }, 3, 1],
+    ['the property has moved', { ...offered, own: setChar(offered.own, 24, '0') }, 2, 0],
+    ['houses on the set', { ...offered, built: setChar(offered.built, 21, '1') }, 3, 1],
+    ['a card that is gone', noCard, 3, 1],
+    ['the game is over', { ...offered, phase: 'over' }, 0, 4]
+  ];
+  for (const [name, state, wantEnabled, wantDisabled] of cases) {
+    let enabled = 0, disabled = 0;
+    for (const seat of [0, 1]) {
+      for (const b of tradeStrips(state, seat, [])[0].buttons) {
+        if (b.disabled) assertDisabledWithReason(b);
+        const action = b.opens
+          ? { type: 'trade-counter', id: b.id, props: BLANK_PROPS, cash: 1, outs0: 0, outs1: 0 }
+          : b.action;
+        const r = applyAction(state, action, seat);
+        if (b.disabled) { assert.ok(r.error, `${name}: ${b.type} should be refused`); disabled++; }
+        else { assert.equal(r.error, undefined, `${name}: ${b.type}: ${r.error}`); enabled++; }
+      }
+    }
+    assert.deepEqual([enabled, disabled], [wantEnabled, wantDisabled], name);
+  }
+});
+
+test('deal ids sort by number, so t10 comes after t2', () => {
+  const trade = { props: setChar(BLANK_PROPS, 24, dealChar(0, false)), cash: 0, outs0: 0, outs1: 0, awaits: 1 };
+  const s = { ...owned({ 24: 1 }), trades: { t10: trade, t2: trade, t9: trade, t0: trade } };
+  assert.deepEqual(tradeStrips(s, 1, []).map(t => t.id), ['t0', 't2', 't9', 't10']);
+});
+
+test('a watcher\'s strip says on its line why it is inert', () => {
+  const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));
+  const h = mount(s, null);
+  assert.match(text(h.__dc.strips.children[0]), /only the players/i);
+});
+
+test('the +N more line says how many hidden deals are waiting on you', () => {
+  const s = capped();   // seat 0 offered all eight: all await seat 1
+  assert.deepEqual(stripsShown(tradeStrips(s, 1, []), 3).moreMine, 6);
+  assert.equal(stripsShown(tradeStrips(s, 0, []), 3).moreMine, 0);
+  const h = mount(s, 1);
+  assert.equal(h.__dc.strips.children.find(n => n.classes.has('dc-more')).textContent, '+6 more (6 waiting on you)');
+  const theirs = mount(s, 0);
+  assert.equal(theirs.__dc.strips.children.find(n => n.classes.has('dc-more')).textContent, '+6 more');
+});
+
+test('every deal gets a strip, and none when there are none', () => {
+  let s = owned({ 24: 1, 21: 1 });
+  assert.deepEqual(tradeStrips(s, 0, []), []);
+  s = ok(offer(s, 0, { 24: [0, false] }, 0));
+  s = ok(offer(s, 0, { 21: [0, false] }, 0));
+  assert.deepEqual(tradeStrips(s, 1, []).map(x => x.id), ['t0', 't1']);
+});
+
+test('a watcher with no seat sees the deals but can act on none of them', () => {
+  const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));
+  const strips = tradeStrips(s, null, []);
+  assert.equal(strips.length, 1);
+  for (const strip of strips) assert.deepEqual(strip.buttons, []);
+});
+
+test('the new-deal entry point closes at the cap, with a reason', () => {
+  let s = owned(Object.fromEntries(CAP_SQUARES.map(q => [q, 1])));
+  assert.equal(canOpenDeal(s, 0).ok, true);
+  s = capped();
+  assert.equal(canOpenDeal(s, 0).ok, false);
+  assert.ok(canOpenDeal(s, 0).why.length > 0);
+  assert.equal(applyAction(s, { type: 'trade-offer', props: BLANK_PROPS, cash: 5, outs0: 0, outs1: 0 }, 0).error, 'too-many-trades');
+});
+
+test('a watcher or a finished game cannot open a deal, with a reason', () => {
+  const s = owned({ 24: 1 });
+  for (const r of [canOpenDeal(s, null), canOpenDeal({ ...s, phase: 'over' }, 0)]) {
+    assertDisabledWithReason({ disabled: !r.ok, why: r.why, type: 'new-deal' });
+  }
+});
+
+test('the strips are drawn in the centre and survive trades arriving undefined', () => {
+  const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));
+  const { trades, ...dropped } = s;
+  const h = mount(dropped, 1);
+  assert.equal(h.__dc.strips.children.length, 0);
+  render(s, h, { mySeat: 1, names: ['Ann', 'Bo'], onAction: () => {} });
+  assert.equal(h.__dc.strips.children.length, 1);
+  const mid = all(h.__dc.root).find(n => n.classes.has('dc-mid'));
+  const order = mid.children;
+  assert.ok(order.includes(h.__dc.strips));
+  assert.ok(order.indexOf(h.__dc.feed) < order.indexOf(h.__dc.strips));
+  assert.ok(order.indexOf(h.__dc.strips) < order.indexOf(h.__dc.decision));
+});
+
+test('a strip is one line: a single button keyed by deal id, with no buttons of its own inside', () => {
+  const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));
+  const h = mount(s, 1);
+  const strip = h.__dc.strips.children[0];
+  assert.equal(strip.tag, 'button');
+  assert.equal(strip.dataset.trade, 't0');
+  assert.equal(all(strip).filter(n => n !== strip && n.tag === 'button').length, 0);
+  assert.ok(text(strip).includes(SQUARES[24].name));
+  assert.ok(text(strip).includes('Answer'));
+  // The pure strip still describes the buttons the sheet will carry (task 10).
+  assert.deepEqual(tradeStrips(s, 1, [])[0].buttons.map(b => b.type).sort(), ['trade-accept', 'trade-counter', 'trade-decline']);
+});
+
+test('tapping a strip opens that deal for review, and sends nothing', () => {
+  const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));
+  assert.equal(tradeStrips(s, 1, [])[0].tap.disabled, false);
+  const sent = [];
+  const h = mount(s, 1, (a) => { sent.push(a); return Promise.resolve(); });
+  h.__dc.strips.children[0].click();
+  assert.equal(h.__dc.sheetMode, 'review');
+  assert.equal(h.__dc.reviewId, 't0');
+  assert.equal(h.__dc.sheet.hidden, false);
+  assert.deepEqual(sent, []);
+});
+
+test('a finished game\'s strip cannot be opened, with a reason', () => {
+  const s = { ...ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200)), phase: 'over' };
+  assertDisabledWithReason({ type: 'strip', ...tradeStrips(s, 1, [])[0].tap });
+  const h = mount(s, 1);
+  const strip = h.__dc.strips.children[0];
+  assert.equal(strip.disabled, true);
+  strip.click();
+  assert.equal(h.__dc.sheetMode, 'property');
+});
+
+test('the strips of a watcher are disabled too, with their own reason', () => {
+  const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));
+  const tap = tradeStrips(s, null, [])[0].tap;
+  assertDisabledWithReason({ type: 'strip', ...tap });
+  assert.match(tap.why, /players/i);
+});
+
+test('a strip whose Accept is blocked says why on its single line, and in its title', () => {
+  const offered = ok(offer({ ...owned({ 24: 1 }), cash: [1500, 1500] }, 0, { 24: [0, false] }, 200));
+  const h = mount(inAuction(offered), 1);
+  const strip = h.__dc.strips.children[0];
+  assert.match(text(strip), /auction/i);
+  assert.match(strip.attrs.title, /auction/i);
+  assert.equal(strip.children.length, 2);   // [text, badge]: still one line
+});
+
+test('the New deal entry is under the strips, disabled with a reason at the cap, and absent for a watcher', () => {
+  const h = mount(owned(Object.fromEntries(CAP_SQUARES.map(q => [q, 1]))), 0);
+  const entry = () => buttonsIn(h.__dc.newDeal).find(b => /new deal/i.test(b.textContent));
+  assert.equal(entry().disabled, false);
+  const s = capped();
+  render(s, h, { mySeat: 0, names: ['Ann', 'Bo'], onAction: () => {} });
+  assert.equal(entry().disabled, true);
+  assert.match(entry().attrs.title, /limit/i);   // at the cap the rule's reason wins
+  // Phones have no hover: the reason must also be visible text beside the button.
+  assert.match(text(h.__dc.newDeal), /limit/i);
+  assert.match(text(h.__dc.newDeal), new RegExp(String(MAX_TRADES)));
+  render(s, h, { mySeat: null, names: ['Ann', 'Bo'], onAction: () => {} });
+  assert.equal(entry(), undefined);
+  assert.ok(h.__dc.newDeal.hidden);
+});
+
+test('Counter is enabled for the seat being asked, and it opens the builder rather than sending', () => {
+  const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));
+  const counter = tradeStrips(s, 1, [])[0].buttons.find(b => b.type === 'trade-counter');
+  assert.equal(counter.disabled, undefined);
+  assert.equal(counter.opens, true);
+  assert.equal(counter.action, null);
+});
+
+test('a blocked Accept leads the strip as visible text with its own class, an unblocked one adds none', () => {
+  const offered = ok(offer({ ...owned({ 24: 1 }), cash: [1500, 1500] }, 0, { 24: [0, false] }, 200));
+  const h = mount(inAuction(offered), 1);
+  const strip = h.__dc.strips.children[0];
+  const visible = all(strip).filter(n => n.classes.has('dc-dealwhy')).map(n => n.textContent);
+  assert.equal(visible.length, 1);
+  assert.match(visible[0], /auction/i);
+  // and an enabled Accept draws no such line
+  const live = mount(offered, 1).__dc.strips.children[0];
+  assert.equal(all(live).filter(n => n.classes.has('dc-dealwhy')).length, 0);
+});
+
+test('deals awaiting you are drawn first, and the overflow collapses to +N more', () => {
+  const s = capped();           // seat 0 offered all eight, so they all await seat 1
+  const strips = tradeStrips(s, 1, []);
+  // When everything fits, everything is drawn and nothing collapses.
+  assert.deepEqual(stripsShown(strips.slice(0, 3), 3), { shown: strips.slice(0, 3), more: 0, moreMine: 0 });
+  // When it does not, "+N more" takes one of the lines.
+  const { shown, more } = stripsShown(strips, 3);
+  assert.deepEqual(shown.map(t => t.id), ['t0', 't1']);
+  assert.equal(more, 6);
+  // Seen from the offerer's seat nothing awaits them, order is still stable.
+  assert.equal(stripsShown(tradeStrips(s, 0, []), 3).more, 6);
+  // Awaiting-you comes before waiting-on-them whatever the ids say.
+  const mixed = [{ id: 'a', mine: false }, { id: 'b', mine: true }, { id: 'c', mine: false }, { id: 'd', mine: true }];
+  assert.deepEqual(stripsShown(mixed, 3), { shown: [mixed[1], mixed[3]], more: 2, moreMine: 0 });
+  assert.equal(stripsShown([], 3).more, 0);
+});
+
+test('the strip cap is the number measured at 375px (three one-line rows)', () => {
+  assert.equal(STRIP_CAP, 3);
+});
+
+test('with eight deals live only STRIP_CAP are drawn, the rest collapse, and the story and decision survive', () => {
+  const h = mount(capped(), 0);   // seat 0 is to roll, so the decision has its button
+  const drawn = h.__dc.strips.children.filter(n => n.classes.has('dc-deal'));
+  assert.equal(drawn.length, STRIP_CAP - 1);   // the "+N more" line takes the third row
+  const more = h.__dc.strips.children.find(n => n.classes.has('dc-more'));
+  assert.equal(more.textContent, `+${8 - (STRIP_CAP - 1)} more`);
+  assert.ok(buttonsIn(h.__dc.decision).some(b => /roll/i.test(b.textContent)));
+});
+
+// The fake DOM has no layout, so the stylesheet is the only place the story's
+// guaranteed room can be checked: .dc-feed must keep two lines whatever the deals do.
+test('the stylesheet gives the story feed a minimum height of two lines', () => {
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  const feedRule = /\.dc-feed\s*\{([^}]*)\}/.exec(css);
+  assert.ok(feedRule, '.dc-feed rule not found');
+  const min = /min-height:\s*([\d.]+)([a-z%]*)/.exec(feedRule[1]);
+  assert.ok(min, 'the feed has no min-height at all');
+  // One story line is about 1.02rem (16.4px at 16px). If the unit changes this fails loudly rather than matching nothing.
+  assert.equal(min[2], 'rem', `the guard measures rem; the feed now uses "${min[2]}", so update this test`);
+  assert.ok(Number(min[1]) >= 2.2, `the feed minimum is ${min[1]}rem, under two story lines`);
+});
+
+// ---- the deal sheet ---------------------------------------------------------
+const emptyDraft = () => ({ props: BLANK_PROPS, cash: 0, outs0: 0, outs1: 0, id: '' });
+const propsOf = (map) => Object.entries(map).reduce((p, [sq, [dest, mortgaged]]) => setChar(p, Number(sq), dealChar(dest, mortgaged)), BLANK_PROPS);
+const container = () => { const host = makeEl('div'); host.ownerDocument = { createElement: clickable }; return { host }; };
+const renderBoard = render;
+const bySquare = (root, sq) => all(root).find((n) => n.tag === 'button' && n.dataset.square === String(sq));
+const byType = (root, type) => all(root).find((n) => n.tag === 'button' && n.dataset.type === type);
+const byStep = (root, step) => all(root).find((n) => n.tag === 'button' && n.dataset.step === step);
+const settle = () => new Promise((r) => setImmediate(r));   // one event-loop turn, so promises resolve; not a timed wait
+const NAMES = ['Ann', 'Bo'];
+
+test('the sheet offers your properties to give and theirs to get', () => {
+  const s = owned({ 24: 0, 6: 1 });
+  const sheet = dealSheetFor(s, 0, emptyDraft(), []);
+  assert.deepEqual(sheet.give.chips.map(c => c.square), [24]);
+  assert.deepEqual(sheet.get.chips.map(c => c.square), [6]);
+});
+
+test('a chip is on when the draft holds it, and its destination follows the shelf', () => {
+  const s = owned({ 24: 0, 6: 1 });
+  const draft = { ...emptyDraft(), props: propsOf({ 24: [1, false], 6: [0, false] }) };
+  const sheet = dealSheetFor(s, 0, draft, []);
+  assert.equal(sheet.give.chips.find(c => c.square === 24).on, true);
+  assert.equal(sheet.get.chips.find(c => c.square === 6).on, true);
+  // and the other way round, from the other seat's side of the table
+  const them = dealSheetFor(s, 1, draft, []);
+  assert.equal(them.give.chips.find(c => c.square === 6).on, true);
+  assert.equal(them.get.chips.find(c => c.square === 24).on, true);
+});
+
+test('a property with a building in its set cannot be put in a deal, and says why', () => {
+  const s = { ...owned({ 21: 0, 23: 0, 24: 0 }), built: setChar(BLANK_BUILT, 21, '1') };
+  const chip = dealSheetFor(s, 0, emptyDraft(), []).give.chips.find(c => c.square === 24);
+  assert.ok(chip.disabled);
+  assert.match(chip.why, /build|hous|hotel/i);
+  // owner-blind: the same on their side of the table
+  const theirs = { ...owned({ 21: 1, 23: 1, 24: 1 }), built: setChar(BLANK_BUILT, 21, '1') };
+  const gone = dealSheetFor(theirs, 0, emptyDraft(), []).get.chips.find(c => c.square === 24);
+  assert.ok(gone.disabled);
+  assert.match(gone.why, /build|hous|hotel/i);
+  // and a set without buildings is free
+  const clear = dealSheetFor(owned({ 21: 0, 23: 0, 24: 0 }), 0, emptyDraft(), []).give.chips;
+  assert.ok(clear.every(c => !c.disabled));
+});
+
+test('the send button carries the reason the deal is not legal yet, and no error is ever raised', () => {
+  const s = { ...owned({ 24: 1 }), cash: [10, 1500] };
+  const empty = dealSheetFor(s, 0, emptyDraft(), []).send;
+  assert.ok(empty.disabled);
+  assert.ok(empty.why.length > 0);
+  const broke = dealSheetFor(s, 0, { ...emptyDraft(), props: propsOf({ 24: [0, false] }), cash: 200 }, []).send;
+  assert.ok(broke.disabled);
+  assert.match(broke.why, /cash|afford|enough/i);
+});
+
+test('a legal draft enables send as an offer, or as a counter when it came from a deal', () => {
+  const s = { ...owned({ 24: 1 }), cash: [1500, 1500] };
+  const draft = { ...emptyDraft(), props: propsOf({ 24: [0, false] }), cash: 200 };
+  assert.deepEqual(
+    [dealSheetFor(s, 0, draft, []).send.disabled, dealSheetFor(s, 0, draft, []).send.type],
+    [false, 'trade-offer']);
+  const withDeal = ok(offer(s, 1, { 24: [0, false] }, 200));
+  const counter = dealSheetFor(withDeal, 0, { ...draft, id: 't0' }, []).send;
+  assert.equal(counter.type, 'trade-counter');
+  assert.equal(counter.action.id, 't0');
+});
+
+test('get-out cards appear as something to give only when you hold one', () => {
+  const none = dealSheetFor(createInitialState(), 0, emptyDraft(), []);
+  assert.equal(none.give.cards, undefined);
+  const held = dealSheetFor({ ...createInitialState(), outCards: ['lj', ''] }, 0, emptyDraft(), []);
+  assert.ok(held.give.cards.max >= 1);
+  assert.equal(held.get.cards, undefined);   // theirs: they hold none
+});
+
+test('money goes on one shelf or the other, never both', () => {
+  const s = { ...owned({ 24: 1 }), cash: [1500, 1500] };
+  const giving = dealSheetFor(s, 0, { ...emptyDraft(), props: propsOf({ 24: [0, false] }), cash: 200 }, []);
+  assert.equal(giving.give.cash, 200);
+  assert.equal(giving.get.cash, 0);
+  const getting = dealSheetFor(s, 0, { ...emptyDraft(), props: propsOf({ 24: [0, false] }), cash: -200 }, []);
+  assert.equal(getting.give.cash, 0);
+  assert.equal(getting.get.cash, 200);
+});
+
+test('the cash figure is signed in seat 0\'s frame, so the second seat\'s shelves are mirrored', () => {
+  const s = { ...owned({ 24: 0 }), cash: [1500, 1500] };
+  // seat 0 pays seat 1 200 (positive): for seat 1 that is money they GET
+  const draft = { ...emptyDraft(), props: propsOf({ 24: [1, false] }), cash: 200 };
+  const theirSide = dealSheetFor(s, 1, draft, []);
+  assert.equal(theirSide.get.cash, 200);
+  assert.equal(theirSide.give.cash, 0);
+  // seat 1 raising GIVE writes a NEGATIVE figure
+  assert.equal(nudgeCash(emptyDraft(), 1, 'give', +1).cash, -10);
+  assert.equal(nudgeCash(emptyDraft(), 0, 'give', +1).cash, 10);
+  // and the engine agrees on who pays: seat 1 builds "I give 200 and get 24" and it comes out of seat 1's pocket
+  let built = { ...emptyDraft(), props: propsOf({ 24: [1, false] }) };
+  for (let i = 0; i < 12; i++) built = nudgeCash(built, 1, 'give', +1);   // 10 x 9, 50, 50 ... however far the steps go
+  const target = dealSheetFor(s, 1, built, []);
+  assert.equal(target.give.cash, -built.cash);
+  assert.equal(target.send.disabled, false);
+  let t = ok(applyAction(s, target.send.action, 1));
+  const paid = target.give.cash;
+  t = ok(applyAction(t, { type: 'trade-accept', id: 't0' }, 0));
+  assert.deepEqual(t.cash, [1500 + paid, 1500 - paid]);   // seat 1 paid seat 0
+});
+
+test('raising one shelf\'s money drives the other to zero, and steps are reversible', () => {
+  let d = { ...emptyDraft(), cash: -50 };           // seat 0 receives 50
+  d = nudgeCash(d, 0, 'give', +1);                   // raise GIVE above zero
+  assert.equal(d.cash, 10);
+  d = nudgeCash(d, 0, 'get', +1);                    // and back the other way
+  assert.equal(d.cash, -10);
+  // down at an empty shelf changes nothing (and must not wipe the other shelf)
+  assert.equal(nudgeCash({ ...emptyDraft(), cash: -50 }, 0, 'give', -1).cash, -50);
+  // going up then down returns to where you were, across every step boundary
+  for (const start of [0, 10, 90, 100, 450, 500, 900]) {
+    const up = nudgeCash({ ...emptyDraft(), cash: start }, 0, 'give', +1);
+    assert.equal(nudgeCash(up, 0, 'give', -1).cash, start, `from ${start}`);
+  }
+  assert.equal(nudgeCash({ ...emptyDraft(), cash: 1000000 }, 0, 'give', +1).cash, 1000000);
+});
+
+test('toggling a chip adds and removes it, stamping mortgages as they stand', () => {
+  const s = { ...owned({ 24: 0, 6: 1 }), mortg: setChar('0'.repeat(40), 6, '1') };
+  let d = toggleChip(s, 0, emptyDraft(), 24);
+  assert.equal(dealDest(d.props, 24), 1);
+  d = toggleChip(s, 0, d, 6);
+  assert.equal(dealDest(d.props, 6), 0);
+  assert.equal(d.props[6], 'm');                      // it was mortgaged when the offer was made
+  d = toggleChip(s, 0, d, 24);
+  assert.equal(d.props[24], '.');
+  // a square that is not yours or theirs, or is in a built set, is left alone
+  assert.equal(toggleChip(s, 0, emptyDraft(), 5).props, BLANK_PROPS);
+  const built = { ...owned({ 21: 0, 24: 0 }), built: setChar(BLANK_BUILT, 21, '1') };
+  assert.equal(toggleChip(built, 0, emptyDraft(), 24).props, BLANK_PROPS);
+});
+
+test('a draft forgets a square that has since changed hands, so it can never be sent stale', () => {
+  const s = owned({ 24: 0 });
+  const draft = { ...emptyDraft(), props: propsOf({ 24: [1, false] }) };
+  assert.equal(tidyDraft(s, 0, draft).props[24], '1');
+  const moved = { ...s, own: setChar(s.own, 24, '1') };
+  assert.equal(tidyDraft(moved, 0, draft).props[24], '.');
+  assert.equal(tidyDraft(s, 0, { ...draft, outs0: 1 }).outs0, 0);   // no card is held
+});
+
+test('every disabled control on the builder says why, and the engine agrees with the send button', () => {
+  const base = { ...owned({ 24: 1, 21: 0, 23: 0 }), cash: [1500, 1500] };
+  const mine = (sq, dest = 1) => propsOf({ [sq]: [dest, false] });
+  const withDeal = ok(offer(base, 1, { 24: [0, false] }, 200));   // t0 awaits seat 0
+  let cappedFor0 = owned(Object.fromEntries(CAP_SQUARES.map(q => [q, 1])));
+  for (const q of CAP_SQUARES) cappedFor0 = ok(offer(cappedFor0, 1, { [q]: [0, false] }, 0));
+  const cases = [
+    ['an empty deal', base, 0, emptyDraft(), true],
+    ['a legal gift', base, 0, { ...emptyDraft(), props: mine(21) }, false],
+    ['cannot afford', { ...base, cash: [10, 1500] }, 0, { ...emptyDraft(), props: propsOf({ 24: [0, false] }), cash: 200 }, true],
+    ['a card nobody holds', base, 0, { ...emptyDraft(), props: mine(21), outs0: 1 }, true],
+    ['houses on the set', { ...base, built: setChar(BLANK_BUILT, 21, '1') }, 0, { ...emptyDraft(), props: mine(23) }, true],
+    ['the game is over', { ...base, phase: 'over' }, 0, { ...emptyDraft(), props: mine(21) }, true],
+    ['a watcher', base, null, { ...emptyDraft(), props: mine(21) }, true],
+    ['at the deal limit', capped(), 0, { ...emptyDraft(), props: propsOf({ 1: [0, false] }) }, true],
+    ['a counter that is legal', withDeal, 0, { ...emptyDraft(), props: propsOf({ 24: [0, false] }), cash: 100, id: 't0' }, false],
+    // Eight deals live, one of them awaiting seat 0 (offered by seat 1): a counter adds none, so it is allowed at the cap.
+    ['a counter at the deal limit', cappedFor0, 0, { ...emptyDraft(), props: propsOf({ 1: [0, false] }), id: 't0' }, false],
+    ['a counter whose deal is gone', base, 0, { ...emptyDraft(), props: mine(21), id: 't0' }, true],
+    ['a counter of a deal that awaits the other seat', withDeal, 1, { ...emptyDraft(), props: propsOf({ 24: [1, false] }), id: 't0' }, true]
+  ];
+  for (const [name, state, seat, draft, wantDisabled] of cases) {
+    const sheet = dealSheetFor(state, seat, draft, NAMES);
+    assert.equal(sheet.send.disabled, wantDisabled, name);
+    if (sheet.send.disabled) { assertDisabledWithReason(sheet.send); assert.equal(sheet.problem, sheet.send.why, name); }
+    else assert.equal(sheet.problem, '');
+    // the single source of truth: the engine takes exactly what the button would send, and refuses the rest
+    if (seat === 0 || seat === 1) {
+      const r = applyAction(state, sheet.send.action, seat);
+      assert.equal(r.error === undefined, !sheet.send.disabled, `${name}: engine said ${r.error}`);
+    }
+    for (const c of [...sheet.give.chips, ...sheet.get.chips]) if (c.disabled) assertDisabledWithReason(c);
+  }
+});
+
+test('the money steppers say why when they cannot move', () => {
+  const sheet = dealSheetFor(owned({ 24: 1 }), 0, emptyDraft(), []);
+  assertDisabledWithReason({ type: 'down', ...sheet.give.down });
+  assertDisabledWithReason({ type: 'down', ...sheet.get.down });
+  assert.equal(sheet.give.up.disabled, false);
+  const top = dealSheetFor(owned({ 24: 1 }), 0, { ...emptyDraft(), cash: 1000000 }, []);
+  assertDisabledWithReason({ type: 'up', ...top.give.up });
+  assert.equal(top.give.down.disabled, false);
+});
+
+test('a counter opens the sheet with their terms already in it', () => {
+  const { host } = container();
+  const s = { ...ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200)), cash: [1500, 1500] };
+  renderBoard(s, host, { mySeat: 1, names: [], onAction: () => {} });
+  const strip = host.__dc.strips.children.find((n) => n.dataset.trade === 't0');
+  strip.click();
+  assert.equal(host.__dc.sheetMode, 'review');
+  byType(host.__dc.sheet, 'trade-counter').click();
+  assert.equal(host.__dc.sheetMode, 'deal');
+  assert.equal(host.__dc.draft.id, 't0');
+  assert.equal(host.__dc.draft.cash, 200);
+  assert.equal(dealDest(host.__dc.draft.props, 24), 0);
+  // and the chip for their offer is already on
+  assert.ok(bySquare(host.__dc.sheet, 24).classes.has('is-on'));
+});
+
+test('a counter keeps the deal\'s id and is sent as a counter, which the engine takes', async () => {
+  const { host } = container();
+  const sent = [];
+  const s = { ...ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200)), cash: [1500, 1500] };
+  const onAction = (a) => { sent.push(a); return Promise.resolve(); };
+  renderBoard(s, host, { mySeat: 1, names: NAMES, onAction });
+  host.__dc.strips.children[0].click();
+  byType(host.__dc.sheet, 'trade-counter').click();
+  byStep(host.__dc.sheet, 'get-down').click();       // they asked 200 of you: take it down a step, to 150
+  byType(host.__dc.sheet, 'trade-counter').click();  // and the send button is now a counter, not an offer
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].type, 'trade-counter');
+  assert.equal(sent[0].id, 't0');
+  assert.equal(sent[0].cash, 150);
+  const landed = ok(applyAction(s, sent[0], 1));
+  renderBoard(landed, host, { mySeat: 1, names: NAMES, onAction });   // the snapshot the write produces
+  await settle();
+  assert.equal(host.__dc.sheet.hidden, true);        // it landed, so the sheet closes itself
+  assert.equal(host.__dc.draft, null);
+});
+
+test('a deal can be built from nothing, sent, and the other seat answers it', async () => {
+  const { host } = container();
+  const sent = [];
+  const s = { ...owned({ 24: 0, 6: 1 }), cash: [1500, 1500] };
+  const onAction = (a) => { sent.push(a); return Promise.resolve(); };
+  renderBoard(s, host, { mySeat: 0, names: NAMES, onAction });
+  const entry = buttonsIn(host.__dc.newDeal).find((b) => /new deal/i.test(b.textContent));
+  entry.click();
+  assert.equal(host.__dc.sheetMode, 'deal');
+  assert.equal(host.__dc.draft.id, '');
+  assert.equal(byType(host.__dc.sheet, 'trade-offer').disabled, true);   // nothing in it yet
+  bySquare(host.__dc.sheet, 24).click();          // give 24
+  bySquare(host.__dc.sheet, 6).click();           // get 6
+  byStep(host.__dc.sheet, 'give-up').click();
+  const send = byType(host.__dc.sheet, 'trade-offer');
+  assert.equal(send.disabled, false);
+  send.click();
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].type, 'trade-offer');
+  assert.equal(sent[0].cash, 10);
+  assert.equal(dealDest(sent[0].props, 24), 1);
+  assert.equal(dealDest(sent[0].props, 6), 0);
+  const after = ok(applyAction(s, sent[0], 0));
+  renderBoard(after, host, { mySeat: 0, names: NAMES, onAction });    // the snapshot the write produces
+  await settle();
+  assert.equal(host.__dc.sheet.hidden, true);
+  // the other phone now sees the strip and can accept from the review face
+  const other = container().host;
+  const accepted = [];
+  renderBoard(after, other, { mySeat: 1, names: NAMES, onAction: (a) => { accepted.push(a); return Promise.resolve(); } });
+  other.__dc.strips.children[0].click();
+  byType(other.__dc.sheet, 'trade-accept').click();
+  assert.deepEqual(accepted, [{ type: 'trade-accept', id: 't0' }]);
+  assert.equal(applyAction(after, accepted[0], 1).error, undefined);
+});
+
+test('a refused send leaves the sheet and the whole draft open, and it can be sent again', async () => {
+  // main-room's submitAction shakes the board on a refusal and RETURNS NORMALLY: the promise
+  // resolves exactly as it does for a landed write, so only state can say which happened.
+  const { host } = container();
+  const sent = [];
+  const s = { ...owned({ 24: 0, 21: 0, 6: 1 }), cash: [1500, 1500] };
+  const onAction = (a) => { sent.push(a); return Promise.resolve(); };
+  renderBoard(s, host, { mySeat: 0, names: NAMES, onAction });
+  buttonsIn(host.__dc.newDeal).find((b) => /new deal/i.test(b.textContent)).click();
+  bySquare(host.__dc.sheet, 24).click();
+  bySquare(host.__dc.sheet, 21).click();
+  bySquare(host.__dc.sheet, 6).click();
+  byStep(host.__dc.sheet, 'give-up').click();
+  const draft = host.__dc.draft;
+  byType(host.__dc.sheet, 'trade-offer').click();
+  assert.equal(sent.length, 1);
+  // Meanwhile the other player mortgaged the property being asked for: the engine would say trade-stale.
+  const raced = { ...s, mortg: setChar(BLANK_MORTG, 6, '1') };
+  assert.equal(applyAction(raced, sent[0], 0).error, 'trade-stale');
+  renderBoard(raced, host, { mySeat: 0, names: NAMES, onAction });
+  await settle();                                     // the refusal settles like any write
+  assert.equal(host.__dc.sent, null);                 // and leaves nothing behind to close a later sheet
+  assert.equal(host.__dc.sheetMode, 'deal');
+  assert.equal(host.__dc.sheet.hidden, false);
+  // all three squares and the cash survive (the paint re-stamps the mortgage the other player made)
+  for (const sq of [24, 21, 6]) assert.notEqual(dealDest(host.__dc.draft.props, sq), -1, `square ${sq} dropped`);
+  assert.equal(host.__dc.draft.cash, draft.cash);
+  // and the draft can simply be sent again, now as a deal the engine takes
+  const resend = byType(host.__dc.sheet, 'trade-offer');
+  assert.equal(resend.disabled, false);
+  resend.click();
+  assert.equal(sent.length, 2);
+  assert.equal(applyAction(raced, sent[1], 0).error, undefined);
+});
+
+test('a refused send does not close the sheet when another deal lands afterwards', async () => {
+  const { host } = container();
+  const s = { ...owned({ 24: 0, 6: 1 }), cash: [1500, 1500] };
+  const onAction = () => Promise.resolve();
+  renderBoard(s, host, { mySeat: 0, names: NAMES, onAction });
+  buttonsIn(host.__dc.newDeal)[0].click();
+  bySquare(host.__dc.sheet, 24).click();
+  byType(host.__dc.sheet, 'trade-offer').click();
+  await settle();                                     // refused: state never moved
+  assert.equal(host.__dc.sheetMode, 'deal');
+  const theirs = ok(offer(s, 1, { 6: [0, false] }, 0));   // their offer arrives later
+  renderBoard(theirs, host, { mySeat: 0, names: NAMES, onAction });
+  assert.equal(host.__dc.sheetMode, 'deal');
+});
+
+test('an incoming offer from the other player arriving while our send is refused does not close the sheet', async () => {
+  const { host } = container();
+  const s = { ...owned({ 24: 0, 6: 1 }), cash: [1500, 1500] };
+  let release;
+  const onAction = () => new Promise((r) => { release = r; });
+  renderBoard(s, host, { mySeat: 0, names: NAMES, onAction });
+  buttonsIn(host.__dc.newDeal)[0].click();
+  bySquare(host.__dc.sheet, 24).click();
+  const draft = host.__dc.draft;
+  byType(host.__dc.sheet, 'trade-offer').click();             // in flight, and about to be refused
+  assert.notEqual(host.__dc.sent, null);
+  renderBoard(ok(offer(s, 1, { 6: [0, false] }, 0)), host, { mySeat: 0, names: NAMES, onAction });   // theirs lands first
+  assert.equal(host.__dc.sheetMode, 'deal');
+  assert.deepEqual(host.__dc.draft, draft);
+  release();
+  await settle();
+  assert.equal(host.__dc.sheetMode, 'deal');
+  assert.deepEqual(host.__dc.draft, draft);
+});
+
+test('sendLanded reads state: a new offer moves the counter, a counter hands the deal to the other seat', () => {
+  assert.equal(sendLanded(fresh(), 0, null), false);
+  assert.equal(sendLanded({ ...fresh(), tradeSeq: 0 }, 0, { id: '', seq: 0 }), false);
+  const mine = ok(offer(owned({ 24: 0 }), 0, { 24: [1, false] }, 0));        // t0, awaiting seat 1
+  assert.equal(sendLanded(mine, 0, { id: '', seq: 0 }), true);
+  assert.equal(sendLanded(mine, 1, { id: '', seq: 0 }), false);            // to seat 1 it is the other player's
+  assert.equal(sendLanded(mine, 0, { id: '', seq: 1 }), false);            // an older id is not this send
+  const { tradeSeq, ...legacy } = fresh();            // a game that began before deals existed
+  assert.equal(sendLanded(legacy, 0, { id: '', seq: 0 }), false);
+  const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));   // awaits seat 1
+  assert.equal(sendLanded(s, 1, { id: 't0', seq: 1 }), false);          // seat 1 still holds it
+  assert.equal(sendLanded(s, 0, { id: 't0', seq: 1 }), true);           // it now waits on the other seat
+  assert.equal(sendLanded({ ...s, trades: {} }, 1, { id: 't0', seq: 1 }), true);   // gone
+});
+
+test('a refused Accept leaves the review open, and a landed one closes it with the deal', async () => {
+  const { host } = container();
+  const s = { ...ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200)), cash: [1500, 1500] };
+  const onAction = () => Promise.resolve();
+  renderBoard(s, host, { mySeat: 1, names: NAMES, onAction });
+  host.__dc.strips.children[0].click();
+  byType(host.__dc.sheet, 'trade-accept').click();
+  await settle();                                     // refused: state never moved
+  assert.equal(host.__dc.sheetMode, 'review');
+  assert.equal(host.__dc.sheet.hidden, false);
+  byType(host.__dc.sheet, 'trade-decline').click();
+  renderBoard(ok(applyAction(s, { type: 'trade-decline', id: 't0' }, 1)), host, { mySeat: 1, names: NAMES, onAction });
+  await settle();
+  assert.equal(host.__dc.sheet.hidden, true);
+});
+
+test('sending a deal passes the draft through as the action', () => {
+  const { host } = container();
+  const sent = [];
+  const s = { ...owned({ 24: 1 }), cash: [1500, 1500] };
+  renderBoard(s, host, { mySeat: 0, names: [], onAction: (a) => { sent.push(a); return Promise.resolve(); } });
+  host.__dc.draft = { ...emptyDraft(), props: propsOf({ 24: [0, false] }), cash: 200 };
+  host.__dc.sheetMode = 'deal';
+  renderBoard(s, host, { mySeat: 0, names: [], onAction: (a) => { sent.push(a); return Promise.resolve(); } });
+  byType(host.__dc.sheet, 'trade-offer').click();
+  assert.equal(sent.at(-1).type, 'trade-offer');
+  assert.equal(sent.at(-1).cash, 200);
+  assert.equal(dealDest(sent.at(-1).props, 24), 0);
+});
+
+test('the builder shows a disabled chip\'s reason and the send button\'s reason as visible text', () => {
+  const { host } = container();
+  const s = { ...owned({ 21: 0, 24: 0 }), cash: [1500, 1500], built: setChar(BLANK_BUILT, 21, '1') };
+  renderBoard(s, host, { mySeat: 0, names: NAMES, onAction: () => {} });
+  buttonsIn(host.__dc.newDeal)[0].click();
+  const chip = bySquare(host.__dc.sheet, 24);
+  assert.equal(chip.disabled, true);
+  assert.match(text(chip), /build|hous|hotel/i);                     // inside the chip, not only a title
+  const send = byType(host.__dc.sheet, 'trade-offer');
+  assert.equal(send.disabled, true);
+  assert.ok(all(host.__dc.sheet).some((n) => n.classes.has('dc-problem') && n.textContent.length > 0));
+  assert.equal(byStep(host.__dc.sheet, 'give-down').disabled, true);
+});
+
+test('cancelling a counter goes back to the deal, and cancelling a new deal closes the sheet', () => {
+  const { host } = container();
+  const s = { ...ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200)), cash: [1500, 1500] };
+  renderBoard(s, host, { mySeat: 1, names: NAMES, onAction: () => {} });
+  host.__dc.strips.children[0].click();
+  byType(host.__dc.sheet, 'trade-counter').click();
+  byType(host.__dc.sheet, 'cancel').click();
+  assert.equal(host.__dc.sheetMode, 'review');
+  byType(host.__dc.sheet, 'close').click();
+  assert.equal(host.__dc.sheet.hidden, true);
+  buttonsIn(host.__dc.newDeal)[0].click();
+  assert.equal(host.__dc.sheetMode, 'deal');
+  byType(host.__dc.sheet, 'cancel').click();
+  assert.equal(host.__dc.sheet.hidden, true);
+  assert.equal(host.__dc.sheetMode, 'property');
+  assert.equal(host.__dc.draft, null);
+});
+
+test('a deal that is answered elsewhere closes its review, and a finished game disables the builder\'s send', () => {
+  const { host } = container();
+  const s = { ...ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200)), cash: [1500, 1500] };
+  renderBoard(s, host, { mySeat: 1, names: NAMES, onAction: () => {} });
+  host.__dc.strips.children[0].click();
+  assert.equal(host.__dc.sheet.hidden, false);
+  const declined = ok(applyAction(s, { type: 'trade-decline', id: 't0' }, 1));
+  renderBoard(declined, host, { mySeat: 1, names: NAMES, onAction: () => {} });
+  assert.equal(host.__dc.sheet.hidden, true);
+  // the builder, open when the game ends, can still be closed but cannot send
+  buttonsIn(host.__dc.newDeal)[0].click();
+  const over = { ...declined, phase: 'over' };
+  renderBoard(over, host, { mySeat: 1, names: NAMES, onAction: () => {} });
+  assertDisabledWithReason(dealSheetFor(over, 1, emptyDraft(), NAMES).send);
+  assert.equal(byType(host.__dc.sheet, 'trade-offer').disabled, true);
+});
+
+test('the review shows what you get above what you give, and the buttons in foot order', () => {
+  const s = { ...ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200)), cash: [1500, 1500] };
+  const r = dealReviewFor(s, 1, 't0', NAMES);
+  assert.equal(r.title, "Ann's offer");
+  assert.deepEqual(r.get.items.map(i => i.square), []);
+  assert.equal(r.get.cash, 200);
+  assert.deepEqual(r.give.items.map(i => i.square), [24]);
+  assert.deepEqual(r.buttons.map(b => b.type), ['trade-decline', 'trade-counter', 'trade-accept']);
+  const mine = dealReviewFor(s, 0, 't0', NAMES);
+  assert.equal(mine.title, 'Your offer to Bo');
+  assert.deepEqual(mine.get.items.map(i => i.square), [24]);
+  assert.equal(mine.give.cash, 200);
+  assert.deepEqual(mine.buttons.map(b => b.type), ['trade-cancel']);
+  assert.equal(dealReviewFor(s, 1, 't9', NAMES), null);
+  assert.equal(dealReviewFor({ ...s, trades: undefined }, 1, 't0', NAMES), null);
+});
+
+test('a blocked Accept on the review says why in text, and counter is still open to fix it', () => {
+  const offered = ok(offer({ ...owned({ 24: 1 }), cash: [1500, 1500] }, 0, { 24: [0, false] }, 200));
+  const { host } = container();
+  renderBoard({ ...offered, cash: [10, 1500] }, host, { mySeat: 1, names: NAMES, onAction: () => {} });
+  host.__dc.strips.children[0].click();
+  const accept = byType(host.__dc.sheet, 'trade-accept');
+  assert.equal(accept.disabled, true);
+  assert.match(text(host.__dc.sheet), /afford/i);
+  assert.equal(byType(host.__dc.sheet, 'trade-counter').disabled, false);
+});
+
+test('the card\'s deal button opens a builder with that property already on its shelf', () => {
+  const { host } = container();
+  const s = owned({ 24: 1, 6: 0 });
+  renderBoard(s, host, { mySeat: 0, names: NAMES, onAction: () => {} });
+  host.__dc.tiles[24].click();
+  const deal = byType(host.__dc.sheet, 'new-deal');
+  assert.equal(deal.disabled, false);
+  deal.click();
+  assert.equal(host.__dc.sheetMode, 'deal');
+  assert.equal(dealDest(host.__dc.draft.props, 24), 0);
+  assert.equal(host.__dc.draft.id, '');
+  // a square nobody owns has nothing to deal for, and says so
+  const bare = container().host;
+  renderBoard(fresh(), bare, { mySeat: 0, names: NAMES, onAction: () => {} });
+  bare.__dc.tiles[24].click();
+  const none = byType(bare.__dc.sheet, 'new-deal');
+  assert.equal(none.disabled, true);
+  assert.match(text(bare.__dc.sheet), /nobody owns/i);
+});
+
+test('the builder has its own styles, and the sheet still sits under the chat', () => {
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  for (const cls of ['dc-shelf', 'dc-dchip', 'dc-cashrow', 'dc-sheetfoot', 'dc-problem']) {
+    assert.ok(new RegExp(`\\.${cls}\\b`).test(css), `${cls} has no style`);
+  }
+  assert.match(/\.dc-sheet\s*\{[^}]*z-index:\s*5\b/.exec(css)[0], /z-index:\s*5/);
+  assert.match(/\.chat-sheet\s*\{[^}]*z-index:\s*10\b/.exec(css)[0], /z-index:\s*10/);
+});
+
+test('a chip\'s name is its own class, sized for the sheet and larger than its reason; no board-tile class is borrowed', () => {
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  const size = (sel) => { const m = new RegExp(`${sel.replace('.', '\\.')}\\s*\\{[^}]*font-size:\\s*([\\d.]+)rem`).exec(css); assert.ok(m, `${sel} has no rem font-size`); return Number(m[1]); };
+  assert.ok(size('.dc-dchip .dc-chipname') > size('.dc-chipnote'));
+  assert.ok(size('.dc-dchip .dc-chipname') >= 0.75);
+  const { host } = container();
+  renderBoard(owned({ 21: 0, 24: 0, 6: 1 }), host, { mySeat: 0, names: NAMES, onAction: () => {} });
+  buttonsIn(host.__dc.newDeal)[0].click();
+  for (const n of all(host.__dc.sheet)) {
+    assert.ok(!n.classes.has('dc-nm') && !n.classes.has('dc-sw'), 'the sheet borrowed a board-tile class');
+  }
+  assert.ok(all(bySquare(host.__dc.sheet, 24)).some((n) => n.classes.has('dc-chipname')));
+});
+
+test('a greyed money stepper says why as visible text', () => {
+  const { host } = container();
+  renderBoard(owned({ 24: 0 }), host, { mySeat: 0, names: NAMES, onAction: () => {} });
+  buttonsIn(host.__dc.newDeal)[0].click();
+  const notes = all(host.__dc.sheet).filter((n) => n.classes.has('dc-stepwhy')).map((n) => n.textContent);
+  assert.equal(notes.length, 2);   // both shelves start at zero
+  assert.ok(notes.every((t) => t.length > 0));
+});
+
+// ---- the auction panel ------------------------------------------------------
+const auction = (square, over = {}) =>
+  ({ ...createInitialState(), phase: 'auction', aucSq: square, aucBid: 0, aucBy: -1, aucPass: 0, ...over });
+const act = (s, t, seat = s.actor) => applyAction(s, typeof t === 'string' ? { type: t } : t, seat);
+const NM = ['Harvey', 'Shruti'];
+
+test('the auction panel shows the lot, what it is worth, and the standing bid', () => {
+  let a = auction(24, { cash: [840, 1210], actor: 1, turn: 0 });
+  a = ok(act(a, { type: 'bid', amount: 60 }, 1));
+  const p = auctionFor(a, 0, 70, NM);
+  assert.equal(p.lot, SQUARES[24].name);
+  assert.equal(p.worth, SQUARES[24].price);
+  assert.equal(p.setName, SETS[SQUARES[24].set].name);
+  assert.equal(p.setColour, SETS[SQUARES[24].set].colour);
+  assert.equal(p.standing, 60);
+  assert.match(p.standingBy, /Shruti/);
+  assert.equal(p.youHave, 840);
+});
+
+test('a station has no colour set, and a bid of your own reads as yours', () => {
+  const p = auctionFor(auction(5, { actor: 0 }), 0, MIN_BID, NM);
+  assert.equal(p.setName, null);
+  assert.ok(p.setColour);
+  const mine = ok(act(auction(24, { actor: 0 }), { type: 'bid', amount: 20 }, 0));
+  assert.match(auctionFor(mine, 0, 30, NM).standingBy, /your/i);
+});
+
+test('the minimum is ten to open and a step above a standing bid', () => {
+  const a = auction(24, { cash: [840, 1210], actor: 1 });
+  assert.equal(auctionFor(a, 1, MIN_BID, []).min, MIN_BID);
+  const bid = ok(act(a, { type: 'bid', amount: 60 }, 1));
+  assert.equal(auctionFor(bid, 0, 70, []).min, 60 + BID_STEP);
+});
+
+test('the stepper is clamped to what you can legally bid', () => {
+  const a = auction(24, { cash: [100, 1210], actor: 0 });
+  assert.equal(auctionFor(a, 0, 5, []).bid.amount, MIN_BID);
+  assert.equal(auctionFor(a, 0, 5000, []).bid.amount, 100);
+  assert.equal(auctionFor(a, 0, 50, []).bid.amount, 50);
+  // cash that is not a multiple of the step still tops out on a legal amount
+  const odd = auction(24, { cash: [157, 1210], actor: 0 });
+  assert.equal(auctionFor(odd, 0, 5000, []).bid.amount, 150);
+  assert.equal(auctionFor(odd, 0, 55, []).bid.amount, 50);
+  assert.equal(auctionFor(odd, 0, NaN, []).bid.amount, MIN_BID);
+  assert.equal(auctionFor(odd, 0, null, []).bid.amount, MIN_BID);
+});
+
+test('every amount the stepper offers is one the engine accepts', () => {
+  let a = auction(24, { cash: [157, 1210], actor: 0 });
+  for (const want of [0, 10, 55, 90, 157, 1e9]) {
+    const p = auctionFor(a, 0, want, []);
+    assert.equal(p.bid.disabled, false);
+    assert.equal(act(a, { type: 'bid', amount: p.bid.amount }, 0).error, undefined, `step ${want}`);
+  }
+  a = ok(act(a, { type: 'bid', amount: 100 }, 0));
+  const p = auctionFor(a, 1, 100, []);   // equal to the standing bid is not beating it
+  assert.equal(p.bid.amount, 100 + BID_STEP);
+  assert.equal(act(a, { type: 'bid', amount: p.bid.amount }, 1).error, undefined);
+  assert.equal(act(a, { type: 'bid', amount: 100 }, 1).error, 'bad-bid');
+});
+
+test('a player who cannot reach the minimum gets a disabled bid with the reason', () => {
+  let a = auction(24, { cash: [50, 1210], actor: 1 });
+  a = ok(act(a, { type: 'bid', amount: 100 }, 1));
+  const p = auctionFor(a, 0, 110, []);
+  assert.ok(p.bid.disabled);
+  assert.match(p.bid.why, /50|hold|enough/i);
+  assert.ok(p.pass.label.length > 0);
+  assert.equal(p.pass.disabled, false);   // they can still let it go
+  assert.equal(p.note, p.bid.why);        // and the reason is the visible line, not only a title
+  assertDisabledWithReason({ type: 'up', ...p.up });
+  assertDisabledWithReason({ type: 'down', ...p.down });
+});
+
+test('the stepper buttons stop at the ends, and say why', () => {
+  const a = auction(24, { cash: [840, 1210], actor: 0 });
+  const low = auctionFor(a, 0, MIN_BID, []);
+  assertDisabledWithReason({ type: 'down', ...low.down });
+  assert.equal(low.up.disabled, false);
+  const high = auctionFor(a, 0, 5000, []);
+  assertDisabledWithReason({ type: 'up', ...high.up });
+  assert.equal(high.down.disabled, false);
+});
+
+test('the pass wording changes once a bid stands', () => {
+  const a = auction(24, { cash: [840, 1210], actor: 1 });
+  const none = auctionFor(a, 1, MIN_BID, []).pass.label;
+  const bid = auctionFor(ok(act(a, { type: 'bid', amount: 60 }, 1)), 0, 70, []).pass.label;
+  assert.notEqual(none, bid);
+  assert.match(none, /pass/i);
+  assert.match(bid, /let them have it/i);
+});
+
+test('the auction is the live decision, and the lot is marked out on the board', () => {
+  const { host } = container();
+  const a = auction(24, { cash: [840, 1210], actor: 0, turn: 0 });
+  renderBoard(a, host, { mySeat: 0, names: [], onAction: () => {} });
+  assert.ok(text(host.__dc.decision).includes(SQUARES[24].name));
+  assert.equal(host.__dc.tiles[24].dataset.lot, '1');
+  assert.equal(host.__dc.tiles[23].dataset.lot, undefined);
+  const over = { ...a, phase: 'end', aucSq: -1 };
+  renderBoard(over, host, { mySeat: 0, names: [], onAction: () => {} });
+  assert.equal(host.__dc.tiles[24].dataset.lot, undefined);
+});
+
+test('the other player sees the auction without being able to bid in it', () => {
+  const a = auction(24, { cash: [840, 1210], actor: 0 });
+  const p = auctionFor(a, 1, MIN_BID, []);
+  assertDisabledWithReason({ type: 'bid', ...p.bid });
+  assertDisabledWithReason({ type: 'pass', ...p.pass });
+  assertDisabledWithReason({ type: 'up', ...p.up });
+  assertDisabledWithReason({ type: 'down', ...p.down });
+  assert.equal(p.note, p.bid.why);
+  const w = auctionFor(a, null, MIN_BID, []);
+  assertDisabledWithReason({ type: 'bid', ...w.bid });
+  assertDisabledWithReason({ type: 'pass', ...w.pass });
+  assert.equal(w.youHave, null);
+  // and drawn, every control in the panel is dead
+  const { host } = container();
+  renderBoard(a, host, { mySeat: null, names: NM, onAction: () => assert.fail('a watcher sent something') });
+  assert.deepEqual(buttonsIn(host.__dc.decision).filter((b) => !b.disabled), []);
+  assert.match(text(host.__dc.decision), /watching/i);
+});
+
+test('there is no panel when no auction is running', () => {
+  assert.equal(auctionFor(createInitialState(), 0, 10, []), null);
+  assert.equal(auctionFor({ ...auction(24), phase: 'end', aucSq: -1 }, 0, 10, []), null);
+});
+
+test('bidding sends the stepper amount', () => {
+  const { host } = container();
+  const sent = [];
+  const a = auction(24, { cash: [840, 1210], actor: 0, turn: 0 });
+  const opts = { mySeat: 0, names: [], onAction: (x) => { sent.push(x); return Promise.resolve(); } };
+  renderBoard(a, host, opts);
+  host.__dc.bidStep = 90;
+  renderBoard(a, host, opts);
+  byType(host.__dc.decision, 'bid').click();
+  assert.deepEqual(sent.at(-1), { type: 'bid', amount: 90 });
+});
+
+test('the stepper opens at the minimum, moves a step at a time, and starts again after a bid', async () => {
+  const { host } = container();
+  const sent = [];
+  const a = auction(24, { cash: [840, 1210], actor: 0, turn: 0 });
+  renderBoard(a, host, { mySeat: 0, names: NM, onAction: (x) => { sent.push(x); return Promise.resolve(); } });
+  assert.equal(host.__dc.bidStep, null);
+  byType(host.__dc.decision, 'bid-up').click();
+  byType(host.__dc.decision, 'bid-up').click();
+  assert.equal(host.__dc.bidStep, MIN_BID + 2 * BID_STEP);
+  byType(host.__dc.decision, 'bid-down').click();
+  byType(host.__dc.decision, 'bid').click();
+  assert.deepEqual(sent.at(-1), { type: 'bid', amount: MIN_BID + BID_STEP });
+  await settle();
+  // the other seat bids; it is our turn again and the dial is back at the new minimum
+  const next = ok(act(a, { type: 'bid', amount: 100 }, 0));
+  const back = ok(act(next, { type: 'bid', amount: 150 }, 1));
+  renderBoard(back, host, { mySeat: 0, names: NM, onAction: () => Promise.resolve() });
+  assert.equal(host.__dc.bidStep, null);
+  assert.ok(text(byType(host.__dc.decision, 'bid')).includes(String(150 + BID_STEP)));
+});
+
+test('passing sends a pass, whichever of the two things it means', () => {
+  for (const standing of [false, true]) {
+    const { host } = container();
+    const sent = [];
+    let a = auction(24, { cash: [840, 1210], actor: 1, turn: 0 });
+    if (standing) a = ok(act(a, { type: 'bid', amount: 60 }, 1));
+    else a = { ...a, actor: 0 };
+    renderBoard(a, host, { mySeat: 0, names: NM, onAction: (x) => { sent.push(x); return Promise.resolve(); } });
+    byType(host.__dc.decision, 'pass').click();
+    assert.deepEqual(sent, [{ type: 'pass' }]);
+  }
+});
+
+test('the panel borrows no board-tile class, and the reason is plain text outside the button', () => {
+  const { host } = container();
+  renderBoard(auction(24, { cash: [50, 1210], actor: 0, aucBid: 100, aucBy: 1 }), host, { mySeat: 0, names: NM, onAction: () => {} });
+  for (const n of all(host.__dc.decision)) {
+    assert.ok(!n.classes.has('dc-nm') && !n.classes.has('dc-sw'), 'the panel borrowed a board-tile class');
+  }
+  const bid = byType(host.__dc.decision, 'bid');
+  assert.equal(bid.disabled, true);
+  assert.ok(bid.attrs.title && bid.attrs.title.length > 0);
+  const note = all(host.__dc.decision).find((n) => n.classes.has('dc-anote'));
+  assert.ok(note.textContent.length > 0);
+  assert.ok(!all(bid).includes(note), 'the reason sits inside the button');
+});
+
+test('the auction styles exist, the lot is lit, and nothing explanatory is dimmed by opacity', () => {
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  for (const cls of ['dc-auc', 'dc-alot', 'dc-astanding', 'dc-astep', 'dc-abid', 'dc-apass', 'dc-anote']) {
+    assert.ok(new RegExp(`\\.${cls}\\b`).test(css), `${cls} has no style`);
+  }
+  assert.match(css, /\.dc-tile\[data-lot\]/);
+  // Every rule whose selector list mentions a panel class, grouped selectors included.
+  const panel = [...css.matchAll(/([^{}]+)\{([^}]*)\}/g)].filter((m) => /\.dc-a[a-z]*\b/.test(m[1].replace(/\/\*[\s\S]*?\*\//g, '')));
+  assert.ok(panel.length >= 15, `only ${panel.length} panel rules found`);
+  for (const m of panel) assert.ok(!/opacity/.test(m[2]), `opacity in the auction panel rule: ${m[1].trim()}`);
+});
+
+test('no deal-strip rule dims explanatory text by opacity; only the deal summary may be dimmed', () => {
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  // Every rule with a selector on a strip (.dc-deal, .dc-dealwhy, .dc-dealtext) or on the reason beside + New deal.
+  const rules = [...bare.matchAll(/([^{}]+)\{([^}]*)\}/g)].filter((m) => /\.dc-(deal[a-z]*|newdealwhy)\b/.test(m[1]));
+  assert.ok(rules.length >= 5, `only ${rules.length} strip rules found`);
+  for (const m of rules) {
+    if (!/opacity/.test(m[2])) continue;
+    // An opacity on the strip dims every child, the reason line included: only the summary's own selector may carry one.
+    for (const sel of m[1].split(',').map((x) => x.trim())) {
+      assert.ok(/\.dc-dealtext$/.test(sel), `opacity would dim explanatory text via: ${sel}`);
+    }
+  }
+  assert.match(bare, /\.dc-newdealwhy\s*\{/);
+});
+
+test('the standing bid is coloured by whose it is, not always the opponent', () => {
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  assert.match(css, /\.dc-awho\[data-seat="0"\]\s*\{[^}]*--seat0/);
+  assert.match(css, /\.dc-awho\[data-seat="1"\]\s*\{[^}]*--seat1/);
+  const bid = ok(act(auction(24, { actor: 1 }), { type: 'bid', amount: 60 }, 1));
+  assert.equal(auctionFor(bid, 0, 70, NM).standingSeat, 1);
+  assert.equal(auctionFor(auction(24), 0, 10, NM).standingSeat, -1);
+  const { host } = container();
+  renderBoard(bid, host, { mySeat: 0, names: NM, onAction: () => {} });
+  assert.equal(all(host.__dc.decision).find((n) => n.classes.has('dc-awho')).dataset.seat, '1');
+  const mine = ok(act(auction(24, { actor: 0 }), { type: 'bid', amount: 60 }, 0));
+  renderBoard(mine, host, { mySeat: 0, names: NM, onAction: () => {} });
+  assert.equal(all(host.__dc.decision).find((n) => n.classes.has('dc-awho')).dataset.seat, '0');
+});
+
+test('a live auction takes one strip row from the deals, and what is queued is still counted', () => {
+  const rows = (h) => h.__dc.strips.children.filter(n => n.classes.has('dc-deal') || n.classes.has('dc-more'));
+  const quiet = mount(capped(), 0);
+  const live = mount(inAuction(capped()), 0);
+  assert.equal(rows(quiet).length, STRIP_CAP);
+  assert.equal(rows(live).length, STRIP_CAP - 1);
+  const more = live.__dc.strips.children.find(n => n.classes.has('dc-more'));
+  assert.equal(more.textContent, `+${8 - (STRIP_CAP - 2)} more`);
+  assert.ok(text(live.__dc.decision).includes(SQUARES[31].name));
+});
+
+
+// ---- things that move: the deal flip and the gavel --------------------------
+// Real timers, polled to a ceiling (never a fixed sleep then an assertion).
+async function until(cond, what, ceilingMs = 5000) {
+  const start = Date.now();
+  while (!cond()) {
+    if (Date.now() - start > ceilingMs) assert.fail(`timed out after ${ceilingMs}ms waiting for: ${what}`);
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+function withReducedMotion(fn) {
+  const real = globalThis.matchMedia;
+  globalThis.matchMedia = () => ({ matches: true });
+  try { return fn(); } finally { globalThis.matchMedia = real; }
+}
+const tradedHands = (squares) => {
+  // seat 1 owns every square; seat 0 is offered them all for 200.
+  const s = { ...owned(Object.fromEntries(squares.map((q) => [q, 1]))), cash: [1500, 1500] };
+  const o = ok(offer(s, 0, Object.fromEntries(squares.map((q) => [q, [0, false]])), 200));
+  return { before: s, offered: o, done: ok(act(o, { type: 'trade-accept', id: 't0' }, 1)) };
+};
+const FLIP_OPTS = { mySeat: 1, names: [], onAction: () => {} };
+const coinsOf = (host) => all(host).filter((n) => n.classes.has('dc-coin'));
+
+test('flipOrder names every tile that changed hands, in board order, and nothing else', () => {
+  const before = owned({ 6: 0, 24: 1, 31: 1 });
+  const after = { ...before, own: setChar(setChar(before.own, 24, '0'), 6, '1') };
+  assert.deepEqual(flipOrder(before, after), [6, 24]);
+  assert.deepEqual(flipOrder(before, before), []);
+});
+
+test('a property bought at auction is not counted as a flip', () => {
+  const before = createInitialState();
+  const after = { ...before, own: setChar(before.own, 24, '0') };
+  assert.deepEqual(flipOrder(before, after), []);
+});
+
+test('a completed deal flips the tiles and settles on the new colours', async () => {
+  const { host } = container();
+  const { before, done } = tradedHands([24]);
+  renderBoard(before, host, FLIP_OPTS);
+  renderBoard(done, host, FLIP_OPTS);
+  assert.ok(host.__dc.tiles[24].classList.contains('dc-flip'), 'the traded tile turns over');
+  await until(() => host.__dc.tiles[24].dataset.own === '0', 'the traded tile to settle on its new owner');
+  await until(() => !host.__dc.tiles[24].classList.contains('dc-flip'), 'the flip to clear');
+  assert.equal(host.__dc.hold, null);
+});
+
+test('a flip that throws is swallowed, releases the hold, and does not abandon the paint', () => {
+  const { host } = container();
+  const { before, done } = tradedHands([24]);
+  renderBoard(before, host, FLIP_OPTS);
+  const real = host.__dc.tiles[24].classList;
+  host.__dc.tiles[24].classList = { ...real, add(c) { if (c === 'dc-flip') throw new Error('flip failed'); return real.add(c); }, remove: (c) => real.remove(c), contains: (c) => real.contains(c), toggle: (...a) => real.toggle?.(...a) };
+  assert.doesNotThrow(() => renderBoard(done, host, FLIP_OPTS));
+  assert.equal(host.__dc.hold, null, 'no tile is left held in its old colour');
+  assert.equal(host.__dc.tiles[24].dataset.own, '0', 'and the paint carried on to the new owner');
+});
+
+test('traded tiles hold their old colour until their turn, then flip one after another', async () => {
+  const { host } = container();
+  const { before, done } = tradedHands([6, 24]);
+  renderBoard(before, host, FLIP_OPTS);
+  renderBoard(done, host, FLIP_OPTS);
+  const t = host.__dc.tiles;
+  assert.equal(t[6].dataset.own, '0');
+  assert.equal(t[24].dataset.own, '1', 'the second tile has not had its turn yet');
+  await until(() => t[24].dataset.own === '0', 'the second tile to flip');
+  assert.equal(t[6].dataset.own, '0');
+});
+
+test('the money flicks towards the seat that was paid, and a re-delivered state starts no second flip', () => {
+  const { host } = container();
+  const { before, offered, done } = tradedHands([24]);
+  renderBoard(before, host, FLIP_OPTS);
+  renderBoard(offered, host, FLIP_OPTS);
+  renderBoard(done, host, FLIP_OPTS);
+  assert.equal(coinsOf(host).length, 1);
+  assert.equal(coinsOf(host)[0].dataset.to, '1');
+  assert.equal(coinsOf(host)[0].textContent, '+200');
+  const gen = host.__dc.flipGeneration;
+  renderBoard({ ...done, scoredAt: 1 }, host, FLIP_OPTS);
+  assert.equal(host.__dc.flipGeneration, gen);
+  assert.equal(coinsOf(host).length, 1);
+});
+
+test('a superseded flip chain stops at its next tick and cannot release what the newer chain holds', () => {
+  // Driven by the timer queue: only the OLD chain's pending timers are run, one by one.
+  withTimers((timers) => {
+    const { host } = container();
+    const { before, done } = tradedHands([6, 24, 31]);
+    renderBoard(before, host, FLIP_OPTS);
+    renderBoard(done, host, FLIP_OPTS);
+    const oldTimers = timers.pending();
+    // Mid-chain, 6 and 24 go back to seat 1: a newer chain, holding 24 for its second turn.
+    const back = { ...done, moves: done.moves + 1, own: setChar(setChar(done.own, 6, '1'), 24, '1') };
+    renderBoard(back, host, FLIP_OPTS);
+    const t = host.__dc.tiles;
+    assert.equal(t[24].dataset.own, '0', 'the newer chain is still holding 24');
+    for (let i = 0; i < oldTimers; i++) timers.step();
+    assert.equal(t[24].dataset.own, '0', 'the superseded chain did not release it');
+    timers.flush();
+    assert.deepEqual([t[6].dataset.own, t[24].dataset.own, t[31].dataset.own], ['1', '1', '0']);
+    assert.equal(host.__dc.hold, null);
+  });
+});
+
+test('a won lot thumps once, and not again when the same state is re-delivered', async () => {
+  const { host } = container();
+  let a = auction(24, { cash: [1500, 1500], actor: 1, turn: 0 });
+  a = ok(act(a, { type: 'bid', amount: 60 }, 1));
+  const opts = { mySeat: 0, names: [], onAction: () => {} };
+  renderBoard(a, host, opts);
+  const won = ok(act(a, { type: 'pass' }, 0));
+  renderBoard(won, host, opts);
+  await until(() => host.__dc.tiles[24].classList.contains('dc-gavel'), 'the gavel on the won lot');
+  assert.ok(!host.__dc.tiles[24].classList.contains('dc-flip'), 'a win is a gavel, not a flip');
+  await until(() => !host.__dc.tiles[24].classList.contains('dc-gavel'), 'the gavel to clear');
+  renderBoard({ ...won, scoredAt: 1 }, host, opts);
+  assert.ok(!host.__dc.tiles[24].classList.contains('dc-gavel'));
+});
+
+test('an ordinary purchase neither flips nor takes the gavel', () => {
+  const { host } = container();
+  const s = { ...fresh(), phase: 'buy', pendingBuy: 24, pos: [24, 0], actor: 0, turn: 0, cash: [1500, 1500] };
+  const opts = { mySeat: 0, names: [], onAction: () => {} };
+  renderBoard(s, host, opts);
+  renderBoard(ok(act(s, { type: 'buy' }, 0)), host, opts);
+  assert.equal(host.__dc.tiles[24].dataset.own, '0');
+  assert.ok(!host.__dc.tiles[24].classList.contains('dc-flip'));
+  assert.ok(!host.__dc.tiles[24].classList.contains('dc-gavel'));
+});
+
+test('nothing animates when the player has asked for reduced motion', () => {
+  const { host } = container();
+  const { before, done } = tradedHands([24]);
+  renderBoard(before, host, FLIP_OPTS);
+  withReducedMotion(() => {
+    renderBoard(done, host, FLIP_OPTS);
+    assert.equal(host.__dc.tiles[24].dataset.own, '0');
+    assert.ok(!host.__dc.tiles[24].classList.contains('dc-flip'));
+    assert.equal(coinsOf(host).length, 0);
+  });
+});
+
+test('reduced motion also spares the gavel, and the lot still ends owned', () => {
+  const { host } = container();
+  let a = auction(24, { cash: [1500, 1500], actor: 1, turn: 0 });
+  a = ok(act(a, { type: 'bid', amount: 60 }, 1));
+  const opts = { mySeat: 0, names: [], onAction: () => {} };
+  renderBoard(a, host, opts);
+  withReducedMotion(() => {
+    renderBoard(ok(act(a, { type: 'pass' }, 0)), host, opts);
+    assert.equal(host.__dc.tiles[24].dataset.own, '1');
+    assert.ok(!host.__dc.tiles[24].classList.contains('dc-gavel'));
+  });
+});
+
+test('the stylesheet gives the flip and the gavel an animation, and reduced motion switches both off', () => {
+  // git can check styles.css out with CRLF endings; match on LF so the guard
+  // tests the rules, not the line endings.
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  for (const cls of ['dc-flip', 'dc-gavel']) {
+    assert.match(css, new RegExp(`\\.dc-tile\\.${cls}\\s*\\{[^}]*animation:\\s*${cls}\\b`), `${cls} animates`);
+    assert.match(css, new RegExp(`@keyframes ${cls}\\b`), `${cls} has keyframes`);
+  }
+  const at = css.indexOf('@media (prefers-reduced-motion: reduce) {\n  .dc-tok, .dc-tile.dc-pop');
+  assert.ok(at >= 0, 'the reduced-motion block is where the test expects it');
+  const rule = css.slice(at, css.indexOf('}', at));
+  assert.ok(rule.includes('.dc-tile.dc-flip') && rule.includes('.dc-tile.dc-gavel') && /animation:\s*none/.test(rule), 'both are switched off');
+});
+
+test('an accepted deal of money alone flicks a coin, once, and not again on a re-delivered state', () => {
+  const { host } = container();
+  const s = { ...fresh(), cash: [1500, 1500] };
+  const o = ok(offer(s, 0, {}, 200));
+  const done = ok(act(o, { type: 'trade-accept', id: 't0' }, 1));
+  assert.deepEqual(flipOrder(s, done), [], 'no tile changes hands');
+  assert.notDeepEqual(done.cash, s.cash, 'cash moved');
+  renderBoard(s, host, FLIP_OPTS);
+  renderBoard(o, host, FLIP_OPTS);
+  renderBoard(done, host, FLIP_OPTS);
+  assert.equal(coinsOf(host).length, 1);
+  renderBoard({ ...done, scoredAt: 1 }, host, FLIP_OPTS);
+  assert.equal(coinsOf(host).length, 1, 'the same state delivered twice is still one coin');
+});
+
+test('a declined deal moves no money and flicks nothing', () => {
+  const { host } = container();
+  const s = { ...fresh(), cash: [1500, 1500] };
+  const o = ok(offer(s, 0, {}, 200));
+  renderBoard(o, host, FLIP_OPTS);
+  renderBoard(ok(act(o, { type: 'trade-decline', id: 't0' }, 1)), host, FLIP_OPTS);
+  assert.equal(coinsOf(host).length, 0);
+});
+
+test('a money-only deal flicks nothing under reduced motion', () => {
+  const { host } = container();
+  const s = { ...fresh(), cash: [1500, 1500] };
+  const o = ok(offer(s, 0, {}, 200));
+  const done = ok(act(o, { type: 'trade-accept', id: 't0' }, 1));
+  renderBoard(s, host, FLIP_OPTS);
+  renderBoard(o, host, FLIP_OPTS);
+  withReducedMotion(() => renderBoard(done, host, FLIP_OPTS));
+  assert.equal(coinsOf(host).length, 0);
+});
+
+test('rent paid with no deal closing flicks one coin, through the debt path only', () => {
+  const { host } = container();
+  const owing = { ...fresh(), moves: 6, phase: 'pay', actor: 0, owed: 120, owedTo: 1, cash: [800, 500] };
+  const paid = ok(act(owing, 'pay', 0));
+  assert.deepEqual(Object.keys(paid.trades || {}), Object.keys(owing.trades || {}), 'no deal opened or closed');
+  assert.deepEqual(flipOrder(owing, paid), [], 'no tile changes hands');
+  renderBoard(owing, host, FLIP_OPTS);
+  renderBoard(paid, host, FLIP_OPTS);
+  assert.equal(coinsOf(host).length, 1, 'one coin, not one per path');
+  assert.equal(coinsOf(host)[0].dataset.to, '1');
+  assert.equal(coinsOf(host)[0].textContent, '+120');
+  renderBoard({ ...paid, scoredAt: 1 }, host, FLIP_OPTS);
+  assert.equal(coinsOf(host).length, 1, 'a re-delivered state adds no coin');
 });

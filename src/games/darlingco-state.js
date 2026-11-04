@@ -6,17 +6,46 @@
 //   own   '.' unowned or unownable, '0'/'1' the owning seat
 //   built '0'-'4' houses, '5' a hotel
 //   mortg '0' | '1'
+//   props (a trade's deal mask) '.' not in the deal; '0'/'1' moving to that
+//         seat, clear when offered; 'm'/'n' moving to seat 0/1, mortgaged when offered
 // "No seat" is -1, never null.
 
-import { SQUARES, SETS, STATION_RENT, UTIL_MULT } from './darlingco-board.js';
+import { SQUARES, SETS, STATION_RENT, UTIL_MULT, MAX_DEAL_CASH } from './darlingco-board.js';
 
 export const BLANK_OWN = '.'.repeat(40);
 export const BLANK_BUILT = '0'.repeat(40);
 export const BLANK_MORTG = '0'.repeat(40);
+export const BLANK_PROPS = '.'.repeat(40);
 
 /** A copy of `str` with the character at `i` replaced by `ch`. */
 export function setChar(str, i, ch) {
   return str.slice(0, i) + ch + str.slice(i + 1);
+}
+
+/** The one deal-mask character for a square moving to `seat`, remembering
+ *  whether it was mortgaged when the offer was made. */
+export function dealChar(seat, mortgaged) {
+  return mortgaged ? (seat === 0 ? 'm' : 'n') : String(seat);
+}
+
+/** The seat a square in the deal moves to, or -1 when it is not in the deal. */
+export function dealDest(props, sq) {
+  const c = props[sq];
+  if (c === '0' || c === 'm') return 0;
+  if (c === '1' || c === 'n') return 1;
+  return -1;
+}
+
+/** true if the square was mortgaged when the offer was made. */
+export function dealWasMortgaged(props, sq) {
+  return props[sq] === 'm' || props[sq] === 'n';
+}
+
+/** Square indices in the deal, ascending. */
+export function dealSquares(props) {
+  const out = [];
+  for (let i = 0; i < 40; i++) if (dealDest(props, i) >= 0) out.push(i);
+  return out;
 }
 
 /** The owning seat, or -1 when unowned or unownable. */
@@ -105,4 +134,36 @@ export function canSell(state, seat, sq) {
   const set = SETS[SQUARES[sq].set].squares;
   if (mine < Math.max(...set.map(q => housesOn(state, q)))) return 'Sell evenly across the set';
   return true;
+}
+
+const isIntIn = (n, lo, hi) => Number.isInteger(n) && n >= lo && n <= hi;
+
+/** Why a proposed deal is not legal right now, or '' when it is. One function
+ *  for offering, countering and accepting: acceptance is the check that counts,
+ *  since a square can change hands or be mortgaged while the other seat thinks.
+ *  `trade.cash` is signed in seat 0's frame: positive means seat 0 pays seat 1.
+ *  The first failure is the one reported, so the order below is the contract. */
+export function dealProblem(state, trade) {
+  const { props, cash, outs0, outs1, awaits } = trade;
+  if (typeof props !== 'string' || !/^[.01mn]{40}$/.test(props)
+      || !Number.isSafeInteger(cash) || Math.abs(cash) > MAX_DEAL_CASH
+      || !isIntIn(outs0, 0, 2) || !isIntIn(outs1, 0, 2)
+      || (awaits !== 0 && awaits !== 1)) return 'bad-deal';
+
+  const squares = dealSquares(props);
+  if (squares.length === 0 && cash === 0 && outs0 === 0 && outs1 === 0) return 'empty-deal';
+
+  for (const sq of squares) {
+    if (ownerOf(state, sq) !== 1 - dealDest(props, sq)) return 'trade-stale';
+    if (isMortgaged(state, sq) !== dealWasMortgaged(props, sq)) return 'trade-stale';
+    // Set-wide and owner-blind, as doSide's mortgage guard: it keeps a split set building-free.
+    const spec = SQUARES[sq];
+    const group = spec.set ? SETS[spec.set].squares : [sq];
+    if (group.some(q => housesOn(state, q) > 0)) return 'trade-built';
+  }
+
+  if (cash !== 0 && state.cash[cash > 0 ? 0 : 1] < Math.abs(cash)) return 'cannot-afford';
+
+  if (outs0 > state.outCards[0].length / 2 || outs1 > state.outCards[1].length / 2) return 'no-card';
+  return '';
 }

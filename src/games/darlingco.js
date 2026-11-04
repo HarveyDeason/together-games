@@ -6,14 +6,17 @@
 //  - no null anywhere (a null key vanishes); use -1, '', 0 or false
 //  - an empty array vanishes too, so a fresh `log: []` can arrive undefined;
 //    always read the log through readLog
+//  - an empty object vanishes too, so with no offers open `trades` arrives
+//    undefined; always read it through readTrades
 
 import {
   GAME_ID, GAME_NAME, START_CASH, LJ_CARDS, JB_CARDS, MAX_LOG, MAX_LOG_LINE, SQUARES,
-  GO_PAY, JAIL_FINE, JAIL_SQUARE, SETS, LJ_NAME, JB_NAME
+  GO_PAY, JAIL_FINE, JAIL_SQUARE, SETS, LJ_NAME, JB_NAME, MAX_TRADES,
+  MIN_BID, BID_STEP, MAX_DEAL_CASH
 } from './darlingco-board.js';
 import {
   BLANK_OWN, BLANK_BUILT, BLANK_MORTG, setChar, ownerOf, isMortgaged, rentFor,
-  housesOn, canBuild, canSell, netWorth
+  housesOn, canBuild, canSell, netWorth, dealProblem, dealDest, dealSquares
 } from './darlingco-state.js';
 
 export const meta = { id: GAME_ID, name: GAME_NAME, seats: 2 };
@@ -61,6 +64,12 @@ export function createInitialState({ first = 0, rnd = Math.random } = {}) {
     settleOffer: -1,
     over: '',
     winner: -1,
+    aucSq: -1,
+    aucBid: 0,
+    aucBy: -1,
+    aucPass: 0,
+    tradeSeq: 0,
+    trades: {},
     log: []
   };
 }
@@ -88,6 +97,12 @@ export function readLog(state) {
   return state.log ?? [];
 }
 
+/** The open trade offers; Firebase drops an empty object, so with none open
+ *  `trades` may be undefined. */
+export function readTrades(state) {
+  return state.trades ?? {};
+}
+
 /** The log with `line` appended, trimmed to the last MAX_LOG. A line over
  *  MAX_LOG_LINE is cut and ends in an ellipsis, so it cannot breach the rules. */
 export function logged(state, line) {
@@ -95,12 +110,13 @@ export function logged(state, line) {
   return [...readLog(state), fit].slice(-MAX_LOG);
 }
 
-const KNOWN_ACTIONS = ['roll', 'jail-pay', 'jail-card', 'end', 'buy', 'decline', 'pay', 'card-ok', 'bankrupt'];
+const KNOWN_ACTIONS = ['roll', 'jail-pay', 'jail-card', 'end', 'buy', 'decline', 'pay', 'card-ok', 'bankrupt', 'bid', 'pass'];
 
 /** The one phase each action is admitted in. */
 const PHASE_OF = {
   roll: 'roll', 'jail-pay': 'roll', 'jail-card': 'roll', bankrupt: 'pay',
-  end: 'end', buy: 'buy', decline: 'buy', pay: 'pay', 'card-ok': 'card'
+  end: 'end', buy: 'buy', decline: 'buy', pay: 'pay', 'card-ok': 'card',
+  bid: 'auction', pass: 'auction'
 };
 
 const isDie = (d) => Number.isInteger(d) && d >= 1 && d <= 6;
@@ -357,9 +373,57 @@ function doBuy(state, seat) {
   return { state: say(next, `Player ${seat + 1} buys ${spec.name} for ${spec.price}.`) };
 }
 
+/** Passing on a property sends it to auction. The player who did NOT land on
+ *  it opens the bidding: the decliner has had their say, and still gets to bid
+ *  after, so passing on something you want is a gamble rather than a tax. */
 function doDecline(state, seat) {
-  const next = { ...state, pendingBuy: -1, phase: 'end', moves: state.moves + 1 };
-  return { state: say(next, `Player ${seat + 1} passes on ${SQUARES[state.pendingBuy].name}.`) };
+  const sq = state.pendingBuy;
+  const base = { ...state, pendingBuy: -1, moves: state.moves + 1 };
+  // Only ever reached on an unowned square, but do not trust the caller.
+  if (ownerOf(state, sq) !== -1) {
+    return { state: say({ ...base, phase: 'end' }, `Player ${seat + 1} passes on ${SQUARES[sq].name}.`) };
+  }
+  const next = { ...base, phase: 'auction', actor: 1 - seat, aucSq: sq, aucBid: 0, aucBy: -1, aucPass: 0 };
+  return { state: say(next, `Player ${seat + 1} passes on ${SQUARES[sq].name}. It goes to auction.`) };
+}
+
+/** Every auction key back to rest, so a stale aucBy can never look like a live
+ *  auction. The turn carries on with whoever's it was. */
+function closeAuction(state) {
+  return { ...state, aucSq: -1, aucBid: 0, aucBy: -1, aucPass: 0, phase: 'end', actor: state.turn };
+}
+
+function doBid(state, action, seat) {
+  const amount = action.amount;
+  const min = state.aucBy < 0 ? MIN_BID : state.aucBid + BID_STEP;
+  if (!Number.isSafeInteger(amount) || amount % BID_STEP !== 0 || amount < min || amount > MAX_DEAL_CASH) {
+    return { error: 'bad-bid' };
+  }
+  if (amount > state.cash[seat]) return { error: 'cannot-afford' };
+  // A bid wipes any earlier pass, so a later pass reads as "I will not top
+  // that" and not as "nobody bid".
+  const next = { ...state, aucBid: amount, aucBy: seat, aucPass: 0, actor: 1 - seat, moves: state.moves + 1 };
+  return { state: say(next, `Player ${seat + 1} bids ${amount}.`) };
+}
+
+/** `pass` means two things. With a bid standing it ends the auction and the
+ *  bidder buys at their bid (to the bank, not the pot: a purchase is not a
+ *  fine). With none standing it only hands the chance to the other player,
+ *  and a second such pass (aucPass) leaves the property unsold. */
+function doPass(state, seat) {
+  const sq = state.aucSq;
+  const name = SQUARES[sq].name;
+  const moved = { ...state, moves: state.moves + 1 };
+  if (state.aucBy >= 0) {
+    const winner = state.aucBy;
+    const bought = addCash({ ...moved, own: setChar(state.own, sq, String(winner)) }, winner, -state.aucBid);
+    return { state: say(closeAuction(bought), `Player ${winner + 1} wins ${name} at auction for ${state.aucBid}.`) };
+  }
+  if (state.aucPass === 0) {
+    const next = { ...moved, aucPass: 1, actor: 1 - seat };
+    return { state: say(next, `Player ${seat + 1} does not open the bidding.`) };
+  }
+  return { state: say(closeAuction(moved), `Nobody bids. ${name} stays unsold.`) };
 }
 
 /** Settles the open debt. Money owed to the bank (taxes, fines) piles up in
@@ -396,7 +460,24 @@ function doEnd(state, seat) {
  *  They change cash and the 40-character strings only; phase, turn and actor
  *  are untouched, so they work mid-demand ('pay') as well as 'roll' and 'end'. */
 const SIDE_ACTIONS = ['build', 'sell', 'mortgage', 'unmortgage'];
-const SIDE_PHASES = ['roll', 'end', 'pay'];
+const SIDE_PHASES = ['roll', 'end', 'pay', 'auction'];
+
+/** The only side actions an auction admits: the ones that raise cash.
+ *  A standing bid is the one unpaid promise in the game, checked against the
+ *  bidder's cash only when it is made. Letting build or unmortgage through
+ *  would let a player bid everything and then spend it, and the other
+ *  player's pass would hand them a lot they cannot pay for.
+ *  Why a bid stays affordable until it wins, in two facts: every action that
+ *  spends or moves cash (build, unmortgage, trade-accept) is refused while an
+ *  auction is live, and the only cash-changing actions still admitted (sell,
+ *  mortgage) can only increase cash. So a bid checked against cash when it
+ *  is made cannot be undercut before the closing pass charges it. Who may
+ *  act (the actor gate) is incidental to this and plays no part in it. */
+const RAISE_ACTIONS = ['sell', 'mortgage'];
+
+/** Ending the game leaves nothing dangling in the saved state. `trades: {}`
+ *  is the honest local value; the database drops it and readTrades copes. */
+const clearedForEnd = (state) => ({ ...state, trades: {}, aucSq: -1, aucBid: 0, aucBy: -1, aucPass: 0 });
 
 /** Mortgage plus ten per cent, rounded up. Integer arithmetic on purpose:
  *  Math.ceil(m * 1.1) overcharges by one whenever the float lands just above
@@ -470,16 +551,121 @@ function doTally(state, type, seat) {
   const mine = netWorth(state, seat);
   const theirs = netWorth(state, 1 - seat);
   const winner = mine === theirs ? -1 : (mine > theirs ? seat : 1 - seat);
-  const end = { ...counted, phase: 'over', over: 'tally', winner };
+  // The tally actions bypass the actor guard, so this accept can arrive while an
+  // auction is genuinely live (bankrupt cannot: it is gated to 'pay'). Hence the clear-down.
+  const end = { ...clearedForEnd(counted), phase: 'over', over: 'tally', winner };
   return { state: say(end, winner === -1
     ? `Tallied up: ${mine} each. A draw.`
     : `Tallied up: Player ${winner + 1} is ahead, ${Math.max(mine, theirs)} to ${Math.min(mine, theirs)}.`) };
 }
 
+/** The trade actions belong to whoever is at the table, like the tally ones:
+ *  either seat may open a deal at any moment, even mid-debt, because trading
+ *  runs alongside the game and never touches turn, actor or phase. Who may
+ *  answer is decided by the deal's `awaits`, not by the actor. applyAction
+ *  routes these ahead of the actor guard, and only these (with the tally
+ *  ones); every other action still meets 'not-your-turn'. Every one counts a
+ *  move: tradeSeq can never exceed moves, and that is all that keeps tradeSeq
+ *  under the database's cap, where an over-cap write fails silently. */
+const TRADE_ACTIONS = ['trade-offer', 'trade-counter', 'trade-cancel', 'trade-decline', 'trade-accept'];
+
+/** One side of a deal in words: what `seat` receives, '' when nothing.
+ *  Bounded: a name, an amount of at most 7 digits and a count of cards. */
+export function dealSummary(trade, seat) {
+  const mine = dealSquares(trade.props).filter(sq => dealDest(trade.props, sq) === seat);
+  const parts = [];
+  if (mine.length === 1) parts.push(SQUARES[mine[0]].name);
+  else if (mine.length > 1) parts.push(`${mine.length} places`);
+  // cash is in seat 0's frame: positive means seat 0 pays seat 1.
+  const gets = seat === 1 ? Math.max(trade.cash, 0) : Math.max(-trade.cash, 0);
+  if (gets > 0) parts.push(`£${gets}`);
+  const cards = seat === 1 ? trade.outs0 : trade.outs1;   // outsN is what seat N hands over
+  if (cards === 1) parts.push('a get-out card');
+  else if (cards > 1) parts.push(`${cards} get-out cards`);
+  return parts.join(' and ');
+}
+
+/** Move everything a deal carries. Ownership is the only per-square string
+ *  that changes: nothing in a deal is built on, and a mortgaged property
+ *  arrives still mortgaged. Both hands are read before either is written. */
+export function applyDeal(state, trade) {
+  let own = state.own;
+  for (const sq of dealSquares(trade.props)) own = setChar(own, sq, String(dealDest(trade.props, sq)));
+  const payer = trade.cash > 0 ? 0 : 1;
+  const amount = Math.abs(trade.cash);
+  const cash = [...state.cash];
+  cash[payer] -= amount;
+  cash[1 - payer] += amount;
+  const [h0, h1] = state.outCards;
+  // A hand is a string of two-character deck tags, so n cards is 2n characters
+  // (dealProblem measures holdings as length / 2: change a tag's length in both).
+  const cut0 = trade.outs0 * 2, cut1 = trade.outs1 * 2;
+  const outCards = [h0.slice(cut0) + h1.slice(0, cut1), h1.slice(cut1) + h0.slice(0, cut0)];
+  return { ...state, own, cash, outCards };
+}
+
+function doTrade(state, action, seat) {
+  if (seat !== 0 && seat !== 1) return { error: 'not-your-turn' };
+  const who = `Player ${seat + 1}`;
+  const counted = { ...state, moves: state.moves + 1 };
+  const trades = readTrades(state);
+  const terms = { props: action.props, cash: action.cash, outs0: action.outs0, outs1: action.outs1 };
+
+  if (action.type === 'trade-offer') {
+    if (Object.keys(trades).length >= MAX_TRADES) return { error: 'too-many-trades' };
+    const offered = { ...terms, awaits: 1 - seat };
+    const problem = dealProblem(state, offered);
+    if (problem) return { error: problem };
+    // Ids come from the counter and are never reused, so a stale id never meets a new deal.
+    // tradeSeq is absent on a game that began before deals existed (the room reads state raw
+    // off Firebase, with no migration): default it here, or the first id is 'tundefined' and
+    // the counter NaN, and the write is rejected silently.
+    const seq = state.tradeSeq ?? 0;
+    const id = `t${seq}`;
+    const next = { ...counted, tradeSeq: seq + 1, trades: { ...trades, [id]: offered } };
+    return { state: say(next, `${who} offers a deal.`) };
+  }
+
+  // Own-property check: a bare lookup would find Object.prototype's members.
+  const id = action.id;
+  if (typeof id !== 'string' || !Object.prototype.hasOwnProperty.call(trades, id)) return { error: 'no-such-trade' };
+  const deal = trades[id];
+  const { [id]: _gone, ...rest } = trades;
+
+  switch (action.type) {
+    case 'trade-accept': { // only the seat being asked; the terms are checked again, as the board may have moved on
+      if (deal.awaits !== seat) return { error: 'not-your-trade' };
+      if (state.phase === 'auction') return { error: 'auction-live' }; // a deal moves cash: see RAISE_ACTIONS
+      const problem = dealProblem(state, deal);
+      if (problem) return { error: problem };
+      let next = say({ ...applyDeal(state, deal), moves: state.moves + 1, trades: rest }, `${who} accepts the deal.`);
+      for (const s of [0, 1]) {
+        const got = dealSummary(deal, s);
+        if (got) next = say(next, `Player ${s + 1} gets ${got}.`);
+      }
+      return { state: next };
+    }
+    case 'trade-cancel': // the seat waiting on an answer takes the deal back
+      if (deal.awaits === seat) return { error: 'not-your-trade' };
+      return { state: say({ ...counted, trades: rest }, `${who} takes their deal back.`) };
+    case 'trade-decline': // only the seat being asked may decline
+      if (deal.awaits !== seat) return { error: 'not-your-trade' };
+      return { state: say({ ...counted, trades: rest }, `${who} declines the deal.`) };
+    case 'trade-counter': { // same id, so the strip on screen stays put
+      if (deal.awaits !== seat) return { error: 'not-your-trade' };
+      const countered = { ...terms, awaits: 1 - seat };
+      const problem = dealProblem(state, countered);
+      if (problem) return { error: problem };
+      return { state: say({ ...counted, trades: { ...trades, [id]: countered } }, `${who} counters.`) };
+    }
+    default: return { error: 'unknown-action' };
+  }
+}
+
 /** Bankruptcy is declared, never computed: nothing here or in 'pay' ever
  *  decides that a player cannot settle. Only this action ends the game so. */
 function doBankrupt(state, seat) {
-  const end = { ...state, moves: state.moves + 1, phase: 'over', over: 'bankrupt', winner: 1 - seat };
+  const end = { ...clearedForEnd(state), moves: state.moves + 1, phase: 'over', over: 'bankrupt', winner: 1 - seat };
   return { state: say(end, `Player ${seat + 1} declares bankruptcy. Player ${2 - seat} wins.`) };
 }
 
@@ -489,9 +675,11 @@ export function applyAction(state, action, seat) {
   if (state.phase === 'over') return { error: 'game-over' };
   const type = action && action.type;
   if (TALLY_ACTIONS.includes(type)) return doTally(state, type, seat);
+  if (TRADE_ACTIONS.includes(type)) return doTrade(state, action, seat);
   if (seat !== state.actor) return { error: 'not-your-turn' };
   if (SIDE_ACTIONS.includes(type)) {
     if (!SIDE_PHASES.includes(state.phase)) return { error: 'wrong-phase' };
+    if (state.phase === 'auction' && !RAISE_ACTIONS.includes(type)) return { error: 'wrong-phase' };
     return doSide(state, action, seat);
   }
   if (!KNOWN_ACTIONS.includes(type)) return { error: 'unknown-action' };
@@ -503,6 +691,8 @@ export function applyAction(state, action, seat) {
     case 'buy': return doBuy(state, seat);
     case 'decline': return doDecline(state, seat);
     case 'pay': return doPay(state, seat);
+    case 'bid': return doBid(state, action, seat);
+    case 'pass': return doPass(state, seat);
     case 'card-ok': return doCardOk(state, seat);
     case 'bankrupt': return doBankrupt(state, seat);
     default: return doEnd(state, seat);

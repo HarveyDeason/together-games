@@ -29,6 +29,19 @@ export const MAX_LOG = 6;
  *  log entries in firebase-rules.json: a longer write is rejected silently. */
 export const MAX_LOG_LINE = 150;
 
+/** Most open trade offers at once. The engine enforces it ('too-many-trades');
+ *  firebase-rules.json deliberately has no count bound on `trades`, as the
+ *  per-id validator (`$tradeId`) is enough. */
+export const MAX_TRADES = 8;
+/** Lowest opening bid at auction, and the smallest raise. Both must agree with
+ *  the `aucBid` validator in firebase-rules.json. */
+export const MIN_BID = 10;
+export const BID_STEP = 10;
+/** Most cash either side of a deal may carry. Must EQUAL the upper bound of the
+ *  `cash.$index` validator in firebase-rules.json: a lower cap would silently
+ *  refuse a rich player's legitimate deal. */
+export const MAX_DEAL_CASH = 1000000;
+
 /** The eight colour sets. `squares` must match the `set` on each property. */
 export const SETS = {
   home: { name: 'Keynsham', colour: '#8a5a3c', icon: '🏡', squares: [1, 3] },

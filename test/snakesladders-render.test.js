@@ -276,7 +276,7 @@ test('tookLink is false when firebase has dropped the null via', () => {
   assert.equal(tookLink({ via: 4, to: 14 }), true);
 });
 
-test('the caption clears when the square says nothing', async () => {
+test('a later move replaces the caption rather than keeping the old one', async () => {
   const { host } = container();
   render(moveState({ pos0: 14, turn: 1, moves: 1, die: 3, seat: 0, from: 1, via: 4, to: 14 }),
     host, { mySeat: 0, names: NAMES, onAction: () => {} });
@@ -285,8 +285,9 @@ test('the caption clears when the square says nothing', async () => {
   render(moveState({ pos0: 16, turn: 1, moves: 2, die: 2, seat: 0, from: 14, via: null, to: 16 }),
     host, { mySeat: 0, names: NAMES, onAction: () => {} });
   await walked(host);
-  assert.equal(host.__sl.caption.textContent, '',
+  assert.notEqual(host.__sl.caption.textContent, SQUARE_TEXT[4],
     'a stale joke must not be re-attributed to a later move');
+  assert.equal(host.__sl.caption.textContent, SQUARE_TEXT[16]);
 });
 
 test('the caption says why an overshoot did not move you', async () => {
@@ -308,7 +309,7 @@ test('a fresh game clears the caption and the die', () => {
 });
 
 // ---- the camera ----
-import { cameraTransform, cameraTarget, VIEW_W, VIEW_H } from '../src/games/snakesladders-render.js';
+import { cameraTransform, cameraTarget, VIEW_W, VIEW_H, fitScale, squareBounds, FIT } from '../src/games/snakesladders-render.js';
 
 test('the camera centres the given point in the viewport', () => {
   const t = cameraTransform(900, 700, 1);
@@ -342,4 +343,71 @@ test('a player waiting to start is framed on square one', () => {
   // Position 0 means "not yet on the board" and has no square of its own.
   const state = { pos0: 0, pos1: 0, turn: 0, seat: null, from: null, via: null, to: null };
   assert.equal(cameraTarget(state, 0, null), 1);
+});
+
+
+// ---- every square speaks ----
+
+test('every square from 1 to 100 has a line', () => {
+  const missing = [];
+  for (let n = 1; n <= 100; n++) if (!SQUARE_TEXT[n]) missing.push(n);
+  assert.deepEqual(missing, [],
+    'a silent square is a dead beat: the caption is the only commentary the game has');
+});
+
+test('no line is long enough to wrap the caption on a phone', () => {
+  // 48 is measured, not guessed: at a 375px viewport the caption box is 343px
+  // and the 49th character tips it onto a second line, which shifts the
+  // reactions and the footer up under your thumb mid-turn.
+  const tooLong = Object.entries(SQUARE_TEXT).filter(([, t]) => t.length > 48);
+  assert.deepEqual(tooLong, [], 'these lines will wrap the caption on a phone');
+});
+
+// ---- zooming out must still show the whole journey ----
+
+const built = () => buildWorld(makeDoc());
+
+test('zoomed out, every square is inside the view - on any stage shape', () => {
+  const { squarePos, bounds } = built();
+
+  // A narrow tall phone, a short wide one, the 480px cap, and a tablet.
+  for (const [boxW, boxH] of [[343, 374], [343, 480], [320, 300], [700, 480], [1024, 500]]) {
+    const scale = fitScale(boxW, boxH, bounds);
+    const slice = Math.max(boxW / VIEW_W, boxH / VIEW_H);
+    const halfW = boxW / slice / 2;
+    const halfH = boxH / slice / 2;
+    for (let n = 1; n <= 100; n++) {
+      const p = squarePos[n];
+      assert.ok(Math.abs((p.x - bounds.x) * scale) <= halfW,
+        `square ${n} falls off the side of a ${boxW}x${boxH} stage`);
+      assert.ok(Math.abs((p.y - bounds.y) * scale) <= halfH,
+        `square ${n} falls off the top or bottom of a ${boxW}x${boxH} stage`);
+    }
+  }
+});
+
+test('an unmeasured stage falls back rather than dividing by zero', () => {
+  const { bounds } = built();
+  assert.equal(fitScale(0, 0, bounds), FIT);
+  assert.equal(fitScale(343, 0, bounds), FIT);
+});
+
+test('zooming out never magnifies', () => {
+  assert.ok(fitScale(4000, 4000, built().bounds) <= 1,
+    'on a big screen zoomed out should show the board, not loom over it');
+});
+
+test('the overview frames the place names too, not just the squares', () => {
+  // KEYNSHAM and NAGPUR sit off the edge of the land. The overview is a
+  // picture of a journey between two named places; clipping the names spoils
+  // it, and only the bounds can prevent that.
+  const { squarePos, bounds } = built();
+  const squaresOnly = squareBounds(Object.values(squarePos));
+  assert.ok(bounds.w > squaresOnly.w,
+    'the bounds must reach wider than the squares to take in the names');
+});
+
+test('the world fills its stage and crops, which is what fitScale assumes', () => {
+  const { svg } = built();
+  assert.equal(svg.getAttribute('preserveAspectRatio'), 'xMidYMid slice');
 });

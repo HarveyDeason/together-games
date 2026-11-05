@@ -6,6 +6,9 @@ import { ROUTE_ENGLAND, ROUTE_INDIA, INDIA_OFFSET, LINKS } from './snakesladders
 const HW = 28, HH = 14, TZ = 20, OX = 300, OY = 880;
 export const VIEW_W = 1800, VIEW_H = 1400;
 export const ZOOM = 2.4;
+/** Used only where the stage has not been measured yet - tests, and the first
+ *  paint before layout. Real phones get a scale worked out from the box. */
+export const FIT = 0.8;
 const NS = 'http://www.w3.org/2000/svg';
 
 export const iso = (x, y, z) => [OX + (x - y) * HW, OY + (x + y) * HH - z * TZ];
@@ -48,6 +51,40 @@ const BIOME = (n) => {
   return '#E8A63A';
 };
 
+/** The smallest box in viewBox units that holds every point given.
+ *  Zooming out means framing THIS, not the viewBox, which is mostly sky.
+ *
+ *  Callers pass the squares AND the two place names: KEYNSHAM and NAGPUR sit
+ *  outside the land, and the overview is a picture of a journey between two
+ *  named places, so cutting their names off defeats it. */
+export function squareBounds(points) {
+  const xs = points.map((p) => p.x);
+  const ys = points.map((p) => p.y);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  const y0 = Math.min(...ys), y1 = Math.max(...ys);
+  return { x: (x0 + x1) / 2, y: (y0 + y1) / 2, w: x1 - x0, h: y1 - y0 };
+}
+
+/** What scale shows the whole journey in a stage of this size.
+ *
+ *  The svg fills its box and crops, so how much of the viewBox is actually on
+ *  screen depends on the box's shape: a tall narrow stage sees less width than
+ *  a short wide one. A fixed "zoomed out" scale therefore cuts the islands off
+ *  on some phones and wastes room on others, so it is measured instead.
+ *
+ *  PAD is in viewBox units and leaves the land a margin rather than butting
+ *  square 1 against the edge. Never zooms past 1: zoomed out should not become
+ *  a magnifying glass on a tablet. */
+const PAD = 90;
+export function fitScale(boxW, boxH, bounds) {
+  // jsdom reports every box as 0x0, and so does the first paint before layout.
+  if (!(boxW > 0) || !(boxH > 0)) return FIT;
+  const slice = Math.max(boxW / VIEW_W, boxH / VIEW_H);
+  const visibleW = boxW / slice;
+  const visibleH = boxH / slice;
+  return Math.min(visibleW / (bounds.w + PAD), visibleH / (bounds.h + PAD), 1);
+}
+
 /** Build the whole static scene once. Nothing in here changes during play —
  *  only the tokens and the die move, which is what keeps a hundred blocks of
  *  isometric scenery off a phone's render path mid-game. */
@@ -60,6 +97,9 @@ export function buildWorld(doc) {
 
   const svg = el('svg', {
     viewBox: `0 0 ${VIEW_W} ${VIEW_H}`,
+    // Fill the stage and crop, rather than shrink to fit. The stage is as tall
+    // as a phone can spare; letterboxing would hand that height back as sky.
+    preserveAspectRatio: 'xMidYMid slice',
     class: 'sl-world',
     role: 'img',
     'aria-label': 'Two floating islands. A rainy green England holds squares one to forty; India rises to Nagpur for forty-one to one hundred.'
@@ -309,6 +349,7 @@ export function buildWorld(doc) {
   camera.appendChild(flight);
 
   // place names
+  const labelEdges = [];
   const name = (gx, gy, z, text, size) => {
     const [sx, sy] = iso(gx, gy, z);
     const t = el('text', {
@@ -317,6 +358,10 @@ export function buildWorld(doc) {
     });
     t.textContent = text;
     camera.appendChild(t);
+    // No text measurement in the test DOM, so estimate: a serif cap at this
+    // size runs about 0.34em per character, plus the letter-spacing.
+    const half = (text.length * size * 0.34 + text.length * 2) / 2;
+    labelEdges.push({ x: sx - half, y: sy - size }, { x: sx + half, y: sy });
   };
   name(4.5, 11, 0.2, 'KEYNSHAM', 26);
   name(3 + INDIA_OFFSET[0], -15 + INDIA_OFFSET[1], 9.2, 'NAGPUR', 32);
@@ -325,7 +370,10 @@ export function buildWorld(doc) {
   const tokenLayer = el('g', { class: 'sl-tokens' });
   camera.appendChild(tokenLayer);
 
-  return { svg, camera, squarePos, tokenLayer };
+  return {
+    svg, camera, squarePos, tokenLayer,
+    bounds: squareBounds([...Object.values(squarePos), ...labelEdges])
+  };
 }
 
 /** Where a seat's token sits relative to the centre of its square, so two

@@ -1,7 +1,7 @@
 import { LINKS, LAST_SQUARE, SQUARE_TEXT } from './snakesladders-board.js';
 import {
   buildWorld, makeToken, placeToken, dieFace,
-  cameraTransform, cameraTarget, ZOOM
+  cameraTransform, cameraTarget, ZOOM, fitScale
 } from './snakesladders-render.js';
 
 export const meta = { id: 'snakesladders', name: 'Snakes & Ladders', seats: 2 };
@@ -100,11 +100,14 @@ function readFollowPreference() {
 
 /** Point the camera at whatever matters right now. */
 function moveCamera(world, immediate = false) {
-  const scale = world.following ? ZOOM : 1;
+  const box = world.stage.getBoundingClientRect?.() ?? { width: 0, height: 0 };
+  const scale = world.following ? ZOOM : fitScale(box.width, box.height, world.bounds);
   const square = world.following
     ? cameraTarget(world.state ?? { pos0: 0, pos1: 0, turn: 0 }, world.mySeat, world.movingSeat ?? null)
     : null;
-  const at = square ? world.squarePos[square] : { x: 900, y: 700 };
+  // Zoomed out, frame the land rather than the middle of the viewBox, which is
+  // mostly empty sky off to one side of the islands.
+  const at = square ? world.squarePos[square] : world.bounds;
 
   world.camera.setAttribute('transform', cameraTransform(at.x, at.y, scale));
   world.camButton.textContent = world.following ? 'Zoom out' : 'Follow';
@@ -139,7 +142,7 @@ export function render(state, el, { mySeat, names, onAction }) {
 
   if (!world) {
     el.innerHTML = '';
-    const { svg, camera, squarePos, tokenLayer } = buildWorld(doc);
+    const { svg, camera, squarePos, tokenLayer, bounds } = buildWorld(doc);
 
     // The board is wider than a phone, so it ships zoomed in and follows the
     // action. The stage wraps the svg so the camera button can sit over it.
@@ -194,7 +197,7 @@ export function render(state, el, { mySeat, names, onAction }) {
     el.appendChild(caption);
 
     world = {
-      doc, svg, camera, camButton, squarePos, tokens, die, rollButton, caption,
+      doc, svg, stage, camera, camButton, squarePos, bounds, tokens, die, rollButton, caption,
       shown: { 0: 0, 1: 0 }, busy: false, generation: 0, animatedKey: null,
       following: readFollowPreference(), lookingAt: null
     };
@@ -203,6 +206,12 @@ export function render(state, el, { mySeat, names, onAction }) {
     placeToken(tokens[1], squarePos, 0, 1);
     showDie(world, null);
     moveCamera(world, true);
+
+    // The zoomed-out scale is worked out from the stage's size, so it goes
+    // stale if the phone is turned. Nothing else re-renders between turns.
+    globalThis.addEventListener?.('resize', () => {
+      if (el.__sl === world) moveCamera(world, true);
+    });
   }
 
   // Everything downstream reads the LATEST state off `world`, never a value

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ROUTE_ENGLAND, ROUTE_INDIA, INDIA_OFFSET, SQUARE_TEXT } from '../src/games/snakesladders-board.js';
+import { ROUTE_ENGLAND, ROUTE_INDIA, INDIA_OFFSET, SQUARE_TEXT, faceFor } from '../src/games/snakesladders-board.js';
 import { walk, buildWorld, drawSnake, TOKEN_COLOUR } from '../src/games/snakesladders-render.js';
 
 // Minimal SVG-capable DOM stub. Same reasoning as the one in
@@ -498,4 +498,57 @@ test('the snake line clears on the next ordinary move', async () => {
   await walked(host);
   assert.equal(host.__sl.bite.textContent, '',
     'a snake line must not hang around over a later, snakeless move');
+});
+
+
+// ---- their actual faces ----
+
+test('a face is chosen by name, never by seat', () => {
+  // Seat 0 is only "whoever made the room". Keying the photos off the seat
+  // would put his face on her snake every time she opened the room.
+  assert.match(faceFor('Shruti'), /shruti/);
+  assert.match(faceFor('Harvey'), /harvey/);
+  assert.match(faceFor('harv'), /harvey/, 'matching ignores case and shortenings');
+});
+
+test('an unknown player gets no photo, and keeps the drawn face', () => {
+  for (const name of ['Dave', '', null, undefined, 42]) {
+    assert.equal(faceFor(name), null);
+  }
+  const nodes = flatten(drawSnake(makeDoc(), [100, 100], [60, 300], 0, faceFor('Dave')));
+  assert.equal(nodes.filter((n) => n.tag === 'circle' && n.attrs.fill === '#FFF4E2').length, 2,
+    'the drawn eyes are the fallback, so the game still works for anyone else');
+});
+
+test('a photo is clipped to a circle and ringed in the owner colour', () => {
+  const nodes = flatten(drawSnake(makeDoc(), [100, 100], [60, 300], 1, 'assets/faces/shruti.jpg', '88'));
+  const img = nodes.find((n) => n.tag === 'image');
+  assert.ok(img, 'the head carries the photo');
+  assert.equal(img.attrs.href, 'assets/faces/shruti.jpg');
+  assert.equal(img.attrs.preserveAspectRatio, 'xMidYMid slice',
+    'a face must fill its circle, not letterbox inside it');
+  const clip = nodes.find((n) => n.tag === 'clipPath');
+  assert.ok(clip, 'the photo is clipped to the head');
+  assert.equal(img.attrs['clip-path'], `url(#${clip.attrs.id})`);
+  const ring = nodes.some((n) => n.tag === 'circle' && n.attrs.stroke === TOKEN_COLOUR[1]);
+  assert.ok(ring, 'the owner colour rings the photo, since the photo is unreadable zoomed out');
+});
+
+test('two snakes on the board do not share a clip id', () => {
+  // Same id twice and both heads clip to whichever one the browser resolved
+  // first, which crops one face to the wrong circle.
+  const ids = ['37', '88'].map((n) =>
+    flatten(drawSnake(makeDoc(), [100, 100], [60, 300], 0, 'assets/faces/harvey.jpg', n))
+      .find((x) => x.tag === 'clipPath').attrs.id);
+  assert.notEqual(ids[0], ids[1]);
+});
+
+test('the real board gives each snake its owner face', () => {
+  const world = buildWorld(makeDoc(), { 0: 'assets/faces/harvey.jpg', 1: 'assets/faces/shruti.jpg' });
+  const images = flatten(world.svg).filter((n) => n.tag === 'image');
+  assert.equal(images.length, 6, 'one face per snake');
+  assert.equal(images.filter((i) => /harvey/.test(i.attrs.href)).length, 3);
+  assert.equal(images.filter((i) => /shruti/.test(i.attrs.href)).length, 3);
+  const ids = new Set(flatten(world.svg).filter((n) => n.tag === 'clipPath').map((n) => n.attrs.id));
+  assert.equal(ids.size, 6, 'six snakes, six clip ids');
 });

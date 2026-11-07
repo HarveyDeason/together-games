@@ -57,6 +57,26 @@ export const LINKS = {
   ...Object.fromEntries(Object.entries(SNAKES).map(([from, s]) => [from, s.to]))
 };
 
+/** Whose face goes on whose snake.
+ *
+ *  Matched on the player's name, not on the seat: seat 0 is only "whoever made
+ *  the room", so a seat-keyed table would put his face on her snake every time
+ *  she opened it. A name that matches nothing gets no photo and keeps the
+ *  drawn cartoon face, so the game still works for anyone else.
+ *
+ *  The photos are deliberately tiny - a snake's head is about thirty pixels
+ *  across on a phone - and tightly cropped, because anything wider than a face
+ *  is mush at that size. */
+export const FACES = [
+  { match: /shruti/i, src: 'assets/faces/shruti.jpg' },
+  { match: /harv/i, src: 'assets/faces/harvey.jpg' }
+];
+
+export function faceFor(name) {
+  if (typeof name !== 'string') return null;
+  return FACES.find((f) => f.match.test(name))?.src ?? null;
+}
+
 /** What a square says when you land on it.
  *
  *  Every square from 1 to 100 speaks: the caption is the only running

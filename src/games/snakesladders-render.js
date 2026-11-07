@@ -98,8 +98,10 @@ export function fitScale(boxW, boxH, bounds) {
  *  photographed - a head is about twenty pixels across on a phone, and a photo
  *  at that size is mush.
  *
+ *  `face` is a path to that player's photo, or null for the drawn face.
+ *
  *  Exported so a test can draw one without building the whole world. */
-export function drawSnake(doc, [x1, y1], [x2, y2], seat) {
+export function drawSnake(doc, [x1, y1], [x2, y2], seat, face = null, id = '') {
   const el = (tag, attrs = {}) => {
     const node = doc.createElementNS(NS, tag);
     for (const k in attrs) node.setAttribute(k, attrs[k]);
@@ -137,21 +139,41 @@ export function drawSnake(doc, [x1, y1], [x2, y2], seat) {
     d: 'M0,7 L0,15 M0,15 L-4,20 M0,15 L4,20', fill: 'none',
     stroke: '#E24A6A', 'stroke-width': 2, 'stroke-linecap': 'round'
   }));
-  for (const ex of [-5.5, 5.5]) {
-    head.appendChild(el('circle', { cx: ex, cy: -5, r: 4.4, fill: '#FFF4E2' }));
-    head.appendChild(el('circle', { cx: ex, cy: -4.2, r: 2.2, fill: '#1A120C' }));
-    head.appendChild(el('circle', { cx: ex + 1.2, cy: -5.6, r: 0.9, fill: '#FFFFFF' }));
+  if (face) {
+    // The real thing. Clipped to a circle and ringed in the owner's colour,
+    // so it still reads as whose snake it is when the photo is eight pixels
+    // across on the zoomed-out view and far too small to make out.
+    const clipId = `sl-face-${seat}-${id}`;
+    const clip = el('clipPath', { id: clipId, clipPathUnits: 'userSpaceOnUse' });
+    clip.appendChild(el('circle', { cx: 0, cy: -3, r: 10.5 }));
+    head.appendChild(clip);
+    head.appendChild(el('image', {
+      href: face, x: -10.5, y: -13.5, width: 21, height: 21,
+      preserveAspectRatio: 'xMidYMid slice', 'clip-path': `url(#${clipId})`
+    }));
+    head.appendChild(el('circle', {
+      cx: 0, cy: -3, r: 10.5, fill: 'none', stroke: colour, 'stroke-width': 3
+    }));
+    head.appendChild(el('circle', {
+      cx: 0, cy: -3, r: 12, fill: 'none', stroke: dark, 'stroke-width': 1.4
+    }));
+  } else {
+    for (const ex of [-5.5, 5.5]) {
+      head.appendChild(el('circle', { cx: ex, cy: -5, r: 4.4, fill: '#FFF4E2' }));
+      head.appendChild(el('circle', { cx: ex, cy: -4.2, r: 2.2, fill: '#1A120C' }));
+      head.appendChild(el('circle', { cx: ex + 1.2, cy: -5.6, r: 0.9, fill: '#FFFFFF' }));
+    }
+    // Brows: the two drawn snakes pull different faces, so they are told apart
+    // even in a screenshot with the colour washed out.
+    head.appendChild(el('path', {
+      d: seat === 0 ? 'M-10,-11 L-2,-13 M2,-13 L10,-11' : 'M-10,-13 L-2,-10 M2,-10 L10,-13',
+      fill: 'none', stroke: dark, 'stroke-width': 2.2, 'stroke-linecap': 'round'
+    }));
+    head.appendChild(el('path', {
+      d: seat === 0 ? 'M-5,4 Q0,8 5,4' : 'M-5,6 Q0,3 5,6',
+      fill: 'none', stroke: dark, 'stroke-width': 1.8, 'stroke-linecap': 'round'
+    }));
   }
-  // Brows: the two snakes pull different faces, so they are told apart even in
-  // a screenshot with the colour washed out.
-  head.appendChild(el('path', {
-    d: seat === 0 ? 'M-10,-11 L-2,-13 M2,-13 L10,-11' : 'M-10,-13 L-2,-10 M2,-10 L10,-13',
-    fill: 'none', stroke: dark, 'stroke-width': 2.2, 'stroke-linecap': 'round'
-  }));
-  head.appendChild(el('path', {
-    d: seat === 0 ? 'M-5,4 Q0,8 5,4' : 'M-5,6 Q0,3 5,6',
-    fill: 'none', stroke: dark, 'stroke-width': 1.8, 'stroke-linecap': 'round'
-  }));
   g.appendChild(head);
   return g;
 }
@@ -159,7 +181,7 @@ export function drawSnake(doc, [x1, y1], [x2, y2], seat) {
 /** Build the whole static scene once. Nothing in here changes during play —
  *  only the tokens and the die move, which is what keeps a hundred blocks of
  *  isometric scenery off a phone's render path mid-game. */
-export function buildWorld(doc) {
+export function buildWorld(doc, faces = {}) {
   const el = (tag, attrs = {}) => {
     const node = doc.createElementNS(NS, tag);
     for (const k in attrs) node.setAttribute(k, attrs[k]);
@@ -373,7 +395,9 @@ export function buildWorld(doc) {
 
   // --- the six snakes, three each ---
   for (const [fromStr, snake] of Object.entries(SNAKES)) {
-    links.appendChild(drawSnake(doc, C(Number(fromStr)), C(snake.to), snake.seat));
+    links.appendChild(
+      drawSnake(doc, C(Number(fromStr)), C(snake.to), snake.seat, faces[snake.seat] ?? null, fromStr)
+    );
   }
   camera.appendChild(links);
 

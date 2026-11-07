@@ -1,4 +1,4 @@
-import { LADDERS, SNAKES, LAST_SQUARE, SQUARE_TEXT } from './snakesladders-board.js';
+import { LADDERS, SNAKES, LAST_SQUARE, SQUARE_TEXT, faceFor } from './snakesladders-board.js';
 import {
   buildWorld, makeToken, placeToken, dieFace,
   cameraTransform, cameraTarget, ZOOM, fitScale, TOKEN_COLOUR
@@ -147,7 +147,10 @@ export function render(state, el, { mySeat, names, onAction }) {
 
   if (!world) {
     el.innerHTML = '';
-    const { svg, camera, squarePos, tokenLayer, bounds } = buildWorld(doc);
+    // Faces are chosen by name, so the scene cannot be built before the first
+    // render tells us who is playing.
+    const faces = { 0: faceFor(names?.[0]), 1: faceFor(names?.[1]) };
+    const { svg, camera, squarePos, tokenLayer, bounds } = buildWorld(doc, faces);
 
     // The board is wider than a phone, so it ships zoomed in and follows the
     // action. The stage wraps the svg so the camera button can sit over it.

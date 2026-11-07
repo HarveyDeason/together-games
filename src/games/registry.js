@@ -1,11 +1,13 @@
 import * as tictactoe from './tictactoe.js';
 import * as connectfour from './connectfour.js';
+import * as rockpaperscissors from './rockpaperscissors.js';
 import * as snakesladders from './snakesladders.js';
 import * as darlingco from './darlingco.js';
 
 export const GAMES = {
   [tictactoe.meta.id]: tictactoe,
   [connectfour.meta.id]: connectfour,
+  [rockpaperscissors.meta.id]: rockpaperscissors,
   [snakesladders.meta.id]: snakesladders,
   [darlingco.meta.id]: darlingco
 };

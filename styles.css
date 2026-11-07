@@ -146,6 +146,72 @@ h1 { font-size: 1.75rem; margin: 0 0 1rem; }
 
 .c4-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
+/* --- Rock Paper Scissors ---------------------------------------------- */
+/* No board and no turns: a score, the last round, and three big targets. */
+
+.rps { width: min(100%, 24rem); margin: 0 auto; text-align: center; }
+
+.rps-tally {
+  margin: 0 0 0.75rem;
+  font-size: 1.5rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+/* Reserved whether or not a round has been played, so the three buttons do
+   not jump up the screen the first time a reveal appears under your thumb. */
+.rps-reveal {
+  min-height: 5rem;
+  display: grid;
+  place-content: center;
+  gap: 0.25rem;
+  padding: 0.5rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+}
+
+.rps-signs { margin: 0; font-size: 2.25rem; line-height: 1.1; }
+.rps-said { margin: 0; font-size: 0.875rem; color: var(--muted); }
+
+.rps-waiting {
+  margin: 0.875rem 0;
+  min-height: 2.5rem;
+  font-size: 0.9375rem;
+  color: var(--muted);
+}
+
+.rps-row { display: flex; gap: 0.5rem; }
+
+.rps-pick {
+  flex: 1;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  font-size: clamp(2rem, 11vw, 3rem);
+  line-height: 1;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  cursor: pointer;
+  transition: transform 120ms ease, opacity 120ms ease;
+}
+
+.rps-pick:not(:disabled):active { transform: scale(0.94); }
+.rps-pick:disabled { cursor: default; opacity: 0.35; }
+
+/* The one you threw stays lit while the rest fade, so a locked-in throw reads
+   as a decision rather than as three dead buttons. */
+.rps-pick.is-chosen {
+  opacity: 1;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 24%, var(--surface));
+}
+
+.rps-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 .btn {
   display: block;
   width: 100%;

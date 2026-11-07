@@ -209,6 +209,15 @@
                 ".validate": "newData.isString() && newData.val().length <= 160"
               }
             },
+            "throws": {
+              ".validate": "newData.isString() && newData.val().length === 2"
+            },
+            "last": {
+              ".validate": "newData.isString() && newData.val().length === 2"
+            },
+            "wins": {
+              ".validate": "newData.isString() && newData.val().length === 2"
+            },
             "$other": {
               ".validate": false
             }

@@ -140,6 +140,7 @@ export function describeRoom({ snapshot, myClientId, now, fallbackAt }) {
   let statusLine;
   if (status.phase === 'draw') statusLine = 'A draw';
   else if (status.phase === 'won') statusLine = status.winner === mySeat ? 'You won' : `${other.name} won`;
+  else if (status.whoseTurn == null) statusLine = status.note ?? 'Your turn';
   else statusLine = status.whoseTurn === mySeat ? 'Your turn' : `${other.name} to move`;
 
   return { available: true, ended: false, gameName, statusLine, otherPresent, timeLabel };

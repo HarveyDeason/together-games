@@ -105,6 +105,10 @@ function draw() {
     turnEl.textContent = status.winner === mySeat ? 'You win.' : `${names[status.winner]} wins.`;
   } else if (status.phase === 'draw') {
     turnEl.textContent = 'A draw.';
+  } else if (status.whoseTurn == null) {
+    // A game both of you play at once has nobody to name, so it supplies its
+    // own line. Without this the header reads "undefined to move."
+    turnEl.textContent = status.note ?? 'Your turn.';
   } else {
     turnEl.textContent = status.whoseTurn === mySeat ? 'Your turn.' : `${names[status.whoseTurn]} to move.`;
   }

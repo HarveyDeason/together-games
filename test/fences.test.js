@@ -15,7 +15,7 @@ import {
   vEdge,
   cellAt,
   edgesOf,
-  cutOff
+  boxedIn
 } from '../src/games/fences.js';
 
 const S = DEFAULT_SIDE;
@@ -157,24 +157,24 @@ test('a square has four distinct sides, at every size', () => {
   }
 });
 
-// ---- being cut off from the outside ----
+// ---- a box is four sides, and nothing else counts ----
 
-test('an empty board cuts nothing off', () => {
-  for (const side of SIZES) assert.deepEqual(cutOff(blank(side)), []);
+test('an empty board has no boxes', () => {
+  for (const side of SIZES) assert.deepEqual(boxedIn(blank(side)), []);
 });
 
-test('boxing in one square cuts off that square and nothing else', () => {
-  assert.deepEqual(cutOff(set(blank(), boxIn(2, 2))), [cellAt(S, 2, 2)]);
+test('four sides makes a box, three does not', () => {
+  const sides = boxIn(2, 2);
+  assert.deepEqual(boxedIn(set(blank(), sides.slice(0, 3))), []);
+  assert.deepEqual(boxedIn(set(blank(), sides)), [cellAt(S, 2, 2)]);
 });
 
-test('the rim of the board is not a free wall', () => {
-  // A corner still costs all four lines. Treating the board edge as already
-  // drawn would make the whole outer ring nearly free and the four corners
-  // cost half what every other square costs.
+test('a corner box costs all four lines like every other', () => {
+  // The rim of the board is not already drawn. Treating it as drawn would
+  // make the four corners half price.
   const sides = boxIn(0, 0);
-  const two = set(blank(), [sides[1], sides[3]]);
-  assert.deepEqual(cutOff(two), [], 'open to the top and the left, so not shut off');
-  assert.deepEqual(cutOff(set(two, [sides[0], sides[2]])), [cellAt(S, 0, 0)], 'all four does it');
+  assert.deepEqual(boxedIn(set(blank(), [sides[1], sides[3]])), []);
+  assert.deepEqual(boxedIn(set(blank(), sides)), [cellAt(S, 0, 0)]);
 });
 
 const ring = (side = S) => {
@@ -183,23 +183,11 @@ const ring = (side = S) => {
   for (let row = 1; row <= side - 2; row++) { wall.push(vEdge(side, row, 1), vEdge(side, row, side - 1)); }
   return wall;
 };
-const inside = (side = S) => {
-  const out = [];
-  for (let row = 1; row <= side - 2; row++) for (let col = 1; col <= side - 2; col++) out.push(cellAt(side, row, col));
-  return out;
-};
 
-test('a ring round nine squares takes all nine, not just the wall', () => {
-  // This is the whole game: you enclose an area, you get everything inside it.
-  const board = set(blank(), ring(), '1');
-  assert.deepEqual(cutOff(board).sort((a, b) => a - b), inside().sort((a, b) => a - b));
-  assert.equal(inside().length, 9);
-});
-
-test('a wall with a gap in it cuts nothing off', () => {
-  // One missing line and the whole region still breathes. Without this the
-  // game would hand out areas that are not actually closed.
-  assert.deepEqual(cutOff(set(blank(), ring().slice(1), '1')), []);
+test('walling off a region wins nothing on its own', () => {
+  // The rule is boxes, not territory. A ring round nine squares completes
+  // none of them, and the nine have to be taken one at a time from inside.
+  assert.deepEqual(boxedIn(set(blank(), ring(), '1')), []);
 });
 
 // ---- drawing ----
@@ -264,24 +252,19 @@ test('a line that closes nothing passes the turn', () => {
   assert.equal(state.cells, '.'.repeat(CELLS));
 });
 
-test('a pair of squares is sealed by its outer wall, not by the line between them', () => {
-  // The line BETWEEN two neighbours is inside the region, so it changes
-  // nothing: the pair is shut in the moment the wall round the outside of
-  // both closes. This is where Fences parts company with Dots and Boxes,
-  // where that middle line is the one that scores.
+test('one line can finish two boxes at once, and both are yours', () => {
+  // The line shared by two neighbours each already on three sides. Taking
+  // only one of them would quietly lose a box every time it happened.
   const left = cellAt(S, 2, 2);
   const right = cellAt(S, 2, 3);
   const shared = edgesOf(S, left)[3];
-  const wall = [...edgesOf(S, left), ...edgesOf(S, right)].filter((e) => e !== shared);
-  const last = wall.pop();
+  const others = [...edgesOf(S, left), ...edgesOf(S, right)].filter((e) => e !== shared);
+  const open = fresh({ board: set(blank(), others), turn: 1, moves: others.length });
+  assert.deepEqual(boxedIn(open.board), [], 'neither is finished yet');
 
-  const open = fresh({ board: set(blank(), wall), turn: 1, moves: wall.length });
-  assert.deepEqual(cutOff(open.board), [], 'a wall with a hole in it holds nothing');
-
-  const { state } = draw(open, last, 1);
-  assert.equal(state.cells[left], '1', 'closing the wall takes both');
+  const { state } = draw(open, shared, 1);
+  assert.equal(state.cells[left], '1');
   assert.equal(state.cells[right], '1');
-  assert.equal(state.board[shared], '.', 'without the middle line ever being drawn');
   assert.equal(state.turn, 1, 'and still your go');
 });
 
@@ -293,18 +276,35 @@ test('a square already owned is never taken again', () => {
   assert.equal(state.cells[cellAt(S, 0, 0)], '1', "an owned square stays its owner's");
 });
 
-test('enclosing a region claims every square in it in one move', () => {
-  const wall = ring();
-  const last = wall.pop();
-  const s = fresh({ board: set(blank(), wall), turn: 1, moves: wall.length });
-  const { state } = draw(s, last, 1);
-  assert.equal([...state.cells].filter((c) => c === '1').length, 9, 'all nine inside the ring');
-  assert.equal(state.turn, 1, 'and you go again');
+test('a chain falls in one turn, because each box buys another line', () => {
+  // Three boxes in a row, each one line short. Opening the first hands over
+  // all three, which is the endgame the whole game is about.
+  const row = 2;
+  const gaps = [];
+  let board = blank();
+  for (const col of [1, 2, 3]) {
+    const sides = edgesOf(S, cellAt(S, row, col));
+    board = set(board, sides.slice(0, 3));
+    gaps.push(sides[3]);
+  }
+  let s = fresh({ board, turn: 1, moves: 9 });
+  let took = 0;
+  for (const gap of gaps) {
+    if (s.board[gap] !== '.') continue;
+    const before = s.turn;
+    const result = draw(s, gap, before);
+    if (!result.state) continue;
+    s = result.state;
+    assert.equal(s.turn, before, 'taking a box keeps the turn');
+    took += 1;
+  }
+  assert.ok(took >= 1);
+  assert.ok([...s.cells].filter((c) => c === '1').length >= 3, 'the whole chain went one way');
 });
 
-test('she can close your shape and take it herself', () => {
-  // The trap that makes the game: three sides of something good is an
-  // invitation. Nothing in the rules cares who drew the first three lines.
+test('she can finish your box and take it herself', () => {
+  // The trap that makes the game: three sides of anything is an invitation.
+  // Nothing in the rules cares who drew the first three lines.
   const sides = boxIn(2, 2);
   const s = fresh({ board: set(blank(), sides.slice(0, 3)), turn: 1, moves: 3 });
   const { state } = draw(s, sides[3], 1);
@@ -318,7 +318,7 @@ test('the game runs until every line is drawn', () => {
   assert.notEqual(getStatus(fresh({ board: '0'.repeat(EDGES) })).phase, 'playing');
 });
 
-test('most ground wins', () => {
+test('most boxes wins', () => {
   const status = getStatus(fresh({
     board: '0'.repeat(EDGES), cells: '0'.repeat(13) + '1'.repeat(12)
   }));

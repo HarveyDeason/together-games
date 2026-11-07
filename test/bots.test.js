@@ -179,31 +179,31 @@ const withEdges = (edges, mark = '0') => {
   return { ...s, board, turn: 1, moves: edges.length };
 };
 
-test('fences closes a square that is going begging', () => {
+test('fences finishes a box that is going begging', () => {
   const side = fences.DEFAULT_SIDE;
   const sides = fences.edgesOf(side, fences.cellAt(side, 2, 2));
   const state = withEdges(sides.slice(0, 3));
   assert.deepEqual(botAction('fences', state, 1, first), { type: 'draw', edge: sides[3] });
 });
 
-test('fences takes the line that wins the most ground', () => {
-  // A pair of squares with one gap left in the wall round the outside of
-  // both. Sealing it takes two; every other line takes none.
+test('fences takes the line that finishes two boxes over one', () => {
+  // Two neighbours each on three sides, sharing the line that finishes both,
+  // plus a third box elsewhere one line short. Two beats one.
   const side = fences.DEFAULT_SIDE;
   const left = fences.cellAt(side, 2, 2);
   const right = fences.cellAt(side, 2, 3);
   const shared = fences.edgesOf(side, left)[3];
-  const wall = [...fences.edgesOf(side, left), ...fences.edgesOf(side, right)]
+  const pair = [...fences.edgesOf(side, left), ...fences.edgesOf(side, right)]
     .filter((e) => e !== shared);
-  const gap = wall.pop();
-  const state = withEdges(wall);
-  assert.deepEqual(fences.cutOff(state.board), [], 'the pair really is still open');
-  assert.deepEqual(botAction('fences', state, 1, first), { type: 'draw', edge: gap });
+  const lone = fences.edgesOf(side, fences.cellAt(side, 0, 0)).slice(0, 3);
+  const state = withEdges([...pair, ...lone]);
+  assert.deepEqual(fences.boxedIn(state.board), [], 'nothing is finished yet');
+  assert.deepEqual(botAction('fences', state, 1, first), { type: 'draw', edge: shared });
 });
 
-test('fences does not hand over a square when it has a free choice', () => {
+test('fences does not hand over a box when it has a free choice', () => {
   // An almost empty board: no line is forced, so none of them should leave a
-  // square sitting on three sides.
+  // box sitting on three sides.
   const side = fences.DEFAULT_SIDE;
   const sides = fences.edgesOf(side, fences.cellAt(side, 1, 1));
   const state = withEdges(sides.slice(0, 2));
@@ -213,7 +213,7 @@ test('fences does not hand over a square when it has a free choice', () => {
   for (let cell = 0; cell < fences.cellCount(side); cell++) {
     if (fences.edgesOf(side, cell).filter((e) => board[e] !== '.').length === 3) gifts += 1;
   }
-  assert.equal(gifts, 0, 'it opened a square it did not have to');
+  assert.equal(gifts, 0, 'it opened a box it did not have to');
 });
 
 test('fences plays every size', () => {

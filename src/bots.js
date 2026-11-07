@@ -111,20 +111,21 @@ function fencesBot(state, seat, random) {
     if (state.board[edge] === '.') free.push(edge);
   }
 
-  // How much ground a line would take right now.
+  // How many boxes a line would complete right now.
   const takes = (edge) => {
     const board = state.board.slice(0, edge) + String(seat) + state.board.slice(edge + 1);
-    return fences.cutOff(board).filter((cell) => state.cells[cell] === '.').length;
+    return fences.boxedIn(board).filter((cell) => state.cells[cell] === '.').length;
   };
 
   const greedy = free.filter((edge) => takes(edge) > 0);
   if (greedy.length) {
-    // Closing buys another line, so there is never a reason not to.
+    // Closing buys another line, so there is never a reason not to. Two at
+    // once beats one, where a line is the last side of both neighbours.
     const most = Math.max(...greedy.map(takes));
     return { type: 'draw', edge: pick(greedy.filter((e) => takes(e) === most), random) };
   }
 
-  // Otherwise avoid the lines that leave a square on three sides, which is an
+  // Otherwise avoid the lines that leave a box on three sides, which is an
   // invitation. Late on every line does, and then it picks the least bad.
   const opens = (edge) => {
     const board = state.board.slice(0, edge) + String(seat) + state.board.slice(edge + 1);

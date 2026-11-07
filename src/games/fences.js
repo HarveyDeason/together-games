@@ -1,4 +1,7 @@
-export const meta = { id: 'fences', name: 'Fences', seats: 2 };
+/** The id stays `fences` even though the game is now called Dots & Boxes:
+ *  rooms point at it and scores are filed under it, so renaming the id would
+ *  orphan both. Only what players read has changed. */
+export const meta = { id: 'fences', name: 'Dots & Boxes', seats: 2 };
 
 /** The board sizes, in squares per side. Small is a skirmish, big is an
  *  evening. Each one has a different number of lines, which is what lets the
@@ -47,50 +50,25 @@ export function edgesOf(side, cell) {
   ];
 }
 
-/** Which squares are shut off from the outside of the board.
+/** Which squares have all four of their sides drawn.
  *
- *  One rule covers the whole game. A single boxed-in square, a ring round nine
- *  of them, and a shape with a hole in it all come out of the same walk: start
- *  outside the grid, step between squares wherever the line between them has
- *  not been drawn, and see what cannot be reached.
+ *  The rule is the school one: a square is yours when you draw the fourth
+ *  line round THAT square, and nothing else counts. Walling off a big region
+ *  wins you nothing on its own - only the little boxes inside it, one line at
+ *  a time.
  *
- *  The rim of the board is NOT a free wall: a square on the edge still escapes
- *  through its own undrawn border line, so a corner costs all four lines like
- *  everything else. The other way round, the whole outer ring would be nearly
- *  free and the corners half price.
+ *  That is what gives the game its endgame. Squares link into chains through
+ *  their shared sides, and late on every line you can draw opens one; whoever
+ *  runs out of safe lines first has to hand a whole chain over.
  *
  *  Pure and exported so the rule can be tested on a board on its own. */
-export function cutOff(board) {
+export function boxedIn(board) {
   const side = sideOf(board);
-  const cells = cellCount(side);
-  const open = (edge) => board[edge] === EMPTY;
-  const reached = new Array(cells).fill(false);
-
-  const queue = [];
-  const reach = (cell) => { if (!reached[cell]) { reached[cell] = true; queue.push(cell); } };
-
-  // Seed with every square that still has a way out through the rim.
-  for (let i = 0; i < side; i++) {
-    if (open(edgesOf(side, cellAt(side, 0, i))[0])) reach(cellAt(side, 0, i));
-    if (open(edgesOf(side, cellAt(side, side - 1, i))[1])) reach(cellAt(side, side - 1, i));
-    if (open(edgesOf(side, cellAt(side, i, 0))[2])) reach(cellAt(side, i, 0));
-    if (open(edgesOf(side, cellAt(side, i, side - 1))[3])) reach(cellAt(side, i, side - 1));
+  const full = [];
+  for (let cell = 0; cell < cellCount(side); cell++) {
+    if (edgesOf(side, cell).every((edge) => board[edge] !== EMPTY)) full.push(cell);
   }
-
-  while (queue.length) {
-    const cell = queue.pop();
-    const row = Math.floor(cell / side);
-    const col = cell % side;
-    const [top, bottom, left, right] = edgesOf(side, cell);
-    if (row > 0 && open(top)) reach(cellAt(side, row - 1, col));
-    if (row < side - 1 && open(bottom)) reach(cellAt(side, row + 1, col));
-    if (col > 0 && open(left)) reach(cellAt(side, row, col - 1));
-    if (col < side - 1 && open(right)) reach(cellAt(side, row, col + 1));
-  }
-
-  const shut = [];
-  for (let cell = 0; cell < cells; cell++) if (!reached[cell]) shut.push(cell);
-  return shut;
+  return full;
 }
 
 export function createInitialState(opts = {}) {
@@ -150,18 +128,19 @@ export function applyAction(state, action, seat) {
 
   const board = state.board.slice(0, edge) + String(seat) + state.board.slice(edge + 1);
 
-  // Anything newly shut off is yours. Ground already owned stays with whoever
-  // took it, so a region cannot be won twice.
+  // Any square this line just completed is yours. One line can finish two of
+  // them at once, where it is the last side of both neighbours, and both
+  // count. Squares already owned stay with whoever took them.
   let cells = state.cells;
   let took = 0;
-  for (const cell of cutOff(board)) {
+  for (const cell of boxedIn(board)) {
     if (cells[cell] !== EMPTY) continue;
     cells = cells.slice(0, cell) + String(seat) + cells.slice(cell + 1);
     took += 1;
   }
 
-  // Taking ground buys you another line. That is what makes the endgame
-  // cascade, and what makes opening a region so expensive.
+  // Taking a square buys you another line, so a chain falls in one turn. That
+  // is what makes being the one forced to open it so expensive.
   return { state: { board, cells, turn: took > 0 ? seat : 1 - seat, moves: state.moves + 1 } };
 }
 
@@ -179,7 +158,7 @@ export function render(state, el, { mySeat, names, onAction }) {
   const tally = doc.createElement('p');
   tally.className = 'fn-tally';
   tally.textContent =
-    `${held(state, mySeat)} – ${held(state, 1 - mySeat)} · ${cellCount(side)} squares`;
+    `${held(state, mySeat)} – ${held(state, 1 - mySeat)} · ${cellCount(side)} boxes`;
   wrap.appendChild(tally);
 
   const grid = doc.createElement('div');

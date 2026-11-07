@@ -57,7 +57,7 @@
               ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 50000"
             },
             "board": {
-              ".validate": "newData.isString() && newData.val().length <= 64"
+              ".validate": "newData.isString() && newData.val().length <= 128"
             },
             "pos0": {
               ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100"
@@ -219,7 +219,7 @@
               ".validate": "newData.isString() && newData.val().length === 2"
             },
             "cells": {
-              ".validate": "newData.isString() && newData.val().length === 25"
+              ".validate": "newData.isString() && newData.val().length <= 64"
             },
             "$other": {
               ".validate": false

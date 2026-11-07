@@ -6,9 +6,11 @@ import {
   applyAction,
   getStatus,
   nextStarter,
-  SIDE,
-  EDGE_COUNT,
-  CELL_COUNT,
+  SIZES,
+  DEFAULT_SIDE,
+  edgeCount,
+  cellCount,
+  sideOf,
   hEdge,
   vEdge,
   cellAt,
@@ -16,9 +18,19 @@ import {
   cutOff
 } from '../src/games/fences.js';
 
+const S = DEFAULT_SIDE;
+const EDGES = edgeCount(S);
+const CELLS = cellCount(S);
+
 const fresh = (over = {}) => ({ ...createInitialState(), ...over });
 const draw = (state, edge, seat = state.turn) =>
   applyAction(state, { type: 'draw', edge }, seat);
+const blank = (side = S) => '.'.repeat(edgeCount(side));
+const set = (board, edges, mark = '0') => {
+  let b = board;
+  for (const e of edges) b = b.slice(0, e) + mark + b.slice(e + 1);
+  return b;
+};
 
 /** Draw a run of edges, each by whoever's turn it is. Throws rather than
  *  silently carrying on, so a broken test board is a failure and not a pass. */
@@ -32,8 +44,7 @@ function play(state, edges) {
   return s;
 }
 
-/** The four edges that box a single cell in. */
-const boxIn = (row, col) => edgesOf(cellAt(row, col));
+const boxIn = (row, col, side = S) => edgesOf(side, cellAt(side, row, col));
 
 test('meta describes a two-seat game', () => {
   assert.equal(meta.id, 'fences');
@@ -42,43 +53,106 @@ test('meta describes a two-seat game', () => {
 
 test('a new game has nothing drawn and nothing owned', () => {
   const s = createInitialState();
-  assert.equal(s.board, '.'.repeat(EDGE_COUNT));
-  assert.equal(s.cells, '.'.repeat(CELL_COUNT));
+  assert.equal(s.board, blank());
+  assert.equal(s.cells, '.'.repeat(CELLS));
   assert.equal(s.moves, 0);
 });
 
-test('the board fits the key the Firebase rules already validate', () => {
-  // `board` is validated as a string of 64 or fewer. Going over would mean
-  // another rules change, and a write that fails silently if it is not made.
-  assert.ok(EDGE_COUNT <= 64, `${EDGE_COUNT} edges will not fit the board key`);
+// ---- sizes ----
+
+test('every size has its own number of lines, so a board carries its own shape', () => {
+  // This is what lets the size be read back off the board instead of stored
+  // in a second key that could drift out of step with it.
+  const counts = SIZES.map(edgeCount);
+  assert.equal(new Set(counts).size, SIZES.length, 'two sizes must never share a line count');
+  for (const side of SIZES) assert.equal(sideOf(blank(side)), side);
+});
+
+test('a board of a length nothing wrote falls back rather than throwing', () => {
+  // applyAction is pure and the database calls it. Throwing in here would
+  // take the whole room down over one bad row.
+  assert.equal(sideOf('.'.repeat(7)), DEFAULT_SIDE);
+});
+
+test('a new game can be asked for any size, and nonsense gets the default', () => {
+  for (const side of SIZES) {
+    const s = createInitialState({ size: side });
+    assert.equal(sideOf(s.board), side);
+    assert.equal(s.cells.length, cellCount(side));
+  }
+  for (const bad of [3, 9, 'big', null, undefined, 5.5]) {
+    assert.equal(sideOf(createInitialState({ size: bad }).board), DEFAULT_SIDE);
+  }
+});
+
+test('either of you can set the size, before the first line', () => {
+  // Not a move, so not anybody's turn. Making it turn-bound would mean one of
+  // you could never choose.
+  for (const seat of [0, 1]) {
+    const { state } = applyAction(fresh({ turn: 0 }), { type: 'resize', size: 6 }, seat);
+    assert.equal(sideOf(state.board), 6, `seat ${seat} must be allowed to set it up`);
+    assert.equal(state.moves, 0);
+  }
+});
+
+test('the size cannot be changed once a line is down', () => {
+  // It would throw the game away, and a stray tap must not be able to.
+  const s = play(fresh(), [7]);
+  assert.equal(applyAction(s, { type: 'resize', size: 6 }, 0).error, 'already-started');
+  assert.equal(applyAction(s, { type: 'resize', size: 6 }, 1).error, 'already-started');
+});
+
+test('a size that is not on offer, or is the one you already have, is refused', () => {
+  assert.equal(applyAction(fresh(), { type: 'resize', size: 9 }, 0).error, 'bad-size');
+  assert.equal(applyAction(fresh(), { type: 'resize', size: S }, 0).error, 'same-size');
+});
+
+test('resizing keeps who was due to start', () => {
+  const { state } = applyAction(fresh({ turn: 1 }), { type: 'resize', size: 4 }, 0);
+  assert.equal(state.turn, 1);
+});
+
+test('the rules play the same at every size', () => {
+  // The whole point of deriving the size: one engine, three boards.
+  for (const side of SIZES) {
+    let s = createInitialState({ size: side });
+    const sides = boxIn(1, 1, side);
+    s = play(s, sides.slice(0, 3));
+    const closer = s.turn;
+    const { state } = draw(s, sides[3]);
+    assert.equal(state.cells[cellAt(side, 1, 1)], String(closer), `size ${side}`);
+    assert.equal(state.turn, closer, `size ${side}: closing still buys another line`);
+  }
 });
 
 // ---- the grid ----
 
-test('every edge has exactly one index, and they fill the range', () => {
-  const seen = new Set();
-  for (let row = 0; row <= SIDE; row++) {
-    for (let col = 0; col < SIDE; col++) seen.add(hEdge(row, col));
+test('every line has exactly one index, and they fill the range', () => {
+  for (const side of SIZES) {
+    const seen = new Set();
+    for (let row = 0; row <= side; row++) {
+      for (let col = 0; col < side; col++) seen.add(hEdge(side, row, col));
+    }
+    for (let row = 0; row < side; row++) {
+      for (let col = 0; col <= side; col++) seen.add(vEdge(side, row, col));
+    }
+    assert.equal(seen.size, edgeCount(side), `size ${side}: no index may be shared`);
+    assert.deepEqual([...seen].sort((a, b) => a - b), [...Array(edgeCount(side)).keys()]);
   }
-  for (let row = 0; row < SIDE; row++) {
-    for (let col = 0; col <= SIDE; col++) seen.add(vEdge(row, col));
-  }
-  assert.equal(seen.size, EDGE_COUNT, 'no index may be shared by two edges');
-  assert.deepEqual([...seen].sort((a, b) => a - b), [...Array(EDGE_COUNT).keys()]);
 });
 
-test('a cell knows its own four sides, and shares them with its neighbours', () => {
-  const [top, bottom, left, right] = edgesOf(cellAt(2, 2));
-  assert.equal(bottom, edgesOf(cellAt(3, 2))[0], 'my bottom is their top');
-  assert.equal(right, edgesOf(cellAt(2, 3))[2], 'my right is their left');
-  assert.equal(top, edgesOf(cellAt(1, 2))[1]);
-  assert.equal(left, edgesOf(cellAt(2, 1))[3]);
+test('a square knows its own four sides, and shares them with its neighbours', () => {
+  const [top, bottom, left, right] = edgesOf(S, cellAt(S, 2, 2));
+  assert.equal(bottom, edgesOf(S, cellAt(S, 3, 2))[0], 'my bottom is their top');
+  assert.equal(right, edgesOf(S, cellAt(S, 2, 3))[2], 'my right is their left');
+  assert.equal(top, edgesOf(S, cellAt(S, 1, 2))[1]);
+  assert.equal(left, edgesOf(S, cellAt(S, 2, 1))[3]);
 });
 
-test('a cell has four distinct sides', () => {
-  for (let row = 0; row < SIDE; row++) {
-    for (let col = 0; col < SIDE; col++) {
-      assert.equal(new Set(edgesOf(cellAt(row, col))).size, 4, `cell ${row},${col}`);
+test('a square has four distinct sides, at every size', () => {
+  for (const side of SIZES) {
+    for (let cell = 0; cell < cellCount(side); cell++) {
+      assert.equal(new Set(edgesOf(side, cell)).size, 4, `size ${side}, cell ${cell}`);
     }
   }
 });
@@ -86,54 +160,46 @@ test('a cell has four distinct sides', () => {
 // ---- being cut off from the outside ----
 
 test('an empty board cuts nothing off', () => {
-  assert.deepEqual(cutOff('.'.repeat(EDGE_COUNT)), []);
+  for (const side of SIZES) assert.deepEqual(cutOff(blank(side)), []);
 });
 
-test('boxing in one cell cuts off that cell and nothing else', () => {
-  let board = '.'.repeat(EDGE_COUNT);
-  for (const edge of boxIn(2, 2)) board = board.slice(0, edge) + '0' + board.slice(edge + 1);
-  assert.deepEqual(cutOff(board), [cellAt(2, 2)]);
+test('boxing in one square cuts off that square and nothing else', () => {
+  assert.deepEqual(cutOff(set(blank(), boxIn(2, 2))), [cellAt(S, 2, 2)]);
 });
 
 test('the rim of the board is not a free wall', () => {
   // A corner still costs all four lines. Treating the board edge as already
   // drawn would make the whole outer ring nearly free and the four corners
   // cost half what every other square costs.
-  const sides = edgesOf(cellAt(0, 0));
-  let board = '.'.repeat(EDGE_COUNT);
-  for (const edge of [sides[1], sides[3]]) {
-    board = board.slice(0, edge) + '0' + board.slice(edge + 1);
-  }
-  assert.deepEqual(cutOff(board), [], 'open to the top and the left, so not shut off');
-
-  for (const edge of [sides[0], sides[2]]) {
-    board = board.slice(0, edge) + '0' + board.slice(edge + 1);
-  }
-  assert.deepEqual(cutOff(board), [cellAt(0, 0)], 'and all four does it');
+  const sides = boxIn(0, 0);
+  const two = set(blank(), [sides[1], sides[3]]);
+  assert.deepEqual(cutOff(two), [], 'open to the top and the left, so not shut off');
+  assert.deepEqual(cutOff(set(two, [sides[0], sides[2]])), [cellAt(S, 0, 0)], 'all four does it');
 });
 
-test('a ring round nine cells takes all nine, not just the wall', () => {
-  // This is the whole game: you enclose an area, you get everything inside it.
-  let board = '.'.repeat(EDGE_COUNT);
+const ring = (side = S) => {
   const wall = [];
-  for (let col = 1; col <= 3; col++) { wall.push(hEdge(1, col), hEdge(4, col)); }
-  for (let row = 1; row <= 3; row++) { wall.push(vEdge(row, 1), vEdge(row, 4)); }
-  for (const edge of wall) board = board.slice(0, edge) + '1' + board.slice(edge + 1);
+  for (let col = 1; col <= side - 2; col++) { wall.push(hEdge(side, 1, col), hEdge(side, side - 1, col)); }
+  for (let row = 1; row <= side - 2; row++) { wall.push(vEdge(side, row, 1), vEdge(side, row, side - 1)); }
+  return wall;
+};
+const inside = (side = S) => {
+  const out = [];
+  for (let row = 1; row <= side - 2; row++) for (let col = 1; col <= side - 2; col++) out.push(cellAt(side, row, col));
+  return out;
+};
 
-  const inside = [];
-  for (let row = 1; row <= 3; row++) for (let col = 1; col <= 3; col++) inside.push(cellAt(row, col));
-  assert.deepEqual(cutOff(board).sort((a, b) => a - b), inside.sort((a, b) => a - b));
+test('a ring round nine squares takes all nine, not just the wall', () => {
+  // This is the whole game: you enclose an area, you get everything inside it.
+  const board = set(blank(), ring(), '1');
+  assert.deepEqual(cutOff(board).sort((a, b) => a - b), inside().sort((a, b) => a - b));
+  assert.equal(inside().length, 9);
 });
 
 test('a wall with a gap in it cuts nothing off', () => {
   // One missing line and the whole region still breathes. Without this the
   // game would hand out areas that are not actually closed.
-  let board = '.'.repeat(EDGE_COUNT);
-  const wall = [];
-  for (let col = 1; col <= 3; col++) { wall.push(hEdge(1, col), hEdge(4, col)); }
-  for (let row = 1; row <= 3; row++) { wall.push(vEdge(row, 1), vEdge(row, 4)); }
-  for (const edge of wall.slice(1)) board = board.slice(0, edge) + '1' + board.slice(edge + 1);
-  assert.deepEqual(cutOff(board), []);
+  assert.deepEqual(cutOff(set(blank(), ring().slice(1), '1')), []);
 });
 
 // ---- drawing ----
@@ -146,14 +212,16 @@ test('drawing a line records who drew it and passes the turn', () => {
 });
 
 test('a line already drawn is refused', () => {
-  const { state } = draw(fresh(), 7, 0);
-  assert.equal(draw(state, 7, 1).error, 'already-drawn');
+  assert.equal(draw(play(fresh(), [7]), 7, 1).error, 'already-drawn');
 });
 
-test('a line off the board is refused', () => {
-  for (const edge of [-1, EDGE_COUNT, 2.5, '7', null, undefined, NaN]) {
+test('a line off the board is refused, and the limit follows the size', () => {
+  for (const edge of [-1, EDGES, 2.5, '7', null, undefined, NaN]) {
     assert.equal(draw(fresh(), edge, 0).error, 'bad-edge', `${String(edge)} must be refused`);
   }
+  const small = createInitialState({ size: 4 });
+  assert.equal(draw(small, edgeCount(4) - 1, 0).error, undefined, 'the last line of a small board is fine');
+  assert.equal(draw(small, edgeCount(4), 0).error, 'bad-edge', 'one past it is not');
 });
 
 test('playing out of turn is refused', () => {
@@ -167,49 +235,43 @@ test('an unknown action is refused', () => {
 test('a refused action changes nothing', () => {
   const before = fresh();
   draw(before, 999, 0);
-  assert.equal(before.board, '.'.repeat(EDGE_COUNT));
+  assert.equal(before.board, blank());
   assert.equal(before.moves, 0);
 });
 
-test('the guards run game-over, then not-your-turn, then the move', () => {
-  const over = fresh({ board: '0'.repeat(EDGE_COUNT), cells: '0'.repeat(CELL_COUNT) });
+test('the guards run game-over first', () => {
+  const over = fresh({ board: '0'.repeat(EDGES), cells: '0'.repeat(CELLS) });
   assert.equal(draw(over, 7, 1).error, 'game-over');
   assert.equal(draw(over, 7, 0).error, 'game-over', 'before it complains about the seat');
+  assert.equal(applyAction(over, { type: 'resize', size: 4 }, 0).error, 'game-over',
+    'and a finished game cannot be resized either');
 });
 
 // ---- claiming, and going again ----
 
-test('closing a cell claims it for you and you go again', () => {
-  // The extra turn is the game: late on it cascades, and being forced to open
-  // a region hands the other one a run of them.
+test('closing a square claims it for you and you go again', () => {
   const sides = boxIn(2, 2);
-  let s = play(fresh(), [sides[0], 0 === 0 ? sides[1] : sides[1]]);
-  // Two sides drawn by alternating seats; seat 0 draws the third, seat 1 the
-  // fourth and takes the cell.
-  s = play(s, [sides[2]]);
-  const before = s.turn;
+  const s = play(fresh(), sides.slice(0, 3));
+  const closer = s.turn;
   const { state } = draw(s, sides[3]);
-  assert.equal(state.cells[cellAt(2, 2)], String(before), 'the closer takes it');
-  assert.equal(state.turn, before, 'and goes again');
+  assert.equal(state.cells[cellAt(S, 2, 2)], String(closer), 'the closer takes it');
+  assert.equal(state.turn, closer, 'and goes again');
 });
 
 test('a line that closes nothing passes the turn', () => {
   const { state } = draw(fresh(), 7, 0);
   assert.equal(state.turn, 1);
-  assert.equal(state.cells, '.'.repeat(CELL_COUNT));
+  assert.equal(state.cells, '.'.repeat(CELLS));
 });
 
-test('one line can close two cells at once, and both are yours', () => {
-  // The shared side between two boxed-in neighbours. Claiming only one of them
-  // would quietly lose a square every time it happened.
-  const left = cellAt(2, 2);
-  const right = cellAt(2, 3);
-  const shared = edgesOf(left)[3];
-  const others = [...edgesOf(left), ...edgesOf(right)].filter((e) => e !== shared);
-
-  let board = '.'.repeat(EDGE_COUNT);
-  for (const edge of others) board = board.slice(0, edge) + '0' + board.slice(edge + 1);
-  const s = fresh({ board, turn: 1, moves: others.length });
+test('one line can close two squares at once, and both are yours', () => {
+  // Claiming only one of them would quietly lose a square every time two
+  // boxed-in neighbours shared their last side.
+  const left = cellAt(S, 2, 2);
+  const right = cellAt(S, 2, 3);
+  const shared = edgesOf(S, left)[3];
+  const others = [...edgesOf(S, left), ...edgesOf(S, right)].filter((e) => e !== shared);
+  const s = fresh({ board: set(blank(), others), turn: 1, moves: others.length });
 
   const { state } = draw(s, shared, 1);
   assert.equal(state.cells[left], '1');
@@ -217,27 +279,20 @@ test('one line can close two cells at once, and both are yours', () => {
   assert.equal(state.turn, 1, 'and still your go');
 });
 
-test('a cell already owned is never taken again', () => {
+test('a square already owned is never taken again', () => {
   const sides = boxIn(0, 0);
-  let board = '.'.repeat(EDGE_COUNT);
-  for (const edge of [sides[1], sides[3]]) board = board.slice(0, edge) + '0' + board.slice(edge + 1);
-  const taken = '1' + '.'.repeat(CELL_COUNT - 1);
+  const board = set(blank(), [sides[1], sides[3]]);
+  const taken = '1' + '.'.repeat(CELLS - 1);
   const { state } = draw(fresh({ board, cells: taken, turn: 0, moves: 2 }), sides[0], 0);
-  assert.equal(state.cells[cellAt(0, 0)], '1', "an owned cell stays its owner's");
+  assert.equal(state.cells[cellAt(S, 0, 0)], '1', "an owned square stays its owner's");
 });
 
-test('enclosing a region claims every cell in it in one move', () => {
-  const wall = [];
-  for (let col = 1; col <= 3; col++) { wall.push(hEdge(1, col), hEdge(4, col)); }
-  for (let row = 1; row <= 3; row++) { wall.push(vEdge(row, 1), vEdge(row, 4)); }
+test('enclosing a region claims every square in it in one move', () => {
+  const wall = ring();
   const last = wall.pop();
-
-  let board = '.'.repeat(EDGE_COUNT);
-  for (const edge of wall) board = board.slice(0, edge) + '0' + board.slice(edge + 1);
-  const { state } = draw(fresh({ board, turn: 1, moves: wall.length }), last, 1);
-
-  const mine = [...state.cells].filter((c) => c === '1').length;
-  assert.equal(mine, 9, 'all nine inside the ring');
+  const s = fresh({ board: set(blank(), wall), turn: 1, moves: wall.length });
+  const { state } = draw(s, last, 1);
+  assert.equal([...state.cells].filter((c) => c === '1').length, 9, 'all nine inside the ring');
   assert.equal(state.turn, 1, 'and you go again');
 });
 
@@ -245,49 +300,51 @@ test('she can close your shape and take it herself', () => {
   // The trap that makes the game: three sides of something good is an
   // invitation. Nothing in the rules cares who drew the first three lines.
   const sides = boxIn(2, 2);
-  let board = '.'.repeat(EDGE_COUNT);
-  for (const edge of sides.slice(0, 3)) board = board.slice(0, edge) + '0' + board.slice(edge + 1);
-  const { state } = draw(fresh({ board, turn: 1, moves: 3 }), sides[3], 1);
-  assert.equal(state.cells[cellAt(2, 2)], '1', 'the one who closed it, not the one who built it');
+  const s = fresh({ board: set(blank(), sides.slice(0, 3)), turn: 1, moves: 3 });
+  const { state } = draw(s, sides[3], 1);
+  assert.equal(state.cells[cellAt(S, 2, 2)], '1', 'the one who closed it, not the one who built it');
 });
 
 // ---- the end ----
 
 test('the game runs until every line is drawn', () => {
-  const nearly = '0'.repeat(EDGE_COUNT - 1) + '.';
-  assert.equal(getStatus(fresh({ board: nearly })).phase, 'playing');
-  assert.equal(getStatus(fresh({ board: '0'.repeat(EDGE_COUNT) })).phase !== 'playing', true);
+  assert.equal(getStatus(fresh({ board: '0'.repeat(EDGES - 1) + '.' })).phase, 'playing');
+  assert.notEqual(getStatus(fresh({ board: '0'.repeat(EDGES) })).phase, 'playing');
 });
 
-test('most area wins', () => {
-  const cells = '0'.repeat(13) + '1'.repeat(12);
-  const status = getStatus(fresh({ board: '0'.repeat(EDGE_COUNT), cells }));
+test('most ground wins', () => {
+  const status = getStatus(fresh({
+    board: '0'.repeat(EDGES), cells: '0'.repeat(13) + '1'.repeat(12)
+  }));
   assert.equal(status.phase, 'won');
   assert.equal(status.winner, 0);
   assert.equal(status.whoseTurn, null);
 });
 
 test('either seat can win', () => {
-  const cells = '0'.repeat(10) + '1'.repeat(15);
-  assert.equal(getStatus(fresh({ board: '0'.repeat(EDGE_COUNT), cells })).winner, 1);
+  assert.equal(getStatus(fresh({
+    board: '0'.repeat(EDGES), cells: '0'.repeat(10) + '1'.repeat(15)
+  })).winner, 1);
 });
 
-test('an odd number of cells means there is nobody to tie with', () => {
-  // 25 cells, and every one of them is claimed by the time the last line goes
-  // down, so the scores can never be level. The draw branch is kept anyway.
-  assert.equal(CELL_COUNT % 2, 1);
-});
-
-test('a full board reports nobody to move', () => {
-  const cells = '0'.repeat(13) + '1'.repeat(12);
-  assert.equal(getStatus(fresh({ board: '0'.repeat(EDGE_COUNT), cells })).whoseTurn, null);
+test('an odd board cannot be tied, an even one can', () => {
+  // 25 squares and 49 cannot split level; 16 and 36 can, which is why the
+  // draw branch has to stay.
+  assert.equal(cellCount(5) % 2, 1);
+  assert.equal(cellCount(4) % 2, 0);
+  const even = createInitialState({ size: 4 });
+  const drawn = getStatus({
+    ...even, board: '0'.repeat(edgeCount(4)), cells: '0'.repeat(8) + '1'.repeat(8)
+  });
+  assert.equal(drawn.phase, 'draw');
+  assert.equal(drawn.winner, null);
 });
 
 // ---- rematches and the database ----
 
 test('the next starter alternates', () => {
-  assert.equal(nextStarter(fresh({ turn: 0, moves: 0 })), 1);
-  assert.equal(nextStarter(fresh({ turn: 1, moves: 0 })), 0);
+  assert.equal(nextStarter(fresh({ turn: 0 })), 1);
+  assert.equal(nextStarter(fresh({ turn: 1 })), 0);
 });
 
 test('the state carries no key the Firebase rules do not know', () => {
@@ -298,9 +355,11 @@ test('the state carries no key the Firebase rules do not know', () => {
   }
 });
 
-test('the strings stay the length the rules validate', () => {
-  let s = fresh();
-  for (const edge of [0, 1, 2, 3, 4]) ({ state: s } = draw(s, edge));
-  assert.equal(s.board.length, EDGE_COUNT);
-  assert.equal(s.cells.length, CELL_COUNT);
+test('no size exceeds the lengths the Firebase rules allow', () => {
+  // The rules cap `board` at 128 and `cells` at 64. Going over either means a
+  // write that fails silently and a game that looks broken for no reason.
+  for (const side of SIZES) {
+    assert.ok(edgeCount(side) <= 128, `size ${side} has ${edgeCount(side)} lines`);
+    assert.ok(cellCount(side) <= 64, `size ${side} has ${cellCount(side)} squares`);
+  }
 });

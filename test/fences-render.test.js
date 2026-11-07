@@ -2,8 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createInitialState, render, applyAction,
-  SIDE, EDGE_COUNT, CELL_COUNT, hEdge, vEdge, cellAt, edgesOf
+  SIZES, DEFAULT_SIDE, edgeCount, cellCount, hEdge, vEdge, cellAt, edgesOf
 } from '../src/games/fences.js';
+
+const SIDE = DEFAULT_SIDE;
+const EDGE_COUNT = edgeCount(SIDE);
+const CELL_COUNT = cellCount(SIDE);
 
 // Minimal DOM stub, same shape and reasoning as the other render tests.
 function makeEl(tag) {
@@ -66,18 +70,18 @@ test('a line sits between the two dots it joins', () => {
   // The grid places everything by row and column, so getting this wrong draws
   // a correct game on a board that makes no sense.
   const host = draw();
-  const h = lineFor(host, hEdge(2, 3));
+  const h = lineFor(host, hEdge(SIDE, 2, 3));
   assert.equal(h.style.gridRow, String(2 * 2 + 1), 'a horizontal line is on a dot row');
   assert.equal(h.style.gridColumn, String(3 * 2 + 2), 'and spans the gap between two dots');
-  const v = lineFor(host, vEdge(2, 3));
+  const v = lineFor(host, vEdge(SIDE, 2, 3));
   assert.equal(v.style.gridRow, String(2 * 2 + 2));
   assert.equal(v.style.gridColumn, String(3 * 2 + 1));
 });
 
 test('horizontal and vertical lines are told apart, for the thin bit to run the right way', () => {
   const host = draw();
-  assert.ok(lineFor(host, hEdge(0, 0)).classList.contains('fn-h'));
-  assert.ok(lineFor(host, vEdge(0, 0)).classList.contains('fn-v'));
+  assert.ok(lineFor(host, hEdge(SIDE, 0, 0)).classList.contains('fn-h'));
+  assert.ok(lineFor(host, vEdge(SIDE, 0, 0)).classList.contains('fn-v'));
 });
 
 test('tapping an undrawn line sends it', () => {
@@ -127,7 +131,7 @@ test('the tally is read from your own side', () => {
 test('what the engine writes is what the screen draws', () => {
   // A region closed through applyAction and then rendered, rather than a
   // state typed out by hand that the engine would never produce.
-  const sides = edgesOf(cellAt(1, 1));
+  const sides = edgesOf(SIDE, cellAt(SIDE, 1, 1));
   let s = createInitialState();
   for (const edge of sides.slice(0, 3)) {
     const seat = s.turn;
@@ -138,7 +142,67 @@ test('what the engine writes is what the screen draws', () => {
 
   const host = makeEl('div');
   render(s, host, { mySeat: closer, names: NAMES, onAction: () => {} });
-  assert.equal(squares(host)[cellAt(1, 1)].dataset.seat, String(closer));
+  assert.equal(squares(host)[cellAt(SIDE, 1, 1)].dataset.seat, String(closer));
   assert.equal(lineFor(host, sides[3]).dataset.seat, String(closer));
   assert.ok(lines(host).some((n) => !n.disabled), 'and it is still their go');
+});
+
+
+// ---- picking a size ----
+
+const sizeButtons = (host) => all(host).filter((n) => n.dataset.size !== undefined);
+
+test('every size draws its own board', () => {
+  for (const side of SIZES) {
+    const host = makeEl('div');
+    render(createInitialState({ size: side }), host, { mySeat: 0, names: NAMES, onAction: () => {} });
+    assert.equal(lines(host).length, edgeCount(side), `size ${side}: lines`);
+    assert.equal(squares(host).length, cellCount(side), `size ${side}: squares`);
+    assert.equal(all(host).filter((n) => n.classList.contains('fn-dot')).length, (side + 1) ** 2);
+  }
+});
+
+test('the grid tracks follow the size, or the board draws at the wrong shape', () => {
+  for (const side of SIZES) {
+    const host = makeEl('div');
+    render(createInitialState({ size: side }), host, { mySeat: 0, names: NAMES, onAction: () => {} });
+    const grid = all(host).find((n) => n.classList.contains('fn-grid'));
+    assert.ok(grid.style.gridTemplateColumns.startsWith(`repeat(${side},`),
+      `size ${side}: got ${grid.style.gridTemplateColumns}`);
+    assert.equal(grid.style.gridTemplateRows, grid.style.gridTemplateColumns);
+  }
+});
+
+test('the size picker is offered before the first line and not after', () => {
+  assert.equal(sizeButtons(draw()).length, SIZES.length);
+  assert.equal(sizeButtons(draw({ moves: 1 })).length, 0,
+    'changing size mid-game would throw the game away');
+});
+
+test('the size you are on is shown and cannot be re-picked', () => {
+  const host = draw({}, { mySeat: 0 });
+  const current = sizeButtons(host).filter((b) => b.attrs['aria-current'] === 'true');
+  assert.deepEqual(current.map((b) => b.dataset.size), [String(DEFAULT_SIDE)]);
+  assert.equal(current[0].disabled, true);
+  assert.ok(sizeButtons(host).filter((b) => !b.disabled).length, 'the others are still pickable');
+});
+
+test('tapping a size sends it', () => {
+  const seen = [];
+  const host = draw({}, { onAction: (a) => seen.push(a) });
+  sizeButtons(host).find((b) => b.dataset.size === '6').click();
+  assert.deepEqual(seen, [{ type: 'resize', size: 6 }]);
+});
+
+test('the picker is offered to both of you, since either may set it up', () => {
+  assert.equal(sizeButtons(draw({ turn: 0 }, { mySeat: 1 })).length, SIZES.length,
+    'it is not a move, so it is not turn-bound');
+});
+
+test('a finished board offers no sizes', () => {
+  const host = draw(
+    { board: '0'.repeat(EDGE_COUNT), cells: '0'.repeat(13) + '1'.repeat(12) },
+    { mySeat: 0 }
+  );
+  assert.equal(sizeButtons(host).length, 0);
 });

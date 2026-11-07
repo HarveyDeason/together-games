@@ -50,7 +50,10 @@ export function applyAction(state, action, seat) {
   if (state.board[square] !== EMPTY) return { error: 'occupied' };
 
   const board = state.board.slice(0, square) + String(seat) + state.board.slice(square + 1);
-  return { state: { board, turn: seat === 0 ? 1 : 0, moves: state.moves + 1 } };
+  // `to` and `seat` are the last move, so the other phone can show what just
+  // happened. Both keys already exist for Snakes & Ladders and mean the same
+  // thing there, so this needs no new Firebase rule.
+  return { state: { board, turn: seat === 0 ? 1 : 0, moves: state.moves + 1, to: square, seat } };
 }
 
 const SYMBOLS = { 0: '✕', 1: '◯' };
@@ -82,6 +85,8 @@ export function render(state, el, { mySeat, names, onAction }) {
     }
 
     if (status.line && status.line.includes(i)) cell.classList.add('is-winning');
+    // Not truthiness: square 0 is a real square.
+    if (state.to != null && state.to === i) cell.classList.add('is-last');
 
     cell.addEventListener('click', () => onAction({ type: 'place', square: i }));
     grid.appendChild(cell);

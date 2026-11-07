@@ -36,10 +36,10 @@ const blank = '.'.repeat(COLS * ROWS);
 const rows = (...r) => r.join('');
 const cellAt = (cells, row, column) => cells[row * COLS + column];
 
-function draw(board, { mySeat = 0, turn = 0, onAction = () => {} } = {}) {
+function draw(board, { mySeat = 0, turn = 0, onAction = () => {}, ...rest } = {}) {
   const moves = [...board].filter((c) => c !== '.').length;
   const host = makeEl('div');
-  render({ board, turn, moves }, host, { mySeat, names: NAMES, onAction });
+  render({ board, turn, moves, ...rest }, host, { mySeat, names: NAMES, onAction });
   return { host, cells: host.children[0].children };
 }
 
@@ -123,4 +123,25 @@ test('a finished game is not clickable', () => {
   const board = rows('.......', '.......', '.......', '.......', '.......', '0000...');
   const { cells } = draw(board, { turn: 1, mySeat: 1 });
   assert.ok(cells.every((c) => c.disabled), 'a won board must not take another disc');
+});
+
+
+test('the last disc is marked, and only that one', () => {
+  const board = rows('.......', '.......', '.......', '.......', '.......', '0.1....');
+  const { cells } = draw(board, { to: 5 * COLS + 2, seat: 1 });
+  assert.ok(cellAt(cells, 5, 2).classList.contains('is-last'));
+  assert.equal(cells.filter((c) => c.classList.contains('is-last')).length, 1);
+});
+
+test('the bottom-left cell can be the last move', () => {
+  // Cell 0 of a Connect Four board is the TOP left, so index 0 is a real
+  // index here too and a truthiness check would skip it.
+  const board = rows('0......', '.......', '.......', '.......', '.......', '.......');
+  const { cells } = draw(board, { to: 0, seat: 0 });
+  assert.ok(cellAt(cells, 0, 0).classList.contains('is-last'));
+});
+
+test('a fresh board marks nothing', () => {
+  const { cells } = draw(blank);
+  assert.ok(!cells.some((c) => c.classList.contains('is-last')));
 });

@@ -121,3 +121,30 @@ test('squares carry accessible labels naming the player who took them', () => {
   assert.equal(cells[0].attrs['aria-label'], 'Square 1, Harvey');
   assert.equal(cells[1].attrs['aria-label'], 'Square 2, empty');
 });
+
+
+test('the last move is marked, and only that one', () => {
+  // Without it you open the app and cannot tell what she did while you were
+  // asleep - the board just looks different.
+  const host = makeEl('div');
+  render({ board: '0.1......', turn: 0, moves: 2, to: 2, seat: 1 }, host,
+    { mySeat: 0, names: NAMES, onAction: () => {} });
+  const cells = host.children[0].children;
+  assert.ok(cells[2].classList.contains('is-last'));
+  assert.equal(cells.filter((c) => c.classList.contains('is-last')).length, 1);
+});
+
+test('square zero can be the last move', () => {
+  // `to: 0` is falsy, so a truthiness check here would silently never mark
+  // the top-left square.
+  const host = makeEl('div');
+  render({ board: '0........', turn: 1, moves: 1, to: 0, seat: 0 }, host,
+    { mySeat: 0, names: NAMES, onAction: () => {} });
+  assert.ok(host.children[0].children[0].classList.contains('is-last'));
+});
+
+test('a fresh board marks nothing', () => {
+  const host = makeEl('div');
+  render(createInitialState(), host, { mySeat: 0, names: NAMES, onAction: () => {} });
+  assert.ok(!host.children[0].children.some((c) => c.classList.contains('is-last')));
+});

@@ -141,7 +141,15 @@ export function applyAction(state, action, seat) {
 
   // Taking a square buys you another line, so a chain falls in one turn. That
   // is what makes being the one forced to open it so expensive.
-  return { state: { board, cells, turn: took > 0 ? seat : 1 - seat, moves: state.moves + 1 } };
+  // `to` and `seat` are the last line drawn, so the other phone can see what
+  // just happened - a single thin line is very easy to miss. Both keys are
+  // already in the Firebase rules for Snakes & Ladders.
+  return {
+    state: {
+      board, cells, turn: took > 0 ? seat : 1 - seat,
+      moves: state.moves + 1, to: edge, seat
+    }
+  };
 }
 
 export function render(state, el, { mySeat, names, onAction }) {
@@ -201,6 +209,7 @@ export function render(state, el, { mySeat, names, onAction }) {
     b.setAttribute('aria-label', owner === EMPTY
       ? `Undrawn line ${edge}`
       : `Line ${edge}, drawn by ${names[owner]}`);
+    if (state.to != null && state.to === edge) b.classList.add('is-last');
     b.addEventListener('click', () => onAction({ type: 'draw', edge }));
     return b;
   };

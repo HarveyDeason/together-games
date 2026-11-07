@@ -354,7 +354,9 @@ test('the next starter alternates', () => {
 });
 
 test('the state carries no key the Firebase rules do not know', () => {
-  const allowed = new Set(['turn', 'moves', 'board', 'cells']);
+  // `to` and `seat` are the last line drawn. Both are already validated in
+  // the rules, for Snakes & Ladders.
+  const allowed = new Set(['turn', 'moves', 'board', 'cells', 'to', 'seat']);
   const { state } = draw(fresh(), 7, 0);
   for (const key of Object.keys(state)) {
     assert.ok(allowed.has(key), `${key} would be rejected and the write would fail silently`);
@@ -367,5 +369,39 @@ test('no size exceeds the lengths the Firebase rules allow', () => {
   for (const side of SIZES) {
     assert.ok(edgeCount(side) <= 128, `size ${side} has ${edgeCount(side)} lines`);
     assert.ok(cellCount(side) <= 64, `size ${side} has ${cellCount(side)} squares`);
+  }
+});
+
+
+// ---- showing what just happened ----
+
+test('a move records which line it was and who drew it', () => {
+  const { state } = draw(fresh({ turn: 1 }), 7, 1);
+  assert.equal(state.to, 7);
+  assert.equal(state.seat, 1);
+});
+
+test('a fresh board has no last line, so nothing is marked on it', () => {
+  const s = createInitialState();
+  assert.equal(s.to, undefined);
+  assert.equal(s.seat, undefined);
+});
+
+test('the last line is the one just drawn, even when it took a box', () => {
+  // The turn does not pass when you take a box, so the mark has to follow the
+  // line rather than the turn.
+  const sides = boxIn(2, 2);
+  const s = play(fresh(), sides.slice(0, 3));
+  const closer = s.turn;
+  const { state } = draw(s, sides[3]);
+  assert.equal(state.to, sides[3]);
+  assert.equal(state.seat, closer);
+  assert.equal(state.turn, closer);
+});
+
+test('every line index fits the number the rules allow', () => {
+  // `to` is validated at 100 or less, and it now carries an edge index.
+  for (const side of SIZES) {
+    assert.ok(edgeCount(side) - 1 <= 100, `size ${side} indexes past what \`to\` allows`);
   }
 });

@@ -88,7 +88,10 @@ export function applyAction(state, action, seat) {
 
   const i = index(row, column);
   const board = state.board.slice(0, i) + String(seat) + state.board.slice(i + 1);
-  return { state: { board, turn: 1 - seat, moves: state.moves + 1 } };
+  // `to` and `seat` are the last move - the CELL it landed in, not the column,
+  // because that is what gets marked. Both keys already exist in the Firebase
+  // rules for Snakes & Ladders, where they mean the same thing.
+  return { state: { board, turn: 1 - seat, moves: state.moves + 1, to: i, seat } };
 }
 
 export function render(state, el, { mySeat, names, onAction }) {
@@ -128,6 +131,7 @@ export function render(state, el, { mySeat, names, onAction }) {
       cell.disabled = !myTurn || landing < 0;
       if (myTurn && landing === row) cell.classList.add('is-landing');
       if (status.line && status.line.includes(i)) cell.classList.add('is-winning');
+      if (state.to != null && state.to === i) cell.classList.add('is-last');
 
       cell.addEventListener('click', () => onAction({ type: 'drop', column }));
       grid.appendChild(cell);

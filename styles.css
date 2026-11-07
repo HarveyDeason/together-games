@@ -87,6 +87,10 @@ h1 { font-size: 1.75rem; margin: 0 0 1rem; }
 .ttt-cell:not(:disabled):active { transform: scale(0.96); }
 .ttt-cell[data-seat="0"] { color: var(--seat0); }
 .ttt-cell[data-seat="1"] { color: var(--seat1); }
+/* The last move. A plain white ring, because every other mark on these
+   boards already means something: the seat colours, the gold of a winning
+   line, the accent of where a disc would land. */
+.ttt-cell.is-last { box-shadow: inset 0 0 0 3px color-mix(in srgb, #fff 85%, transparent); }
 .ttt-cell.is-winning { background: color-mix(in srgb, var(--accent) 28%, var(--surface)); }
 
 /* --- Connect Four ----------------------------------------------------- */
@@ -140,6 +144,11 @@ h1 { font-size: 1.75rem; margin: 0 0 1rem; }
 .c4-cell:disabled { cursor: default; }
 .c4-cell:not(:disabled):active::before { transform: scale(0.92); }
 
+.c4-cell.is-last::before {
+  box-shadow: inset 0 0 0 3px #fff, inset 0 -3px 6px rgb(0 0 0 / 0.35);
+}
+
+/* After is-last, so the winning four still read as the winning four. */
 .c4-cell.is-winning::before {
   box-shadow: inset 0 0 0 3px #FFE9A8, inset 0 -3px 6px rgb(0 0 0 / 0.35);
 }
@@ -297,6 +306,14 @@ h1 { font-size: 1.75rem; margin: 0 0 1rem; }
    somewhere to aim on a board that is mostly empty. */
 .fn-line:not(:disabled)::before { background: color-mix(in srgb, var(--text) 30%, transparent); }
 .fn-line:not(:disabled):active::before { background: var(--accent); }
+
+/* After the seat colours, so it wins. A single thin line appearing on a
+   board of sixty is the easiest thing in any of these games to miss. */
+.fn-line.is-last::before {
+  box-shadow: 0 0 0 2px #fff, 0 0 10px color-mix(in srgb, #fff 70%, transparent);
+}
+.fn-h.is-last::before { height: 0.3125rem; }
+.fn-v.is-last::before { width: 0.3125rem; }
 
 .fn-line:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 

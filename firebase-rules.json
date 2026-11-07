@@ -218,6 +218,9 @@
             "wins": {
               ".validate": "newData.isString() && newData.val().length === 2"
             },
+            "cells": {
+              ".validate": "newData.isString() && newData.val().length === 25"
+            },
             "$other": {
               ".validate": false
             }

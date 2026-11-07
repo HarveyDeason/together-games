@@ -329,6 +329,28 @@ h1 { font-size: 1.75rem; margin: 0 0 1rem; }
 
 .fn-size:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+/* --- Playing on your own ----------------------------------------------- */
+
+.solo-note {
+  margin: 1.5rem 0 0;
+  text-align: center;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+/* A refused tap. There is no server to blame out here, so the board says no
+   the same way the room does. */
+@keyframes refused {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-5px); }
+  75% { transform: translateX(5px); }
+}
+.is-refused { animation: refused 180ms ease; }
+
+@media (prefers-reduced-motion: reduce) {
+  .is-refused { animation: none; }
+}
+
 .btn {
   display: block;
   width: 100%;
@@ -371,6 +393,11 @@ h1 { font-size: 1.75rem; margin: 0 0 1rem; }
 }
 
 .btn-secondary { background: var(--surface); color: var(--text); border: 1px solid var(--line); }
+
+/* The solo entry is a link, not a button, so it needs the two things an
+   anchor does differently. */
+a.btn { text-align: center; text-decoration: none; box-sizing: border-box; }
+a.room-code { text-decoration: none; letter-spacing: normal; }
 
 .link-btn {
   display: block;

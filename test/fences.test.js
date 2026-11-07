@@ -264,18 +264,24 @@ test('a line that closes nothing passes the turn', () => {
   assert.equal(state.cells, '.'.repeat(CELLS));
 });
 
-test('one line can close two squares at once, and both are yours', () => {
-  // Claiming only one of them would quietly lose a square every time two
-  // boxed-in neighbours shared their last side.
+test('a pair of squares is sealed by its outer wall, not by the line between them', () => {
+  // The line BETWEEN two neighbours is inside the region, so it changes
+  // nothing: the pair is shut in the moment the wall round the outside of
+  // both closes. This is where Fences parts company with Dots and Boxes,
+  // where that middle line is the one that scores.
   const left = cellAt(S, 2, 2);
   const right = cellAt(S, 2, 3);
   const shared = edgesOf(S, left)[3];
-  const others = [...edgesOf(S, left), ...edgesOf(S, right)].filter((e) => e !== shared);
-  const s = fresh({ board: set(blank(), others), turn: 1, moves: others.length });
+  const wall = [...edgesOf(S, left), ...edgesOf(S, right)].filter((e) => e !== shared);
+  const last = wall.pop();
 
-  const { state } = draw(s, shared, 1);
-  assert.equal(state.cells[left], '1');
+  const open = fresh({ board: set(blank(), wall), turn: 1, moves: wall.length });
+  assert.deepEqual(cutOff(open.board), [], 'a wall with a hole in it holds nothing');
+
+  const { state } = draw(open, last, 1);
+  assert.equal(state.cells[left], '1', 'closing the wall takes both');
   assert.equal(state.cells[right], '1');
+  assert.equal(state.board[shared], '.', 'without the middle line ever being drawn');
   assert.equal(state.turn, 1, 'and still your go');
 });
 

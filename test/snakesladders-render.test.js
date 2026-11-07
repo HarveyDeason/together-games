@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ROUTE_ENGLAND, ROUTE_INDIA, INDIA_OFFSET, SQUARE_TEXT } from '../src/games/snakesladders-board.js';
-import { walk, buildWorld } from '../src/games/snakesladders-render.js';
+import { walk, buildWorld, drawSnake, TOKEN_COLOUR } from '../src/games/snakesladders-render.js';
 
 // Minimal SVG-capable DOM stub. Same reasoning as the one in
 // tictactoe-render.test.js: the zero-dependency constraint rules out jsdom, and
@@ -117,7 +117,7 @@ test('consecutive squares are close together', () => {
 
 // ---- tokens, the die and the roll control ----
 import { tokenOffset, dieFace } from '../src/games/snakesladders-render.js';
-import { tookLink } from '../src/games/snakesladders.js';
+import { tookLink, biteLine } from '../src/games/snakesladders.js';
 import { render, createInitialState } from '../src/games/snakesladders.js';
 
 const NAMES = { 0: 'Harvey', 1: 'Shruti' };
@@ -410,4 +410,92 @@ test('the overview frames the place names too, not just the squares', () => {
 test('the world fills its stage and crops, which is what fitScale assumes', () => {
   const { svg } = built();
   assert.equal(svg.getAttribute('preserveAspectRatio'), 'xMidYMid slice');
+});
+
+
+// ---- the snakes, and whose face is on them ----
+
+const flatten = (node, out = []) => {
+  out.push(node);
+  for (const c of node.children ?? []) flatten(c, out);
+  return out;
+};
+
+test('a snake wears its owner colour, the same one as their token', () => {
+  for (const seat of [0, 1]) {
+    const nodes = flatten(drawSnake(makeDoc(), [100, 100], [60, 300], seat));
+    const worn = nodes.some((n) => n.attrs.stroke === TOKEN_COLOUR[seat] || n.attrs.fill === TOKEN_COLOUR[seat]);
+    assert.ok(worn, `seat ${seat}'s snake must be drawn in seat ${seat}'s colour`);
+    const other = nodes.some((n) => n.attrs.stroke === TOKEN_COLOUR[1 - seat] || n.attrs.fill === TOKEN_COLOUR[1 - seat]);
+    assert.ok(!other, 'a snake must never wear the other player colour - that is the rule made visible');
+  }
+});
+
+test('the head sits on the square that eats you, not the one it drops you on', () => {
+  const g = drawSnake(makeDoc(), [100, 100], [60, 300], 0);
+  const head = g.children.find((c) => c.tag === 'g');
+  assert.ok(head, 'the snake needs a head group');
+  const [, hx, hy] = head.attrs.transform.match(/translate\(([-\d.]+),([-\d.]+)\)/).map(Number);
+  assert.ok(Math.abs(hx - 100) < 1, 'the head is at the source square');
+  assert.ok(Math.abs(hy - 100) < 20, 'the head is at the source square');
+});
+
+test('a snake has a face: two eyes and a tongue', () => {
+  const nodes = flatten(drawSnake(makeDoc(), [100, 100], [60, 300], 1));
+  const whites = nodes.filter((n) => n.tag === 'circle' && n.attrs.fill === '#FFF4E2');
+  assert.equal(whites.length, 2, 'two eyes');
+  const tongue = nodes.some((n) => n.attrs.stroke === '#E24A6A');
+  assert.ok(tongue, 'a forked tongue');
+});
+
+test('the two snakes pull different faces, so colour is not the only tell', () => {
+  const brows = (seat) => flatten(drawSnake(makeDoc(), [100, 100], [60, 300], seat))
+    .map((n) => n.attrs.d).filter(Boolean).join('|');
+  assert.notEqual(brows(0), brows(1));
+});
+
+// ---- what the snake line says ----
+
+const NAMED = { 0: 'Harvey', 1: 'Shruti' };
+
+test('no snake line on an ordinary square', () => {
+  assert.equal(biteLine(undefined, 0, 0, NAMED), null);
+});
+
+test('the victim is told whose snake it was', () => {
+  const line = biteLine({ to: 61, seat: 1 }, 0, 0, NAMED);
+  assert.equal(line.text, "Shruti's snake got you.");
+  assert.equal(line.seat, 1, 'the line is coloured as the owner, not the victim');
+});
+
+test('the owner is told their snake did it', () => {
+  assert.equal(biteLine({ to: 61, seat: 1 }, 0, 1, NAMED).text, 'Your snake got Harvey.');
+});
+
+test('your own snake is called out as letting you past', () => {
+  // Without this the turn looks like a bug: you land on a snake and nothing
+  // happens. Saying so is what makes the rule legible.
+  assert.equal(biteLine({ to: 16, seat: 0 }, 0, 0, NAMED).text,
+    'Your own snake. It lets you past.');
+  assert.equal(biteLine({ to: 16, seat: 0 }, 0, 1, NAMED).text,
+    'Harvey walked straight over their own snake.');
+});
+
+test('a watcher with no seat still gets a sentence that parses', () => {
+  assert.equal(biteLine({ to: 61, seat: 1 }, 0, null, NAMED).text,
+    "Shruti's snake got Harvey.");
+});
+
+test('the snake line clears on the next ordinary move', async () => {
+  const { host } = container();
+  // 34 + 3 = 37, seat 0's snake, and seat 1 is the one it eats.
+  render(moveState({ pos1: 16, turn: 0, moves: 1, die: 3, seat: 1, from: 34, via: 37, to: 16 }),
+    host, { mySeat: 1, names: NAMES, onAction: () => {} });
+  await walked(host);
+  assert.match(host.__sl.bite.textContent, /snake/);
+  render(moveState({ pos1: 18, turn: 0, moves: 2, die: 2, seat: 1, from: 16, via: null, to: 18 }),
+    host, { mySeat: 1, names: NAMES, onAction: () => {} });
+  await walked(host);
+  assert.equal(host.__sl.bite.textContent, '',
+    'a snake line must not hang around over a later, snakeless move');
 });

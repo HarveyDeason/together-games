@@ -1,4 +1,4 @@
-import { ROUTE_ENGLAND, ROUTE_INDIA, INDIA_OFFSET, LINKS } from './snakesladders-board.js';
+import { ROUTE_ENGLAND, ROUTE_INDIA, INDIA_OFFSET, LADDERS, SNAKES } from './snakesladders-board.js';
 
 // Isometric projection. Ported from the approved visual design; the constants
 // are chosen so the two islands clear each other and the whole board fits one
@@ -10,6 +10,10 @@ export const ZOOM = 2.4;
  *  paint before layout. Real phones get a scale worked out from the box. */
 export const FIT = 0.8;
 const NS = 'http://www.w3.org/2000/svg';
+
+/** A seat's colour, worn by its token AND by its snake. The colour is how you
+ *  know whose snake just ate you before you have read a word. */
+export const TOKEN_COLOUR = { 0: '#C4463E', 1: '#2F8F7E' };
 
 export const iso = (x, y, z) => [OX + (x - y) * HW, OY + (x + y) * HH - z * TZ];
 
@@ -83,6 +87,73 @@ export function fitScale(boxW, boxH, bounds) {
   const visibleW = boxW / slice;
   const visibleH = boxH / slice;
   return Math.min(visibleW / (bounds.w + PAD), visibleH / (bounds.h + PAD), 1);
+}
+
+/** One snake, drawn from its head at the square that eats you down to its tail
+ *  at the square it drops you on.
+ *
+ *  The snake wears its owner's colour, the same colour as their token, because
+ *  that is the rule made visible: the one with her face on it is the one that
+ *  can eat you, and yours lets you past. The face is drawn rather than
+ *  photographed - a head is about twenty pixels across on a phone, and a photo
+ *  at that size is mush.
+ *
+ *  Exported so a test can draw one without building the whole world. */
+export function drawSnake(doc, [x1, y1], [x2, y2], seat) {
+  const el = (tag, attrs = {}) => {
+    const node = doc.createElementNS(NS, tag);
+    for (const k in attrs) node.setAttribute(k, attrs[k]);
+    return node;
+  };
+  const colour = TOKEN_COLOUR[seat];
+  const dark = shade(colour, 0.5);
+  const light = shade(colour, 1.35);
+  const g = el('g', { class: `sl-snake sl-snake-${seat}` });
+
+  // An S-bend, so the two snakes that share a stretch of board do not overlap
+  // as one thick stripe. The bend leans opposite ways for the two seats.
+  const lean = seat === 0 ? 1 : -1;
+  const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+  const body = `M${x1},${y1} C${mx + 62 * lean},${my - 48} ${mx - 62 * lean},${my + 62} ${x2},${y2}`;
+
+  g.appendChild(el('path', { d: body, fill: 'none', stroke: dark, 'stroke-width': 13, 'stroke-linecap': 'round' }));
+  g.appendChild(el('path', { d: body, fill: 'none', stroke: colour, 'stroke-width': 9, 'stroke-linecap': 'round' }));
+  // Belly markings, so it reads as a snake and not a cable.
+  g.appendChild(el('path', {
+    d: body, fill: 'none', stroke: light, 'stroke-width': 3.4,
+    'stroke-dasharray': '3 11', 'stroke-linecap': 'round', opacity: 0.85
+  }));
+  // Tail, tapering past the last square.
+  g.appendChild(el('path', {
+    d: `M${x2 - 7},${y2 - 3} L${x2 + 7},${y2 - 3} L${x2},${y2 + 13} Z`, fill: dark
+  }));
+
+  // --- the head, kept upright so the face reads at a glance ---
+  const head = el('g', { transform: `translate(${x1},${y1 - 10})` });
+  head.appendChild(el('ellipse', { cx: 0, cy: 3, rx: 15, ry: 7, fill: dark, opacity: 0.35 }));
+  head.appendChild(el('ellipse', { cx: 0, cy: -3, rx: 14, ry: 11, fill: colour, stroke: dark, 'stroke-width': 1.8 }));
+  // Tongue, flicking down the body.
+  head.appendChild(el('path', {
+    d: 'M0,7 L0,15 M0,15 L-4,20 M0,15 L4,20', fill: 'none',
+    stroke: '#E24A6A', 'stroke-width': 2, 'stroke-linecap': 'round'
+  }));
+  for (const ex of [-5.5, 5.5]) {
+    head.appendChild(el('circle', { cx: ex, cy: -5, r: 4.4, fill: '#FFF4E2' }));
+    head.appendChild(el('circle', { cx: ex, cy: -4.2, r: 2.2, fill: '#1A120C' }));
+    head.appendChild(el('circle', { cx: ex + 1.2, cy: -5.6, r: 0.9, fill: '#FFFFFF' }));
+  }
+  // Brows: the two snakes pull different faces, so they are told apart even in
+  // a screenshot with the colour washed out.
+  head.appendChild(el('path', {
+    d: seat === 0 ? 'M-10,-11 L-2,-13 M2,-13 L10,-11' : 'M-10,-13 L-2,-10 M2,-10 L10,-13',
+    fill: 'none', stroke: dark, 'stroke-width': 2.2, 'stroke-linecap': 'round'
+  }));
+  head.appendChild(el('path', {
+    d: seat === 0 ? 'M-5,4 Q0,8 5,4' : 'M-5,6 Q0,3 5,6',
+    fill: 'none', stroke: dark, 'stroke-width': 1.8, 'stroke-linecap': 'round'
+  }));
+  g.appendChild(head);
+  return g;
 }
 
 /** Build the whole static scene once. Nothing in here changes during play —
@@ -278,50 +349,31 @@ export function buildWorld(doc) {
   for (const i of items) stage.appendChild(i.make());
   camera.appendChild(stage);
 
-  // --- the thirteen links ---
+  // --- the seven ladders ---
   const links = el('g');
   const C = (n) => [squarePos[n].x, squarePos[n].y];
-  for (const [fromStr, to] of Object.entries(LINKS)) {
+  for (const [fromStr, to] of Object.entries(LADDERS)) {
     const from = Number(fromStr);
     const [x1, y1] = C(from);
     const [x2, y2] = C(to);
-    if (to > from) {
-      const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
-      const nx = -dy / L * 6, ny = dx / L * 6;
-      links.appendChild(el('line', { x1: x1 + nx, y1: y1 + ny, x2: x2 + nx, y2: y2 + ny, stroke: '#A8742E', 'stroke-width': 4.5, 'stroke-linecap': 'round' }));
-      links.appendChild(el('line', { x1: x1 - nx, y1: y1 - ny, x2: x2 - nx, y2: y2 - ny, stroke: '#D9A050', 'stroke-width': 4.5, 'stroke-linecap': 'round' }));
-      const rungs = Math.max(3, Math.round(L / 28));
-      for (let i = 1; i < rungs; i++) {
-        const u = i / rungs;
-        links.appendChild(el('line', {
-          x1: x1 + dx * u + nx, y1: y1 + dy * u + ny,
-          x2: x1 + dx * u - nx, y2: y1 + dy * u - ny,
-          stroke: '#F3D08A', 'stroke-width': 2.8, 'stroke-linecap': 'round'
-        }));
-      }
-    } else {
-      const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
-      const cable = from >= 71;
-      const d = cable
-        ? `M${x1},${y1} C${mx + 55},${my + 80} ${mx - 55},${my + 105} ${x2},${y2}`
-        : `M${x1},${y1} C${mx + 70},${my - 70} ${mx - 70},${my + 40} ${x2},${y2}`;
-      links.appendChild(el('path', { d, fill: 'none', stroke: cable ? '#1A120C' : '#101C33', 'stroke-width': cable ? 10 : 9, 'stroke-linecap': 'round' }));
-      links.appendChild(el('path', {
-        d, fill: 'none', stroke: cable ? '#C4463E' : '#A8BCDE',
-        'stroke-width': cable ? 5 : 3.2, 'stroke-linecap': 'round',
-        ...(cable ? {} : { 'stroke-dasharray': '2 14' })
+    const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+    const nx = -dy / L * 6, ny = dx / L * 6;
+    links.appendChild(el('line', { x1: x1 + nx, y1: y1 + ny, x2: x2 + nx, y2: y2 + ny, stroke: '#A8742E', 'stroke-width': 4.5, 'stroke-linecap': 'round' }));
+    links.appendChild(el('line', { x1: x1 - nx, y1: y1 - ny, x2: x2 - nx, y2: y2 - ny, stroke: '#D9A050', 'stroke-width': 4.5, 'stroke-linecap': 'round' }));
+    const rungs = Math.max(3, Math.round(L / 28));
+    for (let i = 1; i < rungs; i++) {
+      const u = i / rungs;
+      links.appendChild(el('line', {
+        x1: x1 + dx * u + nx, y1: y1 + dy * u + ny,
+        x2: x1 + dx * u - nx, y2: y1 + dy * u - ny,
+        stroke: '#F3D08A', 'stroke-width': 2.8, 'stroke-linecap': 'round'
       }));
-      if (cable) {
-        const plug = el('g', { transform: `translate(${x1},${y1})` });
-        plug.appendChild(el('rect', { x: -8, y: -6, width: 16, height: 12, rx: 2, fill: '#C9A227' }));
-        plug.appendChild(el('rect', { x: -3.5, y: -11, width: 7, height: 5, fill: '#C9A227' }));
-        links.appendChild(plug);
-      } else {
-        for (const [cx, cy] of [[x1, y1], [x2, y2]]) {
-          links.appendChild(el('circle', { cx, cy, r: 6.5, fill: '#101C33', stroke: '#C9A227', 'stroke-width': 1.8 }));
-        }
-      }
     }
+  }
+
+  // --- the six snakes, three each ---
+  for (const [fromStr, snake] of Object.entries(SNAKES)) {
+    links.appendChild(drawSnake(doc, C(Number(fromStr)), C(snake.to), snake.seat));
   }
   camera.appendChild(links);
 
@@ -382,7 +434,6 @@ export function tokenOffset(seat) {
   return seat === 0 ? { dx: -9, dy: -4 } : { dx: 9, dy: -4 };
 }
 
-const TOKEN_COLOUR = { 0: '#C4463E', 1: '#2F8F7E' };
 
 export function makeToken(doc, seat) {
   const g = doc.createElementNS(NS, 'g');

@@ -21,18 +21,40 @@ export const ROUTE_INDIA = [
  *  landmasses together. */
 export const INDIA_OFFSET = [0, -26];
 
-/** One map, not three: a link is a ladder when the destination is higher.
+/** The seven ladders. Anyone may climb any of them. */
+export const LADDERS = {
+  4: 14, 12: 25, 22: 33, 46: 58, 54: 70, 66: 85, 78: 96
+};
+
+/** The six snakes, and whose they are.
  *
- *  No destination is also a source, so links cannot chain — a ladder can never
- *  deposit you on the head of a queue. There is a test that pins this property,
+ *  A snake belongs to a seat and only bites the OTHER player. Land on your own
+ *  snake and it lets you past; land on theirs and it takes you back down. So
+ *  three of these are yours and three are hers, and the one that eats you is
+ *  always the one with her face on it.
+ *
+ *  Ownership is by SEAT, not by name: seat 0 is whoever made the room, so the
+ *  faces and the colours follow the tokens. Nothing here may name a player, or
+ *  it will be wrong half the time.
+ */
+export const SNAKES = {
+  37: { to: 16, seat: 0 },
+  62: { to: 41, seat: 0 },
+  95: { to: 75, seat: 0 },
+  49: { to: 29, seat: 1 },
+  71: { to: 52, seat: 1 },
+  88: { to: 61, seat: 1 }
+};
+
+/** Ladders and snakes in one flat map, for anything that only cares that a
+ *  square leads somewhere. Derived, so the two cannot drift apart.
+ *
+ *  No destination is also a source, so links cannot chain - a ladder can never
+ *  deposit you on the head of a snake. There is a test that pins this property,
  *  so it stays true if links are added later. */
 export const LINKS = {
-  // up — distance collapsing
-  4: 14, 12: 25, 22: 33, 46: 58, 54: 70, 66: 85, 78: 96,
-  // down — queues
-  37: 16, 49: 29, 62: 41,
-  // down — charger cables
-  71: 52, 88: 61, 95: 75
+  ...LADDERS,
+  ...Object.fromEntries(Object.entries(SNAKES).map(([from, s]) => [from, s.to]))
 };
 
 /** What a square says when you land on it.
@@ -145,7 +167,7 @@ export const SQUARE_TEXT = {
   85: 'Through the doors, and the heat hits you.',
   86: 'The family has brought a sign. An enormous sign.',
   87: 'Somebody takes your bag out of your hands.',
-  88: 'Shruti is asleep and did not answer.',
+  88: 'Three missed calls. Nobody is awake there.',
   89: 'The car, the horn, the whole road talking.',
   90: 'Marigolds on the door frame.',
 

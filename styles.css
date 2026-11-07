@@ -384,6 +384,17 @@ body {
   color: var(--muted);
 }
 
+/* The snake line. Empty on most turns, and carrying no height when it is, so
+   an ordinary roll does not leave a gap under the caption. Its colour is set
+   from the script: whose snake it was. */
+.sl-bite {
+  margin: 0.125rem 0 0;
+  text-align: center;
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+.sl-bite:empty { display: none; }
+
 .game-picker {
   display: flex;
   justify-content: center;

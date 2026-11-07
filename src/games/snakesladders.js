@@ -1,7 +1,7 @@
-import { LINKS, LAST_SQUARE, SQUARE_TEXT } from './snakesladders-board.js';
+import { LADDERS, SNAKES, LAST_SQUARE, SQUARE_TEXT } from './snakesladders-board.js';
 import {
   buildWorld, makeToken, placeToken, dieFace,
-  cameraTransform, cameraTarget, ZOOM, fitScale
+  cameraTransform, cameraTarget, ZOOM, fitScale, TOKEN_COLOUR
 } from './snakesladders-render.js';
 
 export const meta = { id: 'snakesladders', name: 'Snakes & Ladders', seats: 2 };
@@ -69,8 +69,13 @@ export function applyAction(state, action, seat) {
   }
 
   // Applied once, never looped: no destination is also a source, so a ladder
-  // cannot deposit you on the head of a queue.
-  const linked = LINKS[landed];
+  // cannot deposit you on the head of a snake.
+  //
+  // A snake only bites the OTHER player. Yours lets you past, which is both
+  // the rule and the joke - the one that eats you always has her face on it.
+  const snake = SNAKES[landed];
+  const bitten = snake !== undefined && snake.seat !== seat;
+  const linked = LADDERS[landed] ?? (bitten ? snake.to : undefined);
   const to = linked ?? landed;
 
   return {
@@ -191,13 +196,20 @@ export function render(state, el, { mySeat, names, onAction }) {
     const caption = doc.createElement('p');
     caption.className = 'sl-caption';
 
+    // A second line, only on a snake square. Its own element rather than more
+    // caption text: it is an event, it is worth a colour, and the colour is
+    // whose snake it was.
+    const bite = doc.createElement('p');
+    bite.className = 'sl-bite';
+
     bar.appendChild(die);
     bar.appendChild(rollButton);
     el.appendChild(bar);
     el.appendChild(caption);
+    el.appendChild(bite);
 
     world = {
-      doc, svg, stage, camera, camButton, squarePos, bounds, tokens, die, rollButton, caption,
+      doc, svg, stage, camera, camButton, squarePos, bounds, tokens, die, rollButton, caption, bite,
       shown: { 0: 0, 1: 0 }, busy: false, generation: 0, animatedKey: null,
       following: readFollowPreference(), lookingAt: null
     };
@@ -244,6 +256,7 @@ function setControls(world) {
 function setCaption(world) {
   const s = world.state;
   const status = getStatus(s);
+  setBite(world, null);
 
   if (status.phase === 'won') {
     world.caption.textContent = status.winner === world.mySeat
@@ -256,6 +269,35 @@ function setCaption(world) {
 
   const landed = s.via ?? s.to;
   world.caption.textContent = SQUARE_TEXT[landed] ?? '';
+  setBite(world, biteLine(SNAKES[landed], s.seat, world.mySeat, world.names));
+}
+
+/** What the snake line says, written from the point of view of whoever is
+ *  holding the phone.
+ *
+ *  Returns null when the square has no snake on it, which is most of them.
+ *  Pure and exported so the wording can be tested without a DOM. */
+export function biteLine(snake, actor, mySeat, names) {
+  if (!snake) return null;
+  const owner = snake.seat;
+  const name = (seat) => names?.[seat] ?? 'They';
+  if (owner === actor) {
+    // You cannot be eaten by your own snake. That is the whole point of it.
+    return {
+      seat: owner,
+      text: actor === mySeat
+        ? 'Your own snake. It lets you past.'
+        : `${name(actor)} walked straight over their own snake.`
+    };
+  }
+  if (actor === mySeat) return { seat: owner, text: `${name(owner)}'s snake got you.` };
+  if (owner === mySeat) return { seat: owner, text: `Your snake got ${name(actor)}.` };
+  return { seat: owner, text: `${name(owner)}'s snake got ${name(actor)}.` };
+}
+
+function setBite(world, line) {
+  world.bite.textContent = line ? line.text : '';
+  world.bite.style.color = line ? TOKEN_COLOUR[line.seat] : '';
 }
 
 function settle(world) {

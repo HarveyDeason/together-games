@@ -7,7 +7,7 @@ import {
   getStatus,
   nextStarter
 } from '../src/games/snakesladders.js';
-import { LINKS } from '../src/games/snakesladders-board.js';
+import { LINKS, LADDERS, SNAKES } from '../src/games/snakesladders-board.js';
 
 // Build a mid-game state without playing through to it.
 function stateAt(pos0, pos1 = 0, turn = 0, moves = 2) {
@@ -69,11 +69,75 @@ test('landing on the foot of a ladder climbs it', () => {
   assert.equal(state.to, 14);
 });
 
-test('landing on the head of a queue goes back down', () => {
-  const { state } = roll(stateAt(34), 3);    // 34 + 3 = 37, and 37 -> 16
-  assert.equal(state.pos0, 16);
+test("landing on the head of the other player's snake goes back down", () => {
+  // Square 37 is seat 0's snake, so it is seat 1 who gets eaten by it.
+  const { state } = roll(stateAt(0, 34, 1), 3);   // 34 + 3 = 37, and 37 -> 16
+  assert.equal(state.pos1, 16);
   assert.equal(state.via, 37);
   assert.equal(state.to, 16);
+});
+
+// ---- whose snake is whose ----
+
+test('your own snake lets you past', () => {
+  // The whole point of putting faces on them: the one that eats you is always
+  // the other player's. Landing on your own is an ordinary square.
+  for (const [fromStr, snake] of Object.entries(SNAKES)) {
+    const from = Number(fromStr);
+    const base = snake.seat === 0 ? stateAt(from - 3, 0, 0) : stateAt(0, from - 3, 1);
+    const { state } = roll(base, 3);
+    const landedOn = snake.seat === 0 ? state.pos0 : state.pos1;
+    assert.equal(landedOn, from, `square ${from} must not bite its own owner`);
+    assert.equal(state.to, from);
+    assert.ok(state.via == null, 'no link was taken, so there is nothing to animate');
+  }
+});
+
+test('every snake bites the other player', () => {
+  for (const [fromStr, snake] of Object.entries(SNAKES)) {
+    const from = Number(fromStr);
+    const victim = 1 - snake.seat;
+    const base = victim === 0 ? stateAt(from - 3, 0, 0) : stateAt(0, from - 3, 1);
+    const { state } = roll(base, 3);
+    const landedOn = victim === 0 ? state.pos0 : state.pos1;
+    assert.equal(landedOn, snake.to, `square ${from} must bite seat ${victim}`);
+    assert.equal(state.via, from);
+  }
+});
+
+test('ladders belong to nobody and work for both', () => {
+  for (const [fromStr, to] of Object.entries(LADDERS)) {
+    const from = Number(fromStr);
+    for (const seat of [0, 1]) {
+      const base = seat === 0 ? stateAt(from - 2, 0, 0) : stateAt(0, from - 2, 1);
+      const { state } = roll(base, 2);
+      assert.equal(seat === 0 ? state.pos0 : state.pos1, to,
+        `ladder at ${from} must carry seat ${seat}`);
+    }
+  }
+});
+
+test('the snakes are shared out evenly', () => {
+  // An odd split would hand one player more safe squares than the other.
+  const mine = Object.values(SNAKES).filter((s) => s.seat === 0).length;
+  const hers = Object.values(SNAKES).filter((s) => s.seat === 1).length;
+  assert.equal(mine, hers, 'each player must own the same number of snakes');
+});
+
+test('a snake never sends you below the board', () => {
+  for (const [from, snake] of Object.entries(SNAKES)) {
+    assert.ok(snake.to >= 1 && snake.to < Number(from), `snake at ${from} must go down`);
+  }
+});
+
+test('LINKS is the ladders and the snakes, and nothing else', () => {
+  // Anything reading the flat map must see exactly what the rules apply.
+  const expected = { ...LADDERS };
+  for (const [from, snake] of Object.entries(SNAKES)) expected[from] = snake.to;
+  assert.deepEqual(LINKS, expected);
+  assert.equal(Object.keys(LINKS).length,
+    Object.keys(LADDERS).length + Object.keys(SNAKES).length,
+    'a square cannot be both a ladder foot and a snake head');
 });
 
 test('links do not chain', () => {

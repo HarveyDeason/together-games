@@ -89,6 +89,63 @@ h1 { font-size: 1.75rem; margin: 0 0 1rem; }
 .ttt-cell[data-seat="1"] { color: var(--seat1); }
 .ttt-cell.is-winning { background: color-mix(in srgb, var(--accent) 28%, var(--surface)); }
 
+/* --- Connect Four ----------------------------------------------------- */
+/* Seven columns have to fit a phone, so the cells are small and the gap is
+   tight. The disc is drawn inside the cell rather than being the cell, which
+   leaves the blue board showing between them. */
+
+.c4-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.25rem;
+  width: min(100%, 24rem);
+  margin: 0 auto;
+  padding: 0.3rem;
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface));
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+}
+
+.c4-cell {
+  aspect-ratio: 1;
+  position: relative;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+/* The hole. An inset shadow rather than a border, so an empty hole reads as a
+   gap in the board rather than a button nobody has pressed. */
+.c4-cell::before {
+  content: "";
+  position: absolute;
+  inset: 8%;
+  border-radius: 50%;
+  background: var(--bg);
+  box-shadow: inset 0 2px 4px rgb(0 0 0 / 0.5);
+  transition: background 140ms ease, box-shadow 140ms ease;
+}
+
+.c4-cell[data-seat="0"]::before { background: var(--seat0); box-shadow: inset 0 -3px 6px rgb(0 0 0 / 0.35); }
+.c4-cell[data-seat="1"]::before { background: var(--seat1); box-shadow: inset 0 -3px 6px rgb(0 0 0 / 0.35); }
+
+/* Where your disc would land. Connect Four is unreadable on a phone without
+   it: seven narrow columns and no way to see what you are about to commit. */
+.c4-cell.is-landing::before {
+  box-shadow: inset 0 0 0 2px var(--accent), inset 0 2px 4px rgb(0 0 0 / 0.5);
+}
+
+.c4-cell:disabled { cursor: default; }
+.c4-cell:not(:disabled):active::before { transform: scale(0.92); }
+
+.c4-cell.is-winning::before {
+  box-shadow: inset 0 0 0 3px #FFE9A8, inset 0 -3px 6px rgb(0 0 0 / 0.35);
+}
+
+.c4-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
 .btn {
   display: block;
   width: 100%;
@@ -332,11 +389,13 @@ body {
 
 @media (min-height: 44rem) {
   .ttt-grid { width: min(100%, 26rem); }
+  .c4-grid { width: min(100%, 28rem); }
 }
 
 /* Landscape phones: keep the whole board on screen. */
 @media (orientation: landscape) and (max-height: 30rem) {
   .ttt-grid { width: min(100%, 16rem); }
+  .c4-grid { width: min(100%, 19rem); }
   .score-line, .turn-line { margin-bottom: 0.375rem; }
 }
 

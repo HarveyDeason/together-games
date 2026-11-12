@@ -262,13 +262,23 @@ real Monopoly allows and the HANDOFF listed as a known limit.
 
 ### Pieces and colours (engine-free, but new database keys)
 
-- Eight pieces (*my call, from their material:* 🛺 🍊 ☕ 🎈 🪔 ✈️ 🐘 🎬) and six
-  colours. Each player picks one of each; the other's choice is greyed out.
+- **Eight pieces in the classic style: little cast-metal tokens.** Harvey, shown
+  emoji pieces: *"i want the pieces to be more traditional to the game though..
+  the metal ones"*. So: a top hat, a car, a dog, a boot, a ship, a thimble, an
+  iron and a cat, each **drawn for this project** as a small inline SVG
+  silhouette with a pewter gradient and a highlight, so it reads as metal at
+  19px on a tile and at 28px on a plate. They are our own drawings of everyday
+  objects, not copies of any published token artwork, in keeping with the game
+  deliberately not being called Monopoly. No image files: the SVG lives in a
+  data-only module. The piece stands on a disc of the player's colour, which is
+  what tells two pieces apart at a glance.
+- Six colours. Each player picks one piece and one colour; the other's choice
+  is greyed out.
 - Stored on the room's player record (`rooms/<code>/players/<clientId>`) beside
   `name` and `seat`, so it survives a rematch and a reload. The room passes it
   to `render` (additive: other games ignore it).
-- **Never a gate.** Defaults apply from the first frame (seat 0 🛺 rose, seat 1
-  🍊 teal), the picker is offered in the centre before the first roll and is
+- **Never a gate.** Defaults apply from the first frame (seat 0 the top hat on rose, seat 1
+  the car on teal), the picker is offered in the centre before the first roll and is
   reachable afterwards from your own plate, and either player can roll without
   either having picked.
 - **Where the mockup and this section disagree, this section wins.** Mockup

@@ -655,10 +655,10 @@ test('stations and utilities mortgage fine with no set', () => {
   assert.equal(ok(applyAction(s0, side(12, 'mortgage'), 0)).mortg[12], '1');
 });
 
-test('side actions are admitted only in roll, end or pay, for the actor', () => {
+test('side actions are admitted in any live phase, and refused only once the game is over', () => {
   const s0 = homeSet();
-  assert.equal(applyAction({ ...s0, phase: 'buy' }, side(1, 'build'), 0).error, 'wrong-phase');
-  assert.equal(applyAction(s0, side(1, 'build'), 1).error, 'not-your-turn');
+  assert.equal(applyAction({ ...s0, phase: 'buy', pendingBuy: 5 }, side(1, 'build'), 0).error, undefined);
+  assert.equal(applyAction(s0, side(1, 'build'), 1).error, 'not-yours');   // admitted off-turn; the square is not theirs
   assert.equal(applyAction({ ...s0, phase: 'over' }, side(1, 'build'), 0).error, 'game-over');
   assert.equal(applyAction({ ...s0, phase: 'end' }, side(1, 'build'), 0).error, undefined);
 });
@@ -1078,7 +1078,10 @@ test('the tally and trade exemptions do not open up ordinary actions to the off-
   assert.equal(act(s, 'roll', off).error, 'not-your-turn');
   assert.equal(act(s, 'bankrupt', off).error, 'not-your-turn');
   assert.equal(act(s, 'pass', off).error, 'not-your-turn');
-  assert.equal(applyAction(s, { type: 'build', square: 1 }, off).error, 'not-your-turn');
+  for (const type of ['pay', 'end', 'buy', 'decline', 'card-ok', 'jail-pay', 'jail-card']) {
+    assert.equal(act(s, type, off).error, 'not-your-turn', type);
+  }
+  assert.equal(act(s, { type: 'bid', amount: 50 }, off).error, 'not-your-turn');
 });
 
 // ---- Task 9 fix: log lines must fit the database rules -----------------------
@@ -1717,6 +1720,60 @@ test('you cannot build or lift a mortgage mid-auction, which would undercut your
   assert.equal(act(a, { type: 'build', square: 21 }, 0).error, 'wrong-phase');
   const m = { ...a, mortg: setChar(a.mortg, 23, '1') };
   assert.equal(act(m, { type: 'unmortgage', square: 23 }, 0).error, 'wrong-phase');
+});
+
+test('the off-turn seat can mortgage and sell in every live phase', () => {
+  for (const phase of ['roll', 'buy', 'pay', 'card', 'end', 'auction']) {
+    const base = { ...createInitialState(), phase, actor: 0, turn: 0, aucSq: phase === 'auction' ? 31 : -1 };
+    const off = 1 - base.actor;
+    const s = { ...base, own: own([[3, off]]) };
+    const m = ok(applyAction(s, side(3, 'mortgage'), off));
+    assert.equal(m.cash[off], s.cash[off] + SQUARES[3].mortgage, phase);
+    assert.equal(m.mortg[3], '1', phase);
+    assert.equal(m.phase, phase);
+    assert.equal(m.turn, s.turn);
+    assert.equal(m.actor, s.actor);
+    // sell: a building on 3 (with 1 also built evenly) goes back for half
+    const b = { ...base, own: own([[1, off], [3, off]]), built: withBuilt([[1, '1'], [3, '1']]) };
+    const sold = ok(applyAction(b, side(3, 'sell'), off));
+    assert.equal(sold.cash[off], b.cash[off] + Math.floor(SQUARES[3].house / 2), phase);
+    assert.equal(sold.phase, phase);
+    assert.equal(sold.actor, b.actor);
+  }
+});
+
+test('the actor can mortgage while deciding to buy', () => {
+  const s = { ...createInitialState(), phase: 'buy', pendingBuy: 5, own: own([[3, 0]]) };
+  const m = ok(applyAction(s, side(3, 'mortgage'), 0));
+  assert.equal(m.cash[0], s.cash[0] + SQUARES[3].mortgage);
+  assert.equal(m.pendingBuy, 5);
+  assert.equal(m.phase, 'buy');
+});
+
+test('build and unmortgage are admitted off-turn outside an auction', () => {
+  const s = { ...createInitialState(), phase: 'roll', actor: 0, turn: 0, own: own([[6, 1], [8, 1], [9, 1]]) };
+  const b = ok(applyAction(s, side(6, 'build'), 1));
+  assert.equal(b.built[6], '1');
+  assert.equal(b.cash[1], s.cash[1] - SQUARES[6].house);
+  assert.equal(b.actor, 0);
+  const m = { ...s, mortg: setChar(s.mortg, 9, '1') };
+  assert.equal(applyAction(m, side(9, 'unmortgage'), 1).error, undefined);
+});
+
+test('build and unmortgage are refused for both seats during an auction', () => {
+  const a = { ...auction(31, { actor: 0, turn: 0 }), own: own([[6, 0], [8, 0], [9, 0], [1, 1], [3, 1]]) };
+  const m = { ...a, mortg: setChar(a.mortg, 1, '1') };
+  for (const seat of [0, 1]) {
+    assert.deepEqual(applyAction(a, side(6, 'build'), seat), { error: 'wrong-phase' }, `build ${seat}`);
+    assert.deepEqual(applyAction(m, side(1, 'unmortgage'), seat), { error: 'wrong-phase' }, `unmortgage ${seat}`);
+  }
+});
+
+test('side actions are refused once the game is over', () => {
+  const s = { ...homeSet(), phase: 'over' };
+  for (const type of ['build', 'sell', 'mortgage', 'unmortgage']) {
+    for (const seat of [0, 1]) assert.deepEqual(applyAction(s, side(1, type), seat), { error: 'game-over' }, type);
+  }
 });
 
 test('build and unmortgage still work in the phases they always did', () => {

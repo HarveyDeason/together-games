@@ -167,3 +167,28 @@ export function dealProblem(state, trade) {
   if (outs0 > state.outCards[0].length / 2 || outs1 > state.outCards[1].length / 2) return 'no-card';
   return '';
 }
+
+/** build / sell / mortgage / unmortgage: side activities, not turn steps. */
+export const SIDE_ACTIONS = ['build', 'sell', 'mortgage', 'unmortgage'];
+
+/** The only side actions an auction admits: the ones that raise cash.
+ *  A standing bid is the one unpaid promise in the game, checked against the
+ *  bidder's cash only when it is made. Letting build or unmortgage through
+ *  would let a player bid everything and then spend it, and the other
+ *  player's pass would hand them a lot they cannot pay for.
+ *  Why a bid stays affordable until it wins, in two facts: every action that
+ *  spends or moves cash (build, unmortgage, trade-accept) is refused while an
+ *  auction is live, and the only cash-changing actions still admitted (sell,
+ *  mortgage) can only increase cash. So a bid checked against cash when it
+ *  is made cannot be undercut before the closing pass charges it. Who may
+ *  act no longer matters to either fact: both seats are held to them. */
+export const RAISE_ACTIONS = ['sell', 'mortgage'];
+
+/** Whether a side action is admitted: '' for yes, else the refusal.
+ *  Nothing else is refused: not the phase, not who the actor is. */
+export function sideGate(state, seat, type) {
+  if (state.phase === 'over') return 'game-over';
+  if (seat !== 0 && seat !== 1) return 'not-your-turn';
+  if (state.phase === 'auction' && !RAISE_ACTIONS.includes(type)) return 'wrong-phase';
+  return '';
+}

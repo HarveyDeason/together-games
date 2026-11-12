@@ -5,7 +5,7 @@ import { SQUARES, SETS, STATION_RENT, UTIL_MULT, MAX_DEAL_CASH } from '../src/ga
 import { createInitialState } from '../src/games/darlingco.js';
 import {
   BLANK_OWN, BLANK_BUILT, BLANK_MORTG, BLANK_PROPS, dealChar, dealDest, dealWasMortgaged, dealSquares, setChar, ownerOf, housesOn, isMortgaged,
-  squaresOwnedBy, ownsFullSet, countKind, rentFor, netWorth, canBuild, canSell, dealProblem
+  squaresOwnedBy, ownsFullSet, countKind, rentFor, netWorth, canBuild, canSell, dealProblem, sideGate, SIDE_ACTIONS, RAISE_ACTIONS
 } from '../src/games/darlingco-state.js';
 
 // Build a state without playing to it. own: {sq: seat}, built: {sq: n}, mortg: [sq...]
@@ -364,4 +364,20 @@ test('the deal cash cap is the same as the cap on a player holding cash', () => 
   const rules = JSON.parse(readFileSync(new URL('../firebase-rules.json', import.meta.url), 'utf8'));
   const v = rules.rules.rooms.$code.game.state.cash.$index['.validate'];
   assert.equal(Number(/<= (\d+)/.exec(v)[1]), MAX_DEAL_CASH);
+});
+
+test('sideGate: admitted in every live phase for either seat, refused only for over, strangers and auction spenders', () => {
+  assert.deepEqual(SIDE_ACTIONS, ['build', 'sell', 'mortgage', 'unmortgage']);
+  assert.deepEqual(RAISE_ACTIONS, ['sell', 'mortgage']);
+  for (const phase of ['roll', 'buy', 'pay', 'card', 'end', 'auction', 'over']) {
+    for (const seat of [0, 1, 2, undefined]) {
+      for (const type of SIDE_ACTIONS) {
+        const want = phase === 'over' ? 'game-over'
+          : (seat !== 0 && seat !== 1) ? 'not-your-turn'
+          : (phase === 'auction' && !RAISE_ACTIONS.includes(type)) ? 'wrong-phase'
+          : '';
+        assert.equal(sideGate({ phase, actor: 0 }, seat, type), want, `${phase} ${seat} ${type}`);
+      }
+    }
+  }
 });

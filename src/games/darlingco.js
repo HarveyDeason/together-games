@@ -16,7 +16,8 @@ import {
 } from './darlingco-board.js';
 import {
   BLANK_OWN, BLANK_BUILT, BLANK_MORTG, setChar, ownerOf, isMortgaged, rentFor,
-  housesOn, canBuild, canSell, netWorth, dealProblem, dealDest, dealSquares
+  housesOn, canBuild, canSell, netWorth, dealProblem, dealDest, dealSquares,
+  SIDE_ACTIONS, sideGate
 } from './darlingco-state.js';
 
 export const meta = { id: GAME_ID, name: GAME_NAME, seats: 2 };
@@ -458,22 +459,8 @@ function doEnd(state, seat) {
 
 /** build / sell / mortgage / unmortgage: side activities, not turn steps.
  *  They change cash and the 40-character strings only; phase, turn and actor
- *  are untouched, so they work mid-demand ('pay') as well as 'roll' and 'end'. */
-const SIDE_ACTIONS = ['build', 'sell', 'mortgage', 'unmortgage'];
-const SIDE_PHASES = ['roll', 'end', 'pay', 'auction'];
-
-/** The only side actions an auction admits: the ones that raise cash.
- *  A standing bid is the one unpaid promise in the game, checked against the
- *  bidder's cash only when it is made. Letting build or unmortgage through
- *  would let a player bid everything and then spend it, and the other
- *  player's pass would hand them a lot they cannot pay for.
- *  Why a bid stays affordable until it wins, in two facts: every action that
- *  spends or moves cash (build, unmortgage, trade-accept) is refused while an
- *  auction is live, and the only cash-changing actions still admitted (sell,
- *  mortgage) can only increase cash. So a bid checked against cash when it
- *  is made cannot be undercut before the closing pass charges it. Who may
- *  act (the actor gate) is incidental to this and plays no part in it. */
-const RAISE_ACTIONS = ['sell', 'mortgage'];
+ *  are untouched, so either seat may do them in any live phase (the one
+ *  exception, an auction, is sideGate's call). Your places are yours to manage. */
 
 /** Ending the game leaves nothing dangling in the saved state. `trades: {}`
  *  is the honest local value; the database drops it and readTrades copes. */
@@ -676,12 +663,12 @@ export function applyAction(state, action, seat) {
   const type = action && action.type;
   if (TALLY_ACTIONS.includes(type)) return doTally(state, type, seat);
   if (TRADE_ACTIONS.includes(type)) return doTrade(state, action, seat);
-  if (seat !== state.actor) return { error: 'not-your-turn' };
   if (SIDE_ACTIONS.includes(type)) {
-    if (!SIDE_PHASES.includes(state.phase)) return { error: 'wrong-phase' };
-    if (state.phase === 'auction' && !RAISE_ACTIONS.includes(type)) return { error: 'wrong-phase' };
+    const gate = sideGate(state, seat, type);
+    if (gate) return { error: gate };
     return doSide(state, action, seat);
   }
+  if (seat !== state.actor) return { error: 'not-your-turn' };
   if (!KNOWN_ACTIONS.includes(type)) return { error: 'unknown-action' };
   if (state.phase !== PHASE_OF[type]) return { error: 'wrong-phase' };
   switch (type) {

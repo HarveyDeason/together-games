@@ -338,15 +338,17 @@ test('your own property offers build, sell, mortgage and unmortgage with reasons
   assert.equal(by.build.action.square, sq);
 });
 
-test('property controls work while a demand is open, but not on the other player\'s turn', () => {
+test('property controls follow the engine: any live phase, either seat, except cash-spending ones in an auction', () => {
   const sq = setSquares[0];
   const paying = propertyFor(ownSet(0, { phase: 'pay', owed: 500, owedTo: 1 }), 0, sq);
   assert.equal(paying.buttons.find((b) => b.type === 'mortgage').disabled, false);
   assert.equal(propertyFor(ownSet(0), 1, sq), null);
+  // Not their move, or mid-decision: the places are still yours to manage.
   const waiting = propertyFor(ownSet(0, { actor: 1, turn: 1 }), 0, sq);
-  assert.ok(waiting.buttons.every((b) => b.disabled));
+  assert.equal(waiting.buttons.find((b) => b.type === 'mortgage').disabled, false);
+  assert.equal(waiting.buttons.find((b) => b.type === 'build').disabled, false);
   const mid = propertyFor(ownSet(0, { phase: 'buy', pendingBuy: 1 }), 0, sq);
-  assert.ok(mid.buttons.every((b) => b.disabled));
+  assert.equal(mid.buttons.find((b) => b.type === 'mortgage').disabled, false);
 });
 
 test('a property you do not own opens nothing', () => {

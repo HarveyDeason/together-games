@@ -7,7 +7,7 @@ import {
 } from './darlingco-board.js';
 import { readLog, readTrades, dealSummary } from './darlingco.js';
 import {
-  ownerOf, housesOn, isMortgaged, ownsFullSet, countKind, rentFor, canBuild, canSell, netWorth, dealProblem,
+  sideGate, ownerOf, housesOn, isMortgaged, ownsFullSet, countKind, rentFor, canBuild, canSell, netWorth, dealProblem,
   BLANK_PROPS, setChar, dealChar, dealDest, dealWasMortgaged, dealSquares, squaresOwnedBy
 } from './darlingco-state.js';
 
@@ -24,7 +24,6 @@ export const POT_NAME = () => SQUARES[PARKING_SQUARE].name;
 // (decisionFor stays deterministic) and the click handler adds them.
 
 export const FEED_LINES = 5;
-const SIDE_PHASES = ['roll', 'end', 'pay'];
 
 export const sterling = (n) => `£${n.toLocaleString('en-GB')}`;
 
@@ -244,34 +243,38 @@ export function propertyFor(state, mySeat, sq) {
   const built = housesOn(state, sq);
   const cash = state.cash[mySeat];
 
-  let gate = '';
-  if (!SIDE_PHASES.includes(state.phase)) gate = 'Finish the decision first';
-  else if (state.actor !== mySeat) gate = 'Not your move';
-
-  const reason = (ok) => gate || (ok === true ? '' : ok);
-  const btn = (type, label, why) => ({ type, label, action: { type, square: sq }, disabled: !!why, why });
+  // The engine's own gate, so the card never refuses what the rules allow
+  // (and never offers what they refuse). Per button: an auction closes only
+  // the ones that spend cash.
+  const gateWords = { 'wrong-phase': 'Not during an auction', 'game-over': 'The game is over', 'not-your-turn': 'Not your seat' };
+  const gated = (type) => gateWords[sideGate(state, mySeat, type)] || '';
+  const reason = (type, ok) => gated(type) || (ok === true ? '' : ok);
+  const btn = (type, label, ok) => {
+    const why = reason(type, ok);
+    return { type, label, action: { type, square: sq }, disabled: !!why, why };
+  };
   const buttons = [];
 
   if (spec.kind === 'prop') {
     const b = canBuild(state, mySeat, sq);
     buttons.push(btn('build', built === 4 ? `Build hotel (${spec.house})` : `Build (${spec.house})`,
-      reason(b !== true ? b : cash < spec.house ? 'Not enough cash' : true)));
-    buttons.push(btn('sell', `Sell building (+${Math.floor(spec.house / 2)})`, reason(canSell(state, mySeat, sq))));
+      b !== true ? b : cash < spec.house ? 'Not enough cash' : true));
+    buttons.push(btn('sell', `Sell building (+${Math.floor(spec.house / 2)})`, canSell(state, mySeat, sq)));
   }
 
   const group = spec.set ? SETS[spec.set].squares : [sq];
   buttons.push(btn('mortgage', `Mortgage (+${spec.mortgage})`,
-    reason(mortgaged ? 'Already mortgaged'
-      : group.some((q) => housesOn(state, q) > 0) ? 'Sell the set\'s buildings first' : true)));
+    mortgaged ? 'Already mortgaged'
+      : group.some((q) => housesOn(state, q) > 0) ? 'Sell the set\'s buildings first' : true));
   const lift = unmortgageCost(spec.mortgage);
   buttons.push(btn('unmortgage', `Lift mortgage (${lift})`,
-    reason(!mortgaged ? 'Not mortgaged' : cash < lift ? 'Not enough cash' : true)));
+    !mortgaged ? 'Not mortgaged' : cash < lift ? 'Not enough cash' : true));
 
   const status = mortgaged ? 'Mortgaged.' : built === 5 ? 'Has a hotel.' : built > 0 ? `${built} house${built > 1 ? 's' : ''}.` : '';
   return {
     square: sq,
     title: spec.name,
-    detail: [status, gate].filter(Boolean).join(' '),
+    detail: status,
     buttons
   };
 }

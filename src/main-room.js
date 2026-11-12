@@ -1,12 +1,13 @@
 import { db, ref, onValue, runTransaction, onConnectionChange } from './firebase.js';
 import { getIdentity } from './identity.js';
-import { joinRoom, trackPresence, markActivity, endRoom } from './room.js';
+import { joinRoom, trackPresence, markActivity, endRoom, setLook } from './room.js';
 import { rememberRoom, recordVisit, cacheRoom, forgetRoom } from './myrooms.js';
 import { normaliseCode, isValidCode } from './roomcode.js';
 import { GAMES, getGame, DEFAULT_GAME } from './games/registry.js';
 import { initChat } from './chat.js';
 import { initReactions } from './reactions.js';
 import { watchScores, recordResult } from './scoreboard.js';
+import { looksFor } from './games/darlingco-pieces.js';
 
 const boardEl = document.getElementById('board');
 const turnEl = document.getElementById('turn-line');
@@ -39,6 +40,28 @@ let game = getGame(DEFAULT_GAME);
 let state = null;
 let online = true;
 let ended = false;
+
+const LOOK_KEY = 'together-games.look';
+
+/** This device's chosen look, or null. Storage can be empty, full or blocked,
+ *  and none of that may stop a game being drawn. */
+function readSavedLook() {
+  try {
+    return JSON.parse(localStorage.getItem(LOOK_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function onLook(look) {
+  try {
+    localStorage.setItem(LOOK_KEY, JSON.stringify(look));
+  } catch { /* the pick still shows for this session */ }
+  draw();
+  // A rules set that predates piece and colour rejects this; the saved look
+  // above is what keeps the pick on screen, so the rejection is swallowed.
+  setLook(code, identity.clientId, look).catch(() => {});
+}
 
 function showBanner(text) {
   bannerEl.textContent = text;
@@ -98,6 +121,8 @@ function draw() {
   game.render(state, boardEl, {
     mySeat: online ? mySeat : null,
     names,
+    looks: looksFor(players, mySeat, readSavedLook()),
+    onLook,
     onAction: (action) => submitAction(action)
   });
 

@@ -31,6 +31,12 @@
             "seat": {
               ".validate": "newData.isNumber() && (newData.val() === 0 || newData.val() === 1)"
             },
+            "piece": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 7 && newData.val() % 1 === 0"
+            },
+            "colour": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 5 && newData.val() % 1 === 0"
+            },
             "$other": {
               ".validate": false
             }

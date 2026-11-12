@@ -101,6 +101,17 @@ export async function joinRoom(code, identity) {
   return { seat: result.snapshot.val()[identity.clientId].seat };
 }
 
+/** Records this player's chosen piece and colour on their own players record.
+ *  `update`, not `set`, so name and seat are left alone. Returns the promise;
+ *  the caller decides what a rejection means (a rules set that predates piece
+ *  and colour rejects it, and the local choice must survive that). */
+export function setLook(code, clientId, look) {
+  return update(ref(db, `rooms/${code}/players/${clientId}`), {
+    piece: look.piece,
+    colour: look.colour
+  });
+}
+
 /** Marks this client present in the room.
  *
  *  Three things conspire against a naive version:

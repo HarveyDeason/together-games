@@ -11,17 +11,17 @@
   <header class="room-head">
     <button type="button" class="room-code" id="room-code" title="Tap to share"></button>
     <div class="opponent" id="opponent">Waiting&hellip;</div>
+    <button type="button" class="menu-toggle" id="menu-toggle" aria-expanded="false" aria-controls="room-menu">&#9776; Menu</button>
   </header>
 
-  <p class="banner" id="banner" role="status" hidden></p>
-
-  <main class="room-main">
+  <section class="room-menu" id="room-menu" hidden aria-label="Menu">
+    <div class="room-menu-head">
+      <strong>Menu</strong>
+      <button type="button" id="menu-close" class="link-btn">Close</button>
+    </div>
     <p class="score-line" id="score-line"></p>
-    <p class="turn-line" id="turn-line"></p>
     <nav class="game-picker" id="game-picker" aria-label="Choose a game"></nav>
-    <div id="board"></div>
-    <div class="reaction-bar" id="reaction-bar" aria-label="Send a reaction"></div>
-    <button type="button" id="rematch" class="btn" hidden>Rematch</button>
+    <button type="button" id="sound-toggle" class="btn btn-secondary" hidden></button>
 
     <!-- Hidden until joinRoom succeeds. End game destroys the only copy, and it
          must not be reachable by somebody the room turned away. -->
@@ -30,6 +30,16 @@
       <button type="button" id="end-game" class="link-btn link-danger">End game</button>
     </div>
     <p class="leave-note" id="leave-note" hidden>Stop any time. The game is saved, and it will be waiting for you both in Your rooms.</p>
+  </section>
+
+  <p class="banner" id="banner" role="status" hidden></p>
+
+  <main class="room-main">
+    <p class="turn-line" id="turn-line"></p>
+    <div id="board"></div>
+    <div class="reaction-bar" id="reaction-bar" aria-label="Send a reaction"></div>
+    <button type="button" id="rematch" class="btn" hidden>Rematch</button>
+
     <button type="button" id="back-home" class="btn btn-secondary" hidden>Back to your rooms</button>
   </main>
 

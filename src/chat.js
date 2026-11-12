@@ -12,6 +12,8 @@ export function initChat({ code, identity, namesFor }) {
   const badge = document.getElementById('chat-badge');
 
   let unread = 0;
+  const listeners = [];
+  const notify = () => listeners.forEach((cb) => cb(unread));
 
   function setOpen(open) {
     sheet.hidden = !open;
@@ -19,6 +21,7 @@ export function initChat({ code, identity, namesFor }) {
     if (open) {
       unread = 0;
       badge.hidden = true;
+      notify();
       input.focus();
       log.scrollTop = log.scrollHeight;
     }
@@ -69,6 +72,13 @@ export function initChat({ code, identity, namesFor }) {
       unread += 1;
       badge.textContent = String(unread);
       badge.hidden = false;
+      notify();
     }
   });
+
+  return {
+    toggle: () => setOpen(sheet.hidden),
+    unread: () => unread,
+    onUnread: (cb) => { listeners.push(cb); }
+  };
 }

@@ -20,6 +20,11 @@ const pickerEl = document.getElementById('game-picker');
 const leaveRowEl = document.getElementById('leave-row');
 const leaveNoteEl = document.getElementById('leave-note');
 const backHomeEl = document.getElementById('back-home');
+const menuEl = document.getElementById('room-menu');
+const menuToggleEl = document.getElementById('menu-toggle');
+const soundEl = document.getElementById('sound-toggle');
+const reactionBarEl = document.getElementById('reaction-bar');
+const chatSheetEl = document.getElementById('chat-sheet');
 
 const code = normaliseCode(new URLSearchParams(location.search).get('r'));
 const identity = getIdentity();
@@ -40,6 +45,7 @@ let game = getGame(DEFAULT_GAME);
 let state = null;
 let online = true;
 let ended = false;
+let chat = { toggle() {}, unread: () => 0 };
 
 const LOOK_KEY = 'together-games.look';
 
@@ -61,6 +67,55 @@ function onLook(look) {
   // A rules set that predates piece and colour rejects this; the saved look
   // above is what keeps the pick on screen, so the rejection is swallowed.
   setLook(code, identity.clientId, look).catch(() => {});
+}
+
+const SOUND_KEY = 'together-games.sound';
+
+function soundOn() {
+  try {
+    return localStorage.getItem(SOUND_KEY) !== 'off';
+  } catch {
+    return true;
+  }
+}
+
+function renderSoundToggle() {
+  soundEl.hidden = game.meta.sound !== true;
+  soundEl.textContent = soundOn() ? 'Sound: on' : 'Sound: off';
+}
+
+soundEl.addEventListener('click', () => {
+  try {
+    localStorage.setItem(SOUND_KEY, soundOn() ? 'off' : 'on');
+  } catch { /* the toggle just will not stick */ }
+  renderSoundToggle();
+  draw();
+});
+
+function setMenuOpen(open) {
+  menuEl.hidden = !open;
+  menuToggleEl.setAttribute('aria-expanded', String(open));
+}
+
+menuToggleEl.addEventListener('click', () => setMenuOpen(menuEl.hidden));
+document.getElementById('menu-close').addEventListener('click', () => setMenuOpen(false));
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !menuEl.hidden) setMenuOpen(false);
+});
+
+/** A game with meta.chrome === 'own' draws its own turn line, Rematch and Chat
+ *  button, so the room hides its versions and tucks the reactions into the chat
+ *  sheet. Every other game keeps the room's chrome unchanged. */
+function applyChrome() {
+  const own = game.meta.chrome === 'own';
+  document.body.dataset.game = gameId;
+  document.body.dataset.chrome = own ? 'own' : 'room';
+  if (own) {
+    chatSheetEl.insertBefore(reactionBarEl, document.getElementById('chat-log'));
+  } else {
+    boardEl.after(reactionBarEl);
+  }
+  renderSoundToggle();
 }
 
 function showBanner(text) {
@@ -123,6 +178,9 @@ function draw() {
     names,
     looks: looksFor(players, mySeat, readSavedLook()),
     onLook,
+    chat: { toggle: () => chat.toggle(), unread: () => chat.unread() },
+    onRematch: rematch,
+    sound: { on: soundOn() },
     onAction: (action) => submitAction(action)
   });
 
@@ -189,6 +247,10 @@ function showEnded() {
   scoreEl.textContent = '';
   rematchEl.hidden = true;
   pickerEl.hidden = true;
+  soundEl.hidden = true;
+  // The room's own turn line carries "This game has ended", so it must show
+  // even for a game that normally draws its own.
+  document.body.dataset.chrome = 'room';
   // Nothing left to press. A row of reaction buttons under "this game has
   // ended" invites you to keep playing with a room that is closed.
   document.getElementById('reaction-bar').hidden = true;
@@ -201,7 +263,7 @@ function showEnded() {
   forgetRoom(code);
 }
 
-rematchEl.addEventListener('click', async () => {
+async function rematch() {
   // A transaction, not a set: both players see this button at once, and an
   // unconditional write would wipe a move already played in the new game.
   // `first` is derived from the SERVER's state for the same reason.
@@ -218,7 +280,9 @@ rematchEl.addEventListener('click', async () => {
   } catch {
     showBanner('Could not start a new game. Check your connection.');
   }
-});
+}
+
+rematchEl.addEventListener('click', rematch);
 
 /** Leaving on purpose.
  *
@@ -286,7 +350,7 @@ function renderPicker() {
     button.type = 'button';
     button.textContent = mod.meta.name;
     button.setAttribute('aria-current', String(id === gameId));
-    button.addEventListener('click', () => switchGame(id));
+    button.addEventListener('click', () => { setMenuOpen(false); switchGame(id); });
     pickerEl.appendChild(button);
   }
 }
@@ -355,6 +419,7 @@ async function start() {
   });
 
   renderPicker();
+  applyChrome();
   watchGameScores();
 
   trackPresence(code, identity.clientId);
@@ -400,6 +465,7 @@ async function start() {
       delete boardEl.__sl;          // drop the previous game's cached scene
       watchGameScores();
       renderPicker();
+      applyChrome();
     }
 
     state = node.state;
@@ -415,7 +481,7 @@ async function start() {
     }
   });
 
-  initChat({ code, identity, namesFor: (clientId) => players[clientId]?.name ?? 'Them' });
+  chat = initChat({ code, identity, namesFor: (clientId) => players[clientId]?.name ?? 'Them' });
   initReactions({ code, identity });
 }
 

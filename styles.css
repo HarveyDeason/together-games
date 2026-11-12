@@ -1391,3 +1391,56 @@ body {
 
 /* The lot under the hammer, lit on the board for as long as the auction runs. */
 .dc-tile[data-lot] { box-shadow: inset 0 0 0 2px #ff9a8a, 0 0 6px 1px rgba(255, 154, 138, 0.7); z-index: 2; }
+
+/* --- Room header and menu ------------------------------------------------ */
+/* One line at 360px: code left, opponent in the middle, Menu right. */
+.room-head { flex-wrap: nowrap; gap: 0.5rem; }
+.room-head .opponent {
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+.room-head .opponent { overflow: hidden; text-overflow: ellipsis; }
+.menu-toggle {
+  flex: none;
+  padding: 0.375rem 0.75rem;
+  font: inherit;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.menu-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Drops from the top and covers the header, so its own Close sits where Menu was.
+   z-index 20: above chat (10) and the game's sheets (5). */
+.room-menu {
+  z-index: 20;
+  position: fixed;
+  inset: 0 0 auto 0;
+  max-height: 100dvh;
+  overflow-y: auto;
+  padding: calc(0.75rem + env(safe-area-inset-top)) 1rem 1rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  border-radius: 0 0 1rem 1rem;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.5);
+}
+.room-menu-head { display: flex; align-items: center; justify-content: space-between; }
+.room-menu-head .link-btn { margin: 0; }
+.room-menu .score-line { margin: 0.25rem 0 0.75rem; }
+.room-menu .game-picker { margin-bottom: 0.75rem; }
+.room-menu .btn { margin-top: 0.25rem; padding: 0.6rem 1rem; }
+.room-menu .leave-row { margin-top: 1rem; }
+
+/* A game that draws its own turn line, Rematch and Chat button. */
+body[data-chrome="own"] #turn-line,
+body[data-chrome="own"] #rematch,
+body[data-chrome="own"] .chat-toggle { display: none; }
+body[data-chrome="own"] .chat-sheet .reaction-bar { margin: 0 0 0.5rem; }
+.room-menu .leave-row .btn { flex: 1 1 auto; width: auto; margin: 0; }
+.room-menu .leave-row .link-btn { flex: none; margin: 0; white-space: nowrap; }

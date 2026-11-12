@@ -199,9 +199,12 @@ test('on an unowned property the centre offers to buy or to decline', () => {
   assert.ok(d.detail.includes(String(SQUARES[aProp].price)));
 });
 
-test('buying is not offered when you cannot afford it', () => {
+test('when you cannot afford it, Buy stays but is disabled and says how short you are', () => {
   const d = decisionFor(withState({ phase: 'buy', pendingBuy: aProp, cash: [1, 1500] }), 0);
-  assert.deepEqual(types(d), ['decline']);
+  assert.deepEqual(types(d), ['buy', 'decline']);
+  assert.equal(d.buttons[0].disabled, true);
+  assert.equal(d.buttons[0].why, `£${SQUARES[aProp].price - 1} short`);
+  assert.equal(d.buttons[1].label, 'Auction it');
 });
 
 test('a rent demand names the amount and who it is owed to', () => {
@@ -216,11 +219,13 @@ test('a bank debt says the bank, and the pot', () => {
   assert.ok(/pot|bank/i.test(d.detail));
 });
 
-test('a rent demand always offers bankruptcy alongside paying', () => {
+test('a rent demand offers bankruptcy only when you cannot pay, and never as a plain button', () => {
   const rich = decisionFor(withState({ phase: 'pay', owed: 120, owedTo: 1 }), 0);
-  assert.ok(types(rich).includes('bankrupt') && types(rich).includes('pay'));
+  assert.deepEqual(types(rich), ['pay']);
+  assert.equal(rich.bankrupt, undefined);
   const poor = decisionFor(withState({ phase: 'pay', owed: 120, owedTo: 1, cash: [5, 1500] }), 0);
-  assert.ok(types(poor).includes('bankrupt'));
+  assert.deepEqual(types(poor), []);
+  assert.equal(poor.bankrupt.confirm.yes.type, 'bankrupt');
 });
 
 test('paying is not offered when you cannot afford it', () => {

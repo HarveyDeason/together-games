@@ -121,7 +121,9 @@ export function canBuild(state, seat, sq) {
   if (set.some(q => isMortgaged(state, q))) return 'Un-mortgage the whole set first';
   const mine = housesOn(state, sq);
   if (mine >= 5) return 'Already a hotel';
-  if (mine > Math.min(...set.map(q => housesOn(state, q)))) return 'Build evenly across the set';
+  const fewest = Math.min(...set.map(q => housesOn(state, q)));
+  // Name the place to build on, not the rule: the player reads this as the next step.
+  if (mine > fewest) return `Build on ${SQUARES[set.find(q => housesOn(state, q) === fewest)].name} first`;
   return true;
 }
 

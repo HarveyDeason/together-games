@@ -164,6 +164,12 @@ test('you cannot build a second house while another in the set has none', () => 
   assert.equal(canBuild(st, 0, 9), true);
 });
 
+test('the uneven-build refusal names the place to build on first', () => {
+  const st = mk({ own: own([6, 8, 9]), built: { 6: 1, 9: 1 } });
+  assert.equal(canBuild(st, 0, 6), 'Build on Love Actually first');
+  assert.equal(canBuild(st, 0, 9), 'Build on Love Actually first');
+});
+
 test('you cannot build on a set containing a mortgaged square', () => {
   const st = mk({ own: own([1, 3]), mortg: [3] });
   assert.equal(typeof canBuild(st, 0, 1), 'string');

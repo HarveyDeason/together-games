@@ -7,7 +7,7 @@ import {
 } from './darlingco-board.js';
 import { readLog, readTrades, dealSummary } from './darlingco.js';
 import {
-  sideGate, ownerOf, housesOn, isMortgaged, ownsFullSet, countKind, rentFor, canBuild, canSell, netWorth, dealProblem,
+  sideGate, RAISE_ACTIONS, ownerOf, housesOn, isMortgaged, ownsFullSet, countKind, rentFor, canBuild, canSell, netWorth, dealProblem,
   BLANK_PROPS, setChar, dealChar, dealDest, dealWasMortgaged, dealSquares, squaresOwnedBy
 } from './darlingco-state.js';
 
@@ -79,90 +79,125 @@ function tallyFor(state, mySeat, names) {
   };
 }
 
+/** The running story under the name the stage uses: the last `n` lines. */
+export const storyFor = (state, names, n = 2) => feedLines(state, n, names);
+
 /** What the centre must offer `mySeat` right now:
- *  { title, detail, buttons: [{type, label, kind}], mine, tally } */
+ *  { title, detail, buttons: [{type, label, kind}], mine, tally, subject, ... }
+ *  `subject` says what the stage shows (dice, a deed, a debt, a card, the lot
+ *  under the hammer, the result): it is present for the waiting player too.
+ *  Extras where they apply: `raise` (ways to find cash), `short`, `bankrupt`,
+ *  `auction`. */
 export function decisionFor(state, mySeat, names) {
   const tally = tallyFor(state, mySeat, names);
-  const done = (title, detail, buttons = [], mine = false) => ({ title, detail, buttons, mine, tally });
+  const done = (title, detail, buttons = [], mine = false, subject = { kind: 'dice' }, extra = {}) =>
+    ({ title, detail, buttons, mine, tally, subject, ...extra });
 
   if (state.phase === 'over') {
     const why = state.over === 'bankrupt' ? 'A player went bankrupt.' : 'The players tallied up.';
-    return done('Game over', why);
+    return done('Game over', why, [], false, { kind: 'result' });
   }
 
   // The auction is the live decision, drawn in the centre where a roll would be.
   // The panel itself comes from auctionFor, which also needs the stepper.
   if (isAuction(state)) {
-    return { ...done(SQUARES[state.aucSq].name, '', [], state.actor === mySeat), auction: true };
+    return done(SQUARES[state.aucSq].name, '', [], state.actor === mySeat, { kind: 'lot', square: state.aucSq },
+      { auction: true, raise: raiseCashFor(state, mySeat, auctionFor(state, mySeat, undefined, names).min) });
   }
 
   const actor = state.actor;
   const mine = mySeat !== null && mySeat !== undefined && mySeat === actor;
   const them = seatName(names, actor);
   const cash = state.cash[actor];
+  const subject = (() => {
+    switch (state.phase) {
+      case 'buy': return { kind: 'deed', square: state.pendingBuy };
+      case 'pay': return state.owedTo >= 0 ? { kind: 'deed', square: state.pos[actor] } : { kind: 'debt' };
+      case 'card': { const card = cardOf(state); return { kind: 'card', deck: state.pendingDeck, text: card ? card.text : '' }; }
+      default: return { kind: 'dice' };
+    }
+  })();
 
   if (!mine) {
     switch (state.phase) {
       case 'buy': {
         const sq = SQUARES[state.pendingBuy];
-        return done(`${them} is deciding`, sq ? `Whether to buy ${sq.name} for ${sq.price}.` : 'Whether to buy.');
+        return done(`${them} is deciding`, sq ? `Whether to buy ${sq.name} for ${sterling(sq.price)}.` : 'Whether to buy.', [], false, subject);
       }
       case 'pay': {
         const to = state.owedTo < 0 ? `the ${POT_NAME()} pot` : seatName(names, state.owedTo);
-        return done(`${them} owes ${state.owed}`, `${state.owed} owed to ${to}. They may sell or mortgage to raise it.`);
+        return done(`${them} owes ${sterling(state.owed)}`, `${sterling(state.owed)} owed to ${to}. They may sell or mortgage to raise it.`, [], false, subject);
       }
       case 'card': {
         const card = cardOf(state);
-        return done(`${them} drew a card`, card ? card.text : '');
+        return done(`${them} drew a card`, card ? card.text : '', [], false, subject);
       }
       case 'end':
-        return done(`${them} is finishing their turn`, '');
+        return done(`${them} is finishing their turn`, '', [], false, subject);
       default:
-        return done(`${them} to roll`, state.jail[actor] > 0 ? `${them} is in jail.` : 'Waiting for the dice.');
+        return done(`${them} to roll`, state.jail[actor] > 0 ? `${them} is in jail.` : 'Waiting for the dice.', [], false, subject);
     }
   }
 
   switch (state.phase) {
     case 'buy': {
       const sq = SQUARES[state.pendingBuy];
-      const buttons = [];
-      if (cash >= sq.price) buttons.push({ type: 'buy', label: `Buy for ${sq.price}`, kind: 'primary' });
-      buttons.push({ type: 'decline', label: 'Pass', kind: 'secondary' });
+      const can = cash >= sq.price;
+      const buy = { type: 'buy', label: `Buy · ${sterling(sq.price)}`, kind: 'primary', disabled: !can, why: can ? '' : `${sterling(sq.price - cash)} short` };
+      const buttons = [buy, { type: 'decline', label: 'Auction it', kind: 'secondary' }];
       return done(`Buy ${sq.name}?`,
-        cash >= sq.price ? `Price ${sq.price}. You have ${cash}.` : `Price ${sq.price}, and you only have ${cash}.`,
-        buttons, true);
+        can ? `Price ${sterling(sq.price)}. You have ${sterling(cash)}.` : `Price ${sterling(sq.price)}, and you only have ${sterling(cash)}.`,
+        buttons, true, subject, can ? {} : { raise: raiseCashFor(state, mySeat, sq.price) });
     }
     case 'pay': {
       const to = state.owedTo < 0 ? `the ${POT_NAME()} pot` : seatName(names, state.owedTo);
-      const can = cash >= state.owed;
-      const buttons = [];
-      if (can) buttons.push({ type: 'pay', label: `Pay ${state.owed}`, kind: 'primary' });
-      buttons.push({ type: 'bankrupt', label: 'Declare bankruptcy', kind: 'danger' });
-      return done(`You owe ${state.owed}`,
-        can ? `${state.owed} owed to ${to}. You have ${cash}.`
-          : `${state.owed} owed to ${to}, and you have ${cash}. Tap a property of yours to sell or mortgage, or declare bankruptcy.`,
-        buttons, true);
+      if (cash >= state.owed) {
+        const label = state.owedTo < 0 ? `Pay ${sterling(state.owed)} into the pot` : `Pay ${sterling(state.owed)} to ${to}`;
+        return done(`You owe ${sterling(state.owed)}`, `${sterling(state.owed)} owed to ${to}. You have ${sterling(cash)}.`,
+          [{ type: 'pay', label, kind: 'primary' }], true, subject);
+      }
+      // Short: nothing to press but the ways to raise the money, and bankruptcy
+      // behind a confirmation so it is never one tap from an everyday button.
+      return done(`You owe ${sterling(state.owed)}`,
+        `${sterling(state.owed)} owed to ${to}, and you have ${sterling(cash)}. Sell or mortgage to raise it, or declare bankruptcy.`,
+        [], true, subject, {
+          short: state.owed - cash,
+          raise: raiseCashFor(state, mySeat, state.owed),
+          bankrupt: {
+            label: 'Declare bankruptcy',
+            confirm: {
+              title: 'Declare bankruptcy?',
+              detail: `${seatName(names, 1 - mySeat)} wins the game. This cannot be undone.`,
+              yes: { type: 'bankrupt', label: 'Yes, I am out' },
+              no: 'Keep playing'
+            }
+          }
+        });
     }
     case 'card': {
       const card = cardOf(state);
       return done(state.pendingDeck === 'lj' ? LJ_NAME : JB_NAME, card ? card.text : '',
-        [{ type: 'card-ok', label: 'OK', kind: 'primary' }], true);
+        [{ type: 'card-ok', label: 'OK', kind: 'primary' }], true, subject);
     }
-    case 'end':
+    case 'end': {
+      // The same condition as doEnd's `again`: a double that grants another go.
+      const again = state.doubles > 0 && state.die1 === state.die2 && state.jail[mySeat] === 0;
       return done('Finish your turn', 'Build, sell or mortgage first if you like.',
-        [{ type: 'end', label: 'End turn', kind: 'primary' }], true);
+        [again ? { type: 'end', label: 'Roll again', kind: 'primary', thenRoll: true } : { type: 'end', label: 'End turn', kind: 'primary' }],
+        true, subject);
+    }
     default: {
       const buttons = [{ type: 'roll', label: 'Roll the dice', kind: 'primary' }];
       const jailed = state.jail[mySeat] > 0;
       if (jailed && cash >= JAIL_FINE) {
-        buttons.push({ type: 'jail-pay', label: `Pay ${JAIL_FINE} to get out`, kind: 'secondary' });
+        buttons.push({ type: 'jail-pay', label: `Pay ${sterling(JAIL_FINE)} to get out`, kind: 'secondary' });
       }
       if (jailed && state.outCards[mySeat]) {
         buttons.push({ type: 'jail-card', label: 'Use get-out card', kind: 'secondary' });
       }
       return done('Your roll',
         jailed ? `You are in jail (turn ${state.jail[mySeat]} of 3). Roll a double, pay, or use a card.` : 'Roll the dice.',
-        buttons, true);
+        buttons, true, subject);
     }
   }
 }
@@ -238,6 +273,15 @@ const unmortgageCost = (mortgage) => Math.ceil(mortgage * 11 / 10);
 export function propertyFor(state, mySeat, sq) {
   if (mySeat === null || mySeat === undefined || ownerOf(state, sq) !== mySeat) return null;
   if (state.phase === 'over') return null;   // nothing left to manage
+  const mortgaged = isMortgaged(state, sq);
+  const built = housesOn(state, sq);
+  const status = mortgaged ? 'Mortgaged.' : built === 5 ? 'Has a hotel.' : built > 0 ? `${built} house${built > 1 ? 's' : ''}.` : '';
+  return { square: sq, title: SQUARES[sq].name, detail: status, buttons: manageButtons(state, mySeat, sq) };
+}
+
+/** The build / sell / mortgage / unmortgage buttons for a square `mySeat` owns.
+ *  Also used for My places once the game is over, where all of them read as disabled. */
+function manageButtons(state, mySeat, sq) {
   const spec = SQUARES[sq];
   const mortgaged = isMortgaged(state, sq);
   const built = housesOn(state, sq);
@@ -270,13 +314,63 @@ export function propertyFor(state, mySeat, sq) {
   buttons.push(btn('unmortgage', `Lift mortgage (${lift})`,
     !mortgaged ? 'Not mortgaged' : cash < lift ? 'Not enough cash' : true));
 
-  const status = mortgaged ? 'Mortgaged.' : built === 5 ? 'Has a hotel.' : built > 0 ? `${built} house${built > 1 ? 's' : ''}.` : '';
-  return {
-    square: sq,
-    title: spec.name,
-    detail: status,
-    buttons
-  };
+  return buttons;
+}
+
+// ---- My places and raising cash ----------------------------------------------
+
+/** The groups a player's holdings fall into, in board order of their first square. */
+const placeGroups = () => [
+  ...Object.entries(SETS).map(([key, set]) => ({ key, name: set.name, icon: set.icon, colour: set.colour, squares: set.squares, built: true })),
+  { key: 'stn', name: 'Stations', icon: '\u{1F689}', colour: PLAIN_COLOUR, squares: SQUARES.flatMap((q, i) => (q.kind === 'stn' ? [i] : [])), built: false },
+  { key: 'util', name: 'Utilities', icon: '\u{1F50C}', colour: PLAIN_COLOUR, squares: SQUARES.flatMap((q, i) => (q.kind === 'util' ? [i] : [])), built: false }
+].sort((a, b) => a.squares[0] - b.squares[0]);
+
+/** Everything `mySeat` holds, grouped, with the buttons for each place; null
+ *  for a watcher. Each button is exactly the property card's. */
+export function placesFor(state, mySeat) {
+  if (mySeat !== 0 && mySeat !== 1) return null;
+  const groups = [];
+  for (const g of placeGroups()) {
+    const owned = g.squares.filter((sq) => ownerOf(state, sq) === mySeat);
+    if (!owned.length) continue;
+    groups.push({
+      key: g.key, name: g.name, icon: g.icon, colour: g.colour,
+      held: owned.length, of: g.squares.length, full: owned.length === g.squares.length,
+      housePrice: g.built ? SQUARES[g.squares[0]].house : null,
+      places: owned.map((sq) => {
+        const buttons = {};
+        for (const b of manageButtons(state, mySeat, sq)) buttons[b.type] = b;
+        return {
+          square: sq, name: SQUARES[sq].name,
+          rentNow: rentFor(state, sq, 7),
+          houses: housesOn(state, sq), mortgaged: isMortgaged(state, sq), buttons
+        };
+      })
+    });
+  }
+  return { cash: state.cash[mySeat], groups };
+}
+
+/** How `mySeat` could find `need` pounds: the sell and mortgage buttons that
+ *  work right now, largest gain first, at most three (`more` counts the rest).
+ *  `short` is how far cash falls below `need`. Empty for a watcher. */
+export function raiseCashFor(state, mySeat, need = 0) {
+  const places = placesFor(state, mySeat);
+  if (!places) return { short: 0, options: [], more: 0 };
+  const all = [];
+  for (const g of places.groups) {
+    for (const p of g.places) {
+      for (const type of RAISE_ACTIONS) {
+        const b = p.buttons[type];
+        if (!b || b.disabled) continue;
+        const gain = type === 'sell' ? Math.floor(SQUARES[p.square].house / 2) : SQUARES[p.square].mortgage;
+        all.push({ square: p.square, name: p.name, colour: g.colour, label: `${type === 'sell' ? 'Sell' : 'Mortgage'} +${sterling(gain)}`, gain, action: b.action });
+      }
+    }
+  }
+  all.sort((a, b) => b.gain - a.gain);
+  return { short: Math.max(0, need - state.cash[mySeat]), options: all.slice(0, 3), more: Math.max(0, all.length - 3) };
 }
 
 // ---- the property card -------------------------------------------------------

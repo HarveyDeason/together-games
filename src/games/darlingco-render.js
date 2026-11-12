@@ -13,7 +13,8 @@
 import { SQUARES, SETS, GAME_NAME, BID_STEP, LJ_NAME, JB_NAME } from './darlingco-board.js';
 import {
   POT_NAME, chipParts, storyFor, decisionFor, auctionFor, cardFor, STRIP_CAP, builtReason, sterling, tradeStrips, stripsShown,
-  canOpenDeal, blankDraft, draftFromDeal, nudgeCash, toggleChip, tidyDraft, dealSheetFor, dealReviewFor, walkPath, sendLanded, flipOrder
+  canOpenDeal, blankDraft, draftFromDeal, nudgeCash, bumpCash, toggleChip, tidyDraft, dealSheetFor, dealReviewFor, walkPath, sendLanded, flipOrder,
+  placesFor, rulesFor, helpTab
 } from './darlingco-view.js';
 import { PIECES, COLOURS, METAL_DEFS, DEFAULT_LOOKS, resolveLooks } from './darlingco-pieces.js';
 import { readTrades } from './darlingco.js';
@@ -53,6 +54,8 @@ function clear(node) {
 }
 
 const FREE_PARKING = 20;
+const LONG_WORD = 7;       // a word this long may not fit a narrow tile at the normal size
+const MIN_NAME_PX = 4.6;   // fitName never shrinks a name past this
 
 /** Builds the forty empty tiles in grid positions. Not yet painted. */
 export function buildBoard(doc) {
@@ -92,8 +95,10 @@ export function buildBoard(doc) {
     if (i === FREE_PARKING) tile.appendChild(el(doc, 'span', 'dc-potv'));
     tile.appendChild(el(doc, 'span', 'dc-ic', set ? set.icon : sq.icon));
     const nm = el(doc, 'span', 'dc-nm', sq.name);
-    // A single long word has nowhere to wrap in a 27px tile; the stylesheet sets it a size smaller.
-    if (sq.name.split(/\s+/).some((w) => w.length >= 10)) nm.dataset.long = '1';
+    // A single long word has nowhere to wrap in a 27px tile and must never be broken. Such a
+    // tile is marked here; the stylesheet sets it a size smaller and fitName finishes the job
+    // by measuring, because how wide a word is depends on the font the browser ended up with.
+    if (sq.name.split(/\s+/).some((w) => w.length >= LONG_WORD)) nm.dataset.long = '1';
     tile.appendChild(nm);
     tile.appendChild(el(doc, 'span', 'dc-pr'));
     tile.appendChild(el(doc, 'span', 'dc-toks'));
@@ -143,13 +148,61 @@ export function paintTile(tile, state, i) {
   const potv = part(tile, 'dc-potv');
   if (potv) potv.textContent = state.pot > 0 ? String(state.pot) : '';
 
+  // The stylesheet hides the price on a tile too short to give it a line of its own.
+  if (price.textContent) tile.dataset.priced = '1';
+  else delete tile.dataset.priced;
+
   // Both token elements are made once and put in or taken out of the tile, so
   // a repaint never needs a document and a shared square shows both.
   const toks = part(tile, 'dc-toks');
   clear(toks);
+  let here = 0;
   for (const seat of [0, 1]) {
-    if (state.pos[seat] === i) toks.appendChild(tile.dcTokens[seat]);
+    if (state.pos[seat] === i) { toks.appendChild(tile.dcTokens[seat]); here++; }
   }
+  // Two on one square are drawn smaller so both are whole; a tile with any rises above its neighbours.
+  toks.dataset.n = String(here);
+  if (here) tile.dataset.tok = '1';
+  else delete tile.dataset.tok;
+}
+
+/** Shrink one tile name until no word of it is wider than the tile (a name wraps
+ *  between words, never inside one). Measured, because how wide a word is depends
+ *  on the font the browser ended up with. Where nothing can be measured, nothing changes. */
+function fitName(nm) {
+  if (typeof getComputedStyle !== 'function' || !nm.ownerDocument || typeof nm.ownerDocument.createRange !== 'function') return;
+  const box = nm.getBoundingClientRect();
+  if (!box.width) return;   // not laid out (hidden, or not in a page): nothing to measure against
+  nm.style.fontSize = '';
+  const range = nm.ownerDocument.createRange();
+  range.selectNodeContents(nm);
+  // The text's own line boxes, not scrollWidth: a clamped name reports a scrollWidth wider than its words.
+  const widest = () => Math.max(0, ...Array.from(range.getClientRects(), (r) => r.width));
+  const style = getComputedStyle(nm);
+  const room = box.width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+  let size = parseFloat(style.fontSize);
+  while (widest() > room + 0.05 && size > MIN_NAME_PX) {
+    size -= 0.2;
+    nm.style.fontSize = `${size.toFixed(1)}px`;
+  }
+}
+
+/** Fit every name marked long. */
+function fitNames(world) {
+  for (const tile of world.tiles) {
+    const nm = part(tile, 'dc-nm');
+    if (nm && nm.dataset.long) fitName(nm);
+  }
+}
+
+/** Fit now, and again whenever the board changes size or a font arrives. */
+function watchNames(world) {
+  if (typeof ResizeObserver === 'function') new ResizeObserver(() => fitNames(world)).observe(world.board);
+  if (typeof addEventListener === 'function') addEventListener('resize', () => fitNames(world));
+  const fonts = world.doc.fonts;
+  if (fonts && fonts.ready && typeof fonts.ready.then === 'function') fonts.ready.then(() => fitNames(world), () => {});
+  if (fonts && typeof fonts.addEventListener === 'function') fonts.addEventListener('loadingdone', () => fitNames(world));
+  fitNames(world);
 }
 
 // ---- things that move -------------------------------------------------------
@@ -344,16 +397,20 @@ function buildWorld(doc, host) {
   }
   root.appendChild(bar);
 
-  // The deal builder and review still use one bottom sheet over the board.
+  // One bottom sheet serves My places, Deals, the deal builder and review, and the
+  // rules; a dim layer behind it closes it. Both start hidden.
+  const dim = el(doc, 'div', 'dc-dim');
+  dim.hidden = true;
+  root.appendChild(dim);
   const sheet = el(doc, 'div', 'dc-sheet');
   sheet.hidden = true;
   root.appendChild(sheet);
   host.appendChild(root);
 
   const world = {
-    doc, root, plates, plateNodes, discs, pot, bar, slots, tiles, mid, story, subject, strips, actions, sheet,
+    doc, root, board, plates, plateNodes, discs, pot, bar, slots, tiles, mid, story, subject, strips, actions, sheet, dim,
     selected: -1, picking: false, confirming: false, storyOpen: false, pickedHere: false,
-    bidStep: null, bidKey: '', sheetMode: 'property', draft: null, reviewId: null, sent: null, pending: false, busy: false,
+    bidStep: null, bidKey: '', sheetMode: null, rulesTab: 'turn', rulesCard: '', draft: null, reviewId: null, sent: null, pending: false, busy: false,
     generation: 0, flipGeneration: 0, hold: null, animatedKey: null, stateJson: '',
     shown: null, builtSeen: null, state: null, mySeat: null, names: [],
     looks: null, looksKey: '', chat: { toggle() {}, unread: () => 0 }, onLook: () => {}, onRematch: () => {}, onAction: () => {}
@@ -372,16 +429,17 @@ function buildWorld(doc, host) {
       if (world.mySeat !== seat || !world.state || world.state.phase === 'over') return;
       world.picking = !world.picking;
       world.selected = -1;
+      world.confirming = false;
       paint(world);
     });
   });
   world.story.addEventListener('click', () => { world.storyOpen = !world.storyOpen; paint(world); });
-  slots.deals.addEventListener('click', () => {
-    if (slots.deals.disabled) return;
-    openBuilder(world, blankDraft());
-  });
+  dim.addEventListener('click', () => closeSheet(world));
+  slots.deals.addEventListener('click', () => { if (!slots.deals.disabled) openSheet(world, 'deals'); });
+  slots.places.addEventListener('click', () => { if (!slots.places.disabled) openSheet(world, 'places'); });
+  slots.rules.addEventListener('click', () => openRules(world, ''));
   slots.chat.addEventListener('click', () => world.chat.toggle());
-  // My places and Rules are the next tasks' sheets; until they land the slots are present but inert.
+  watchNames(world);
   return world;
 }
 
@@ -394,29 +452,77 @@ function inkFor(hex) {
   return lum > 0.55 ? '#0d1310' : '#ffffff';
 }
 
-/** The one sheet node serves the deal builder ('deal', world.draft) and a deal
- *  under review ('review', world.reviewId); in any other mode it is hidden. The
- *  deed of a tapped tile is drawn in the stage, never here. */
+// ---- the sheet ---------------------------------------------------------------
+// One bottom sheet node serves five faces, by world.sheetMode: 'places' (My
+// places), 'deals' (the list of live deals), 'deal' (the builder, world.draft),
+// 'review' (a deal under review, world.reviewId) and 'rules' (How to play). In
+// any other mode it is hidden. Only one is ever open: opening one replaces the
+// other. A dim layer behind it, and the Close control, both close it. The deed of
+// a tapped tile is drawn in the stage, never here.
+
+const NEEDS_SEAT = ['places', 'deals', 'deal', 'review'];
+
 function paintSheet(world) {
-  if (world.sheetMode === 'deal') paintBuilder(world);
-  else if (world.sheetMode === 'review') paintReview(world);
+  const seated = world.mySeat === 0 || world.mySeat === 1;
+  const mode = world.sheetMode;
+  // A watcher has no places or deals, and a finished game has none left to manage: the
+  // result is what to see, so those faces step aside (the rules stay readable).
+  if (NEEDS_SEAT.includes(mode) && (!seated || world.state.phase === 'over')) { shutSheet(world); return; }
+  if (mode === 'places') paintPlaces(world);
+  else if (mode === 'deals') paintDeals(world);
+  else if (mode === 'deal') paintBuilder(world);
+  else if (mode === 'review') paintReview(world);
+  else if (mode === 'rules') paintRules(world);
   else hideSheet(world);
 }
 
-/** No deal sheet open: the sheet node is empty and out of sight. The deed of a tapped
- *  tile is drawn in the stage, not here. */
+/** No sheet open: the node is empty and out of sight, and so is the dim layer. */
 function hideSheet(world) {
   clear(world.sheet);
   world.sheet.hidden = true;
+  world.sheet.dcBody = null;
+  world.dim.hidden = true;
+  world.faceKey = '';
+}
+
+/** Close the sheet and forget what it held, without repainting (for use inside a paint). */
+function shutSheet(world) {
+  world.sheetMode = null;
+  world.draft = null;
+  world.reviewId = null;
+  world.sent = null;
+  hideSheet(world);
 }
 
 /** Back to the plain board: no sheet, no draft, nothing selected. */
 function closeSheet(world) {
-  world.sheetMode = 'property';
+  world.selected = -1;
+  shutSheet(world);
+  paint(world);
+}
+
+/** Open a sheet face. A question left open on the board (the bankruptcy confirm, the
+ *  piece picker) is put away rather than left dangling behind the sheet. */
+function openSheet(world, mode) {
+  world.sheetMode = mode;
   world.draft = null;
   world.reviewId = null;
+  world.confirming = false;
+  world.picking = false;
   world.selected = -1;
   paint(world);
+}
+
+/** Open the rules, at the tab that holds `cardId` (the tab last read when there is none). */
+function openRules(world, cardId) {
+  if (cardId) world.rulesTab = helpTab(cardId);
+  world.rulesCard = cardId || '';
+  openSheet(world, 'rules');
+}
+
+/** My places: from the bar's slot and from the raise-cash list's link. */
+function openPlaces(world) {
+  openSheet(world, 'places');
 }
 
 /** Open the builder on a draft. The one entry point, so there is one convention. */
@@ -424,6 +530,9 @@ function openBuilder(world, draft) {
   world.sheetMode = 'deal';
   world.draft = draft;
   world.reviewId = null;
+  world.confirming = false;
+  world.picking = false;
+  world.selected = -1;
   paint(world);
 }
 
@@ -431,27 +540,258 @@ function openReview(world, id) {
   world.sheetMode = 'review';
   world.reviewId = id;
   world.draft = null;
+  world.confirming = false;
+  world.picking = false;
+  world.selected = -1;
   paint(world);
 }
 
-/** Redraw a sheet face from scratch without losing the player's scroll. */
-function resetSheet(world) {
-  const top = world.sheet.scrollTop || 0;
-  clear(world.sheet);
-  world.sheet.hidden = false;
-  return () => { world.sheet.scrollTop = top; };
+/** Redraw a sheet face from scratch: grab bar, title and Close, an optional strip
+ *  pinned above the body (`before`), the scrolling body, and the pinned foot. The
+ *  body keeps its scroll while the same face is redrawn and starts at the top on a
+ *  new one. Returns the nodes to fill and `restore`, to call once they are filled. */
+function sheetFrame(world, title, onClose, face, before) {
+  const { sheet, doc } = world;
+  const key = `${world.sheetMode}:${face}`;
+  const top = world.faceKey === key && sheet.dcBody ? sheet.dcBody.scrollTop || 0 : 0;
+  world.faceKey = key;
+  clear(sheet);
+  sheet.hidden = false;
+  world.dim.hidden = false;
+  sheet.dataset.mode = world.sheetMode;
+  sheet.setAttribute('role', 'dialog');
+  sheet.setAttribute('aria-label', title);
+  sheet.appendChild(el(doc, 'span', 'dc-grab'));
+  sheet.appendChild(sheetHead(world, title, 'close', onClose));
+  if (before) sheet.appendChild(before);
+  const body = el(doc, 'div', 'dc-sheet-body');
+  const foot = el(doc, 'div', 'dc-sheetfoot');
+  sheet.appendChild(body);
+  sheet.appendChild(foot);
+  sheet.dcBody = body;
+  return { body, foot, restore: () => { body.scrollTop = top; } };
 }
 
 function sheetHead(world, title, closeType, onClose) {
   const head = el(world.doc, 'div', 'dc-sheet-head');
-  head.appendChild(el(world.doc, 'span', 'dc-sheet-title', title));
-  const close = el(world.doc, 'button', 'link-btn dc-close', 'Close');
+  head.appendChild(el(world.doc, 'h3', 'dc-sheet-title', title));
+  const close = el(world.doc, 'button', 'dc-sheet-close', 'Close');
   close.type = 'button';
   close.dataset.type = closeType;
   close.addEventListener('click', onClose);
   head.appendChild(close);
   return head;
 }
+
+/** A foot button that just puts the sheet away. */
+function doneButton(world) {
+  const done = el(world.doc, 'button', 'dc-btn is-secondary dc-done-btn', 'Done');
+  done.type = 'button';
+  done.dataset.type = 'done';
+  done.addEventListener('click', () => closeSheet(world));
+  return done;
+}
+
+/** A small "?" that opens the rules at the card for a term. The whole button is the
+ *  hit area; the circle you see is smaller. */
+function helpButton(world, cardId, aria) {
+  const b = el(world.doc, 'button', 'dc-help');
+  b.type = 'button';
+  b.dataset.type = 'help';
+  b.dataset.card = cardId;
+  b.setAttribute('aria-label', aria);
+  b.appendChild(el(world.doc, 'span', 'dc-help-dot', '?'));
+  b.addEventListener('click', () => openRules(world, cardId));
+  return b;
+}
+
+// ---- My places ---------------------------------------------------------------
+
+/** Reasons the pips already say in pictures, so printing them under every row would be noise. */
+const OBVIOUS = ['Nothing built there', 'Already a hotel'];
+
+function pipsNode(world, n) {
+  const box = el(world.doc, 'span', 'dc-pips');
+  if (n === 0) { box.classList.add('is-none'); box.textContent = 'no houses'; return box; }
+  box.setAttribute('aria-label', n === 5 ? 'a hotel' : `${n} house${n > 1 ? 's' : ''}`);
+  if (n === 5) box.appendChild(el(world.doc, 'span', 'dc-pip is-hotel'));
+  else for (let k = 0; k < n; k++) box.appendChild(el(world.doc, 'span', 'dc-pip'));
+  return box;
+}
+
+function placeRow(world, group, p) {
+  const { doc } = world;
+  const row = el(doc, 'div', p.mortgaged ? 'dc-place is-mortgaged' : 'dc-place');
+  row.dataset.square = String(p.square);
+  const head = el(doc, 'div', 'dc-place-top');
+  const sw = el(doc, 'i', 'dc-place-sw');
+  sw.style.background = group.colour;
+  head.appendChild(sw);
+  const who = el(doc, 'div', 'dc-place-who');
+  who.appendChild(el(doc, 'span', 'dc-place-name', p.name));
+  who.appendChild(el(doc, 'small', 'dc-place-rent', p.rentText));
+  head.appendChild(who);
+  row.appendChild(head);
+
+  const controls = el(doc, 'div', 'dc-place-ctl');
+  const mortgage = p.mortgaged ? p.buttons.unmortgage : p.buttons.mortgage;
+  const left = el(doc, 'div', 'dc-place-mort');
+  const pill = actionButton(world, { label: p.mortgaged ? `Lift · ${sterling(p.lift)}` : `Mortgage +${sterling(p.gain)}`, disabled: mortgage.disabled, why: mortgage.why },
+    () => mortgage.action, 'dc-mortbtn');
+  pill.dataset.type = mortgage.type;
+  left.appendChild(pill);
+  left.appendChild(helpButton(world, 'mortgage', 'What is a mortgage?'));
+  controls.appendChild(left);
+
+  const whys = [mortgage.disabled ? mortgage.why : ''];
+  if (group.stepper) {
+    const { sell, build } = p.buttons;
+    const step = el(doc, 'div', 'dc-stp');
+    const minus = actionButton(world, { label: '−', disabled: sell.disabled, why: sell.why }, () => sell.action, 'dc-pstep');
+    minus.dataset.type = 'sell';
+    minus.setAttribute('aria-label', `Sell a building on ${p.name}`);
+    const plus = actionButton(world, { label: '+', disabled: build.disabled, why: build.why }, () => build.action, 'dc-pstep');
+    plus.dataset.type = 'build';
+    plus.setAttribute('aria-label', `Build on ${p.name}`);
+    step.appendChild(minus);
+    step.appendChild(pipsNode(world, p.houses));
+    step.appendChild(plus);
+    controls.appendChild(step);
+    whys.push(sell.disabled ? sell.why : '', build.disabled ? build.why : '');
+  }
+  row.appendChild(controls);
+  // A greyed control says why in words: a title is invisible on a phone.
+  for (const why of new Set(whys.filter((w) => w && !OBVIOUS.includes(w)))) row.appendChild(el(doc, 'p', 'dc-pwhy', why));
+  return row;
+}
+
+function paintPlaces(world) {
+  const { state, mySeat, doc } = world;
+  const model = placesFor(state, mySeat);
+  const { body, foot, restore } = sheetFrame(world, 'My places', () => closeSheet(world), 'places');
+  body.appendChild(el(doc, 'p', 'dc-sub', 'Build evenly across a set, and sell back down the same way.'));
+  if (!model.groups.length) body.appendChild(el(doc, 'p', 'dc-none', 'You do not own anything yet. What you buy appears here.'));
+  for (const g of model.groups) {
+    const set = el(doc, 'section', 'dc-set');
+    set.dataset.set = g.key;
+    const hd = el(doc, 'h4', 'dc-set-hd');
+    hd.appendChild(el(doc, 'span', 'dc-set-name', g.headline));
+    if (g.housePrice) hd.appendChild(el(doc, 'i', 'dc-set-price', `house ${sterling(g.housePrice)}`));
+    set.appendChild(hd);
+    for (const p of g.places) set.appendChild(placeRow(world, g, p));
+    body.appendChild(set);
+  }
+  const row = el(doc, 'div', 'dc-footrow');
+  row.appendChild(el(doc, 'span', 'dc-footcash', `You have ${sterling(model.cash)}`));
+  row.appendChild(doneButton(world));
+  foot.appendChild(row);
+  restore();
+}
+
+// ---- Deals ---------------------------------------------------------------------
+
+/** The tally-up control: offer, the waiting line, or the answer to theirs. null when there is nothing to show. */
+function tallyBlock(world, tally) {
+  const { doc } = world;
+  if (!tally.canOffer && !tally.waiting && !tally.buttons.length) return null;
+  const box = el(doc, 'div', 'dc-tallybox');
+  if (tally.canOffer) {
+    box.appendChild(el(doc, 'p', 'dc-note', 'Want to stop here? Offer to tally up. If they agree, whoever is worth more wins.'));
+    const offer = actionButton(world, { label: 'Offer to tally up' }, () => ({ type: 'offer-tally' }), 'dc-btn is-secondary dc-tally-offer');
+    offer.dataset.type = 'offer-tally';
+    box.appendChild(offer);
+  } else if (tally.waiting) {
+    box.appendChild(el(doc, 'p', 'dc-note', tally.detail));
+  } else {
+    box.appendChild(el(doc, 'p', 'dc-note', tally.detail));
+    const row = el(doc, 'div', 'dc-btns');
+    for (const b of tally.buttons) {
+      const btn = actionButton(world, b, () => ({ type: b.type }), `dc-btn is-${b.kind === 'primary' ? 'primary' : 'secondary'}`);
+      btn.dataset.type = b.type;
+      row.appendChild(btn);
+    }
+    box.appendChild(row);
+  }
+  return box;
+}
+
+function dealRow(world, t) {
+  const { doc } = world;
+  const row = openerButton(world, { label: '', ...t.tap }, () => openReview(world, t.id), `dc-drow is-${t.badge}`);
+  row.dataset.trade = t.id;
+  const line = el(doc, 'span', 'dc-drow-line');
+  line.appendChild(el(doc, 'span', 'dc-drow-text', t.text));
+  line.appendChild(el(doc, 'span', 'dc-pill', PILL[t.badge]));
+  row.appendChild(line);
+  // The reason Accept is blocked (or the deal is dead) is part of the row.
+  const note = t.note || t.tap.why;
+  if (note) row.appendChild(el(doc, 'span', 'dc-drow-why', note));
+  return row;
+}
+
+function paintDeals(world) {
+  const { state, mySeat, names, doc } = world;
+  const { body, foot, restore } = sheetFrame(world, 'Deals', () => closeSheet(world), 'deals');
+  const { shown } = stripsShown(tradeStrips(state, mySeat, names), Infinity);
+  body.appendChild(el(doc, 'p', 'dc-sub', 'Anything goes if you both say yes.'));
+  if (!shown.length) body.appendChild(el(doc, 'p', 'dc-none', 'Nothing on the table yet.'));
+  const list = el(doc, 'div', 'dc-dlist');
+  for (const t of shown) list.appendChild(dealRow(world, t));
+  body.appendChild(list);
+
+  const can = canOpenDeal(state, mySeat);
+  const fresh = openerButton(world, { label: '+ New deal', disabled: !can.ok, why: can.why }, () => openBuilder(world, blankDraft()), 'dc-btn is-primary');
+  fresh.dataset.type = 'new-deal';
+  foot.appendChild(fresh);
+  if (can.why) foot.appendChild(el(doc, 'p', 'dc-problem', can.why));
+  const tally = tallyBlock(world, decisionFor(state, mySeat, names).tally);
+  if (tally) foot.appendChild(tally);
+  restore();
+}
+
+// ---- How to play -----------------------------------------------------------------
+
+function paintRules(world) {
+  const { state, mySeat, names, doc } = world;
+  const r = rulesFor(world.rulesTab);
+  world.rulesTab = r.tab;
+  const tabs = el(doc, 'div', 'dc-tabs');
+  tabs.setAttribute('role', 'tablist');
+  const { body, foot, restore } = sheetFrame(world, 'How to play', () => closeSheet(world), `rules-${r.tab}`, tabs);
+  for (const t of r.tabs) {
+    const b = el(doc, 'button', t.on ? 'dc-tab is-on' : 'dc-tab', t.title);
+    b.type = 'button';
+    b.dataset.tab = t.id;
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', t.on ? 'true' : 'false');
+    b.addEventListener('click', () => { world.rulesTab = t.id; world.rulesCard = ''; paint(world); });
+    tabs.appendChild(b);
+  }
+  const cards = el(doc, 'div', 'dc-rules');
+  let focus = null;
+  for (const c of r.cards) {
+    const card = el(doc, 'article', c.id === world.rulesCard ? 'dc-rule is-focus' : 'dc-rule');
+    card.dataset.card = c.id;
+    card.appendChild(el(doc, 'b', 'dc-rule-title', c.title));
+    card.appendChild(el(doc, 'p', 'dc-rule-text', c.text));
+    cards.appendChild(card);
+    if (c.id === world.rulesCard) focus = card;
+  }
+  // The last thing under Winning is the way to stop: the same tally-up control as in Deals.
+  if (r.tab === 'winning') {
+    const tally = tallyBlock(world, decisionFor(state, mySeat, names).tally);
+    if (tally) cards.appendChild(tally);
+  }
+  body.appendChild(cards);
+  foot.appendChild(doneButton(world));
+  restore();
+  // Arriving from a "?" the card is brought into view, and highlighted until the next tap.
+  if (focus && typeof focus.scrollIntoView === 'function') focus.scrollIntoView({ block: 'nearest' });
+  const on = Array.from(tabs.children).find((n) => n.classList && n.classList.contains('is-on'));
+  if (on && typeof on.scrollIntoView === 'function') on.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+// ---- the deal builder and review -------------------------------------------------
 
 const cardWords = (n) => (n === 1 ? 'Get-out card' : `${n} get-out cards`);
 
@@ -483,32 +823,36 @@ function stepButton(world, label, step, spec, onTap) {
   return b;
 }
 
+/** A shelf is bordered in the colour of whoever hands its contents over. */
+function giverShelf(world, cls, label, giver) {
+  const shelf = el(world.doc, 'section', `dc-shelf ${cls}`);
+  shelf.dataset.giver = String(giver);
+  setVar(shelf, '--giver', `var(--p${giver})`);
+  shelf.appendChild(el(world.doc, 'p', 'dc-lab', label));
+  return shelf;
+}
+
+const QUICK_CASH = [50, 100, 500];
+
 function paintBuilder(world) {
   const { state, mySeat, names, doc } = world;
-  if (!world.draft || (mySeat !== 0 && mySeat !== 1)) { world.sheetMode = 'property'; world.draft = null; hideSheet(world); return; }
+  if (!world.draft || (mySeat !== 0 && mySeat !== 1)) { shutSheet(world); return; }
   // A send that landed has put the deal out of the draft's hands: the sheet closes itself. One that
   // was refused leaves the draft as it was, and the problem line below says what changed.
-  if (sendLanded(state, mySeat, world.sent)) {
-    world.sheetMode = 'property'; world.draft = null; world.sent = null; world.selected = -1;
-    hideSheet(world);
-    return;
-  }
+  if (sendLanded(state, mySeat, world.sent)) { world.selected = -1; shutSheet(world); return; }
   world.draft = tidyDraft(state, mySeat, world.draft);
   const draft = world.draft;
   const sheet0 = dealSheetFor(state, mySeat, draft, names);
-  const restore = resetSheet(world);
-  const { sheet } = world;
   const edit = (next) => { world.draft = next; paint(world); };
   const cancel = () => {
     // A counter goes back to the deal it answers; a new offer just closes.
     if (draft.id && readTrades(world.state)[draft.id]) openReview(world, draft.id); else closeSheet(world);
   };
-  sheet.appendChild(sheetHead(world, sheet0.title, 'close', cancel));
+  const { body, foot, restore } = sheetFrame(world, sheet0.title, cancel, 'deal');
 
   for (const [key, label, cls] of [['give', 'You give', 'is-give'], ['get', 'You get', 'is-get']]) {
     const side = sheet0[key];
-    const shelf = el(doc, 'section', `dc-shelf ${cls}`);
-    shelf.appendChild(el(doc, 'p', 'dc-lab', label));
+    const shelf = giverShelf(world, cls, label, key === 'give' ? mySeat : 1 - mySeat);
     const chips = el(doc, 'div', 'dc-chips');
     for (const c of side.chips) chips.appendChild(dealChip(world, c, () => edit(toggleChip(state, mySeat, draft, c.square))));
     if (side.cards) {
@@ -521,32 +865,37 @@ function paintBuilder(world) {
         b.dataset.card = `${key}-${i}`;
         const sw = el(doc, 'span', 'dc-chipsw'); sw.style.background = '#f2cf3d';
         b.appendChild(sw);
-        b.appendChild(el(doc, 'span', 'dc-chipname', '🔑 Get-out card'));
+        b.appendChild(el(doc, 'span', 'dc-chipname', '\u{1F511} Get-out card'));
         b.addEventListener('click', () => edit({ ...draft, [field]: on ? i : i + 1 }));
         chips.appendChild(b);
       }
     }
     if (!chips.children.length) chips.appendChild(el(doc, 'span', 'dc-none', 'Nothing to put in'));
     shelf.appendChild(chips);
+    // The money row: less, the figure, more, then the quick amounts.
     const row = el(doc, 'div', 'dc-cashrow');
     row.appendChild(stepButton(world, '−', `${key}-down`, side.down, () => edit(nudgeCash(draft, mySeat, key, -1))));
     row.appendChild(el(doc, 'span', `dc-cashbox${side.cash ? '' : ' is-zero'}`, sterling(side.cash)));
     row.appendChild(stepButton(world, '+', `${key}-up`, side.up, () => edit(nudgeCash(draft, mySeat, key, +1))));
+    for (const n of QUICK_CASH) {
+      const q = el(doc, 'button', 'dc-qchip', `+${sterling(n)}`);
+      q.type = 'button';
+      q.dataset.chip = `${key}-${n}`;
+      q.addEventListener('click', () => edit(bumpCash(draft, mySeat, key, n)));
+      row.appendChild(q);
+    }
     shelf.appendChild(row);
     // A greyed stepper says why in text too: a title is invisible on a phone.
     const stepWhys = [...new Set([side.down, side.up].filter((x) => x.disabled).map((x) => x.why))];
     if (stepWhys.length) shelf.appendChild(el(doc, 'div', 'dc-stepwhy', stepWhys.join('. ')));
-    sheet.appendChild(shelf);
+    body.appendChild(shelf);
   }
 
-  // The foot stays in reach however long the shelves grow. Under the buttons is a
-  // strip that clears the chat toggle (it floats bottom right, above this sheet);
-  // the reason the deal cannot be sent is written there, as text.
-  const foot = el(doc, 'div', 'dc-sheetfoot');
+  // The reason the deal cannot be sent is written above the buttons, as text.
   const problems = el(doc, 'div', 'dc-problems');
   if (sheet0.problem) problems.appendChild(el(doc, 'div', 'dc-problem', sheet0.problem));
   const row = el(doc, 'div', 'dc-btns dc-footbtns');
-  const back = el(doc, 'button', 'btn dc-btn dc-btn-secondary', 'Cancel');
+  const back = el(doc, 'button', 'dc-btn is-secondary', 'Cancel');
   back.type = 'button';
   back.dataset.type = 'cancel';
   back.addEventListener('click', cancel);
@@ -554,13 +903,12 @@ function paintBuilder(world) {
   // world.sent is cleared when the write settles. If the snapshot of a landed send is late, it will
   // not close the sheet either, and pressing Send again makes a duplicate offer under a new id:
   // legal and recoverable by Cancel, not a corrupt write.
-  const send = actionButton(world, sheet0.send, () => sheet0.send.action, 'btn dc-btn dc-btn-primary',
+  const send = actionButton(world, sheet0.send, () => sheet0.send.action, 'dc-btn is-primary',
     () => { world.sent = { id: draft.id, seq: world.state.tradeSeq ?? 0 }; });
   send.dataset.type = sheet0.send.type;
   row.appendChild(send);
   foot.appendChild(problems);
   foot.appendChild(row);
-  sheet.appendChild(foot);
   restore();
 }
 
@@ -577,25 +925,21 @@ function paintReview(world) {
   const r = world.reviewId ? dealReviewFor(state, mySeat, world.reviewId, names) : null;
   // The deal is gone (answered here or there): back to the board. Accept, Decline and Cancel rely on this
   // rather than closing on a resolved write, which a refusal also does.
-  if (!r) { world.sheetMode = 'property'; world.reviewId = null; world.selected = -1; hideSheet(world); return; }
-  const restore = resetSheet(world);
-  const { sheet } = world;
-  sheet.appendChild(sheetHead(world, r.title, 'close', () => closeSheet(world)));
+  if (!r) { world.selected = -1; shutSheet(world); return; }
+  const { body, foot, restore } = sheetFrame(world, r.title, () => closeSheet(world), `review-${r.id}`);
 
   for (const [key, label, cls] of [['get', 'You get', 'is-get'], ['give', 'You give', 'is-give']]) {
     const side = r[key];
-    const shelf = el(doc, 'section', `dc-shelf ${cls}`);
-    shelf.appendChild(el(doc, 'p', 'dc-lab', label));
+    const shelf = giverShelf(world, cls, label, key === 'give' ? mySeat : 1 - mySeat);
     const chips = el(doc, 'div', 'dc-chips');
     for (const it of side.items) chips.appendChild(readOnlyChip(world, it.mortgaged ? `${it.name} (mortgaged)` : it.name, it.colour));
     if (side.cash) chips.appendChild(readOnlyChip(world, sterling(side.cash), '', 'is-money'));
     if (side.cards) chips.appendChild(readOnlyChip(world, cardWords(side.cards), '#f2cf3d'));
     if (!chips.children.length) chips.appendChild(el(doc, 'span', 'dc-none', 'Nothing'));
     shelf.appendChild(chips);
-    sheet.appendChild(shelf);
+    body.appendChild(shelf);
   }
 
-  const foot = el(doc, 'div', 'dc-sheetfoot');
   // Every reason a button is off, as text: a title is invisible on a phone.
   const whys = [...new Set([r.note, ...r.buttons.filter((b) => b.disabled).map((b) => b.why)].filter(Boolean))];
   const problems = el(doc, 'div', 'dc-problems');
@@ -605,7 +949,7 @@ function paintReview(world) {
     const kind = b.type === 'trade-accept' ? 'primary' : b.type === 'trade-decline' || b.type === 'trade-cancel' ? 'danger' : 'secondary';
     let btn;
     if (b.opens) {
-      btn = el(doc, 'button', `btn dc-btn dc-btn-${kind}`, b.label);
+      btn = el(doc, 'button', `dc-btn is-${kind}`, b.label);
       btn.type = 'button';
       btn.disabled = !!b.disabled || world.pending || world.busy;
       if (b.why) btn.setAttribute('title', b.why);
@@ -622,7 +966,6 @@ function paintReview(world) {
   }
   foot.appendChild(problems);
   foot.appendChild(row);
-  sheet.appendChild(foot);
   restore();
 }
 
@@ -661,10 +1004,6 @@ function actCell(world, button, why, extra) {
   if (why) cell.appendChild(el(world.doc, 'span', 'dc-why', why));
   return cell;
 }
-
-/** My places is the next task's sheet. Until it lands the entry points exist
- *  (the bar's slot, the raise list's link) and open nothing. */
-function openPlaces() {}
 
 function deedCard(world, c, { stage }) {
   const doc = world.doc;
@@ -953,7 +1292,8 @@ function raiseNode(world, raise) {
   const box = el(doc, 'div', 'dc-raise');
   const head = el(doc, 'div', 'dc-raise-top');
   head.appendChild(el(doc, 'h4', 'dc-raise-hd', raise.short > 0 ? `${sterling(raise.short)} short — raise it` : 'Raise cash'));
-  const all = el(doc, 'button', 'dc-allplaces', raise.more > 0 ? `All my places (+${raise.more})` : 'All my places');
+  // A short screen shows fewer of the ways to raise cash (see darlingco.css), so the link does not count them.
+  const all = el(doc, 'button', 'dc-allplaces', 'All my places');
   all.type = 'button';
   all.addEventListener('click', () => openPlaces(world));
   head.appendChild(all);
@@ -1038,12 +1378,10 @@ function paintActions(world, d) {
   } else if (d.tally.waiting) {
     actions.appendChild(el(doc, 'p', 'dc-note', d.tally.detail));
   }
+  // Offering to tally up lives in the Deals sheet and under Winning in the rules, not here.
   // Quiet links share one row, so a calm stage spends one line on them, not two.
   const links = el(doc, 'div', 'dc-links');
   const calm = !raise && !d.auction && !d.bankrupt && world.mid.dataset.mode !== 'picker';
-  if (!d.tally.buttons.length && !d.tally.waiting && d.tally.canOffer && calm) {
-    links.appendChild(actionButton(world, { label: 'Offer to tally up' }, () => ({ type: 'offer-tally' }), 'dc-quiet dc-tally-offer'));
-  }
 
   // Before the first roll, a player who has not chosen yet is offered the picker. Roll stays live.
   const seated = mySeat === 0 || mySeat === 1;
@@ -1051,7 +1389,7 @@ function paintActions(world, d) {
     && world.looks[mySeat].piece === DEFAULT_LOOKS[mySeat].piece && world.looks[mySeat].colour === DEFAULT_LOOKS[mySeat].colour) {
     const link = el(doc, 'button', 'dc-quiet dc-picklink', 'Pick your piece');
     link.type = 'button';
-    link.addEventListener('click', () => { world.picking = true; paint(world); });
+    link.addEventListener('click', () => { world.picking = true; world.confirming = false; paint(world); });
     links.appendChild(link);
   }
   if (links.children.length) actions.appendChild(links);
@@ -1163,16 +1501,18 @@ function paintBar(world) {
     slots[slot].children[3].hidden = !(n > 0);
   };
 
-  const can = canOpenDeal(state, mySeat);
-  slots.deals.disabled = !can.ok;
-  if (slots.deals.setAttribute && !can.ok) slots.deals.setAttribute('title', can.why);
+  // The Deals sheet is for reading and answering deals too, so only a watcher or a finished game
+  // greys it; a full table of deals is said inside, on + New deal.
+  const open = seated && state.phase !== 'over';
+  slots.deals.disabled = !open;
+  if (slots.deals.setAttribute && !open) slots.deals.setAttribute('title', canOpenDeal(state, mySeat).why);
   // A greyed slot says why in words, not only in a title.
-  note('deals', can.ok ? '' : !seated ? 'Watching' : state.phase === 'over' ? 'Over' : 'Full');
+  note('deals', open ? '' : !seated ? 'Watching' : 'Over');
   const waitingOnMe = seated ? tradeStrips(state, mySeat, world.names).filter((t) => t.badge === 'answer').length : 0;
   badge('deals', waitingOnMe);
 
-  slots.places.disabled = !seated;
-  note('places', seated ? '' : 'Players only');
+  slots.places.disabled = !seated || state.phase === 'over';
+  note('places', !seated ? 'Players only' : state.phase === 'over' ? 'Over' : '');
   badge('places', 0);
   note('rules', '');
   badge('rules', 0);

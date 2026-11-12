@@ -39,6 +39,7 @@
   font-size: 15px;
   line-height: 1.25;
   -webkit-tap-highlight-color: transparent;
+  position: relative;
 }
 .dc-game *, .dc-game *::before, .dc-game *::after { box-sizing: border-box; }
 .dc-game button { font-family: inherit; }
@@ -146,44 +147,81 @@ body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
   gap: 1.5px;
   background: var(--table);
 }
+/* A tile lays out from the top: the stripe side, then the icon, then the name, then
+   (while the place is for sale) the price. Each tile is its own size container, so
+   the name can be clamped to the whole lines its height allows and the price can step
+   aside before it would touch the name. A tile never clips what stands on it, so a
+   token on its edge is whole. */
 .dc-tile {
   position: relative;
+  container-type: size;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  overflow: hidden;
+  justify-content: flex-start;
+  padding-top: 2px;
   border-radius: 3px;
   background: var(--paper);
   color: var(--ink);
   text-align: center;
 }
-.dc-corner { background: var(--paper2); }
+.dc-corner { justify-content: center; padding-top: 0; background: var(--paper2); }
 .dc-tile[data-deed] { cursor: pointer; }
 .dc-tile[data-own="0"] { background: color-mix(in srgb, var(--p0) 42%, var(--paper)); }
 .dc-tile[data-own="1"] { background: color-mix(in srgb, var(--p1) 42%, var(--paper)); }
+.dc-tile[data-tok] { z-index: 5; }
 
-.dc-ic { font-size: 13px; line-height: 1.1; }
+.dc-ic { flex: none; font-size: 13px; line-height: 1.1; }
 .dc-corner .dc-ic { font-size: 18px; }
 .dc-nm {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 4;
-  max-width: 100%;
+  flex: 0 1 auto;
+  align-self: stretch;
+  min-height: 0;
   padding: 0 1px;
   overflow: hidden;
-  overflow-wrap: anywhere;
+  /* A word is never broken: a long one gets a smaller size (see fitName), not a hyphen. */
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: none;
   font-size: 7.4px;
   font-weight: 600;
   line-height: 1.02;
 }
-.dc-tile[data-edge="left"] .dc-nm, .dc-tile[data-edge="right"] .dc-nm { -webkit-line-clamp: 3; }
 .dc-nm[data-long] { font-size: 6.5px; }
 .dc-corner .dc-nm { font-size: 8px; font-weight: 700; }
-.dc-pr { color: var(--soft); font-size: 6.8px; font-weight: 600; line-height: 1.1; }
+.dc-pr { flex: none; color: var(--soft); font-size: 6.8px; font-weight: 600; line-height: 1.1; }
 .dc-pr:empty { display: none; }
+
+/* Top and bottom tiles are 60px tall whatever the screen: three lines of name and the
+   price, or four lines once the place is owned and the price is gone. */
+.dc-tile[data-edge="top"]:not(.dc-corner)[data-priced] .dc-nm,
+.dc-tile[data-edge="bottom"]:not(.dc-corner)[data-priced] .dc-nm { -webkit-line-clamp: 3; }
+/* Side tiles are as tall as the screen allows. Lines that fit, by tile height: one
+   line (and no price) up to 32px, two at 32, three at 40, four at 47; with the price
+   showing, two at 40 (the price needs a line of its own, so shorter tiles drop it),
+   three at 47, four at 55. */
+.dc-tile:is([data-edge="left"], [data-edge="right"]):not(.dc-corner) .dc-nm { -webkit-line-clamp: 1; }
+.dc-tile:is([data-edge="left"], [data-edge="right"]):not(.dc-corner)[data-priced] .dc-pr { display: none; }
+@container (min-height: 32px) {
+  .dc-tile:is([data-edge="left"], [data-edge="right"]):not(.dc-corner) .dc-nm { -webkit-line-clamp: 2; }
+}
+@container (min-height: 40px) {
+  .dc-tile:is([data-edge="left"], [data-edge="right"]):not(.dc-corner) .dc-nm { -webkit-line-clamp: 3; }
+  .dc-tile:is([data-edge="left"], [data-edge="right"]):not(.dc-corner)[data-priced] .dc-nm { -webkit-line-clamp: 2; }
+  .dc-tile:is([data-edge="left"], [data-edge="right"]):not(.dc-corner)[data-priced] .dc-pr { display: block; }
+}
+@container (min-height: 47px) {
+  .dc-tile:is([data-edge="left"], [data-edge="right"]):not(.dc-corner) .dc-nm { -webkit-line-clamp: 4; }
+  .dc-tile:is([data-edge="left"], [data-edge="right"]):not(.dc-corner)[data-priced] .dc-nm { -webkit-line-clamp: 3; }
+}
+@container (min-height: 55px) {
+  .dc-tile:is([data-edge="left"], [data-edge="right"]):not(.dc-corner)[data-priced] .dc-nm { -webkit-line-clamp: 4; }
+}
 
 /* The set stripe sits on the edge facing the middle; houses are drawn on it. */
 .dc-stripe, .dc-houses { position: absolute; display: flex; align-items: center; justify-content: center; gap: 1px; }
@@ -191,7 +229,7 @@ body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
 .dc-tile[data-edge="top"] .dc-stripe, .dc-tile[data-edge="top"] .dc-houses { bottom: 0; left: 0; right: 0; height: var(--dc-band); }
 .dc-tile[data-edge="left"] .dc-stripe, .dc-tile[data-edge="left"] .dc-houses { right: 0; top: 0; bottom: 0; width: var(--dc-band); flex-direction: column; }
 .dc-tile[data-edge="right"] .dc-stripe, .dc-tile[data-edge="right"] .dc-houses { left: 0; top: 0; bottom: 0; width: var(--dc-band); flex-direction: column; }
-.dc-tile[data-edge="bottom"]:not(.dc-corner) { padding-top: calc(var(--dc-band) + 1px); }
+.dc-tile[data-edge="bottom"]:not(.dc-corner) { padding-top: calc(var(--dc-band) + 2px); }
 .dc-tile[data-edge="top"]:not(.dc-corner) { padding-bottom: calc(var(--dc-band) + 1px); }
 .dc-tile[data-edge="left"]:not(.dc-corner) { padding-right: calc(var(--dc-band) + 1px); }
 .dc-tile[data-edge="right"]:not(.dc-corner) { padding-left: calc(var(--dc-band) + 1px); }
@@ -232,23 +270,41 @@ body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
   box-shadow: 0 0 14px var(--gold);
 }
 .dc-tile.is-picked { outline: 2.5px solid var(--cream); outline-offset: -1px; z-index: 3; }
+.dc-tile[data-tok][data-lit], .dc-tile[data-tok][data-lot], .dc-tile[data-tok].is-picked { z-index: 5; }
 
-/* Tokens: the player's chosen piece on a disc of their colour. */
-.dc-toks { position: absolute; right: 1px; bottom: 1px; display: flex; z-index: 4; }
-/* A corner's name is centred, so its tokens ride the top edge instead. */
-.dc-corner .dc-toks { top: 2px; bottom: auto; }
+/* Tokens: the player's chosen piece on a disc of their colour. They sit over the icon, at
+   the tile's outer end, so the name beneath stays readable; two on one square are drawn
+   smaller and side by side so both are whole. A corner's name is centred, so they ride its top edge. */
+.dc-toks {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  gap: 1px;
+  pointer-events: none;
+  z-index: 4;
+}
+.dc-tile[data-edge="bottom"]:not(.dc-corner) .dc-toks { top: calc(var(--dc-band) - 1px); }
+.dc-tile[data-edge="left"]:not(.dc-corner) .dc-toks { right: var(--dc-band); }
+.dc-tile[data-edge="right"]:not(.dc-corner) .dc-toks { left: var(--dc-band); }
+.dc-corner .dc-toks { top: 1px; }
 .dc-tok {
+  flex: none;
   display: grid;
   place-items: center;
-  width: 19px;
-  height: 19px;
+  width: 18px;
+  height: 18px;
   border: 1.5px solid #fff;
   border-radius: 50%;
   background: var(--p0);
   box-shadow: 0 2px 4px rgb(0 0 0 / 0.5), inset 0 -2px 0 rgb(0 0 0 / 0.25);
 }
 .dc-tok[data-seat="1"] { background: var(--p1); }
-.dc-tok + .dc-tok { margin-left: -7px; }
+.dc-toks[data-n="2"] .dc-tok { width: 13px; height: 13px; border-width: 1px; }
+.dc-tile:is([data-edge="left"], [data-edge="right"]) .dc-toks[data-n="2"] .dc-tok { width: 15px; height: 15px; }
+.dc-corner .dc-toks[data-n="2"] .dc-tok { width: 18px; height: 18px; border-width: 1.5px; }
 
 /* ---- the stage: the centre, one decision at a time ------------------------- */
 .dc-mid {
@@ -336,19 +392,32 @@ body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
 .dc-deed-hd { position: relative; padding: 6px 10px 7px; text-align: center; }
 .dc-deed-set { display: block; min-height: 19px; padding-top: 2px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.85; }
 .dc-deed-title { display: block; font: 800 17px/1.05 var(--disp); }
+/* The deed's Close is a 56 x 40 button (a thumb can hit it); the pill you see is drawn smaller, at its top. */
 .dc-close {
   position: absolute;
-  top: 3px;
-  right: 4px;
-  padding: 0 8px;
-  border: 1.5px solid currentColor;
-  border-radius: 99px;
+  top: 0;
+  right: 0;
+  min-width: 56px;
+  height: 40px;
+  padding: 3px 8px 19px;
+  border: 0;
   background: transparent;
   color: inherit;
   font-size: 12px;
-  line-height: 15px;
+  line-height: 19px;
   font-weight: 700;
   cursor: pointer;
+}
+.dc-close::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  bottom: 16px;
+  left: 6px;
+  right: 6px;
+  border: 1.5px solid currentColor;
+  border-radius: 99px;
+  pointer-events: none;
 }
 .dc-rents { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .dc-rents td { padding: 1px 10px; }
@@ -416,7 +485,9 @@ body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
 .dc-done {
   position: absolute;
   right: 0;
-  padding: 2px 11px;
+  min-width: 64px;
+  min-height: 40px;
+  padding: 2px 14px;
   border: 0;
   border-radius: 99px;
   background: var(--gold);
@@ -441,9 +512,10 @@ body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
 .dc-pk:disabled { cursor: default; border-style: dashed; }
 .dc-pk:disabled .dc-pc { opacity: 0.3; }
 .dc-lab { margin: 0; color: var(--mut); font-size: 12.5px; }
-.dc-cols { display: flex; justify-content: center; gap: 9px; }
-.dc-col { width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; box-shadow: inset 0 -3px 0 rgb(0 0 0 / 0.25); cursor: pointer; }
-.dc-col.is-on { outline: 2.5px solid var(--cream); outline-offset: 2px; }
+.dc-cols { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 6px; }
+/* A 40px button around a 26px swatch: the padding is the thumb room, so the colour is clipped to the content box. */
+.dc-col { width: 40px; height: 40px; padding: 7px; border: 0; border-radius: 50%; background-clip: content-box !important; cursor: pointer; }
+.dc-col.is-on { outline: 2.5px solid var(--cream); outline-offset: -5px; }
 .dc-col:disabled { opacity: 0.25; cursor: default; }
 
 /* ---- buttons ---------------------------------------------------------------- */
@@ -453,7 +525,7 @@ body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
 .dc-act.is-wide { flex-basis: 100%; }
 .dc-btn {
   width: 100%;
-  min-height: 42px;
+  min-height: 44px;
   margin: 0;
   padding: 7px 8px;
   border: 1px solid transparent;
@@ -472,8 +544,11 @@ body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
 .dc-why { color: var(--mut); font-size: 12px; line-height: 1.15; text-align: center; }
 .dc-quiet, .dc-allplaces {
   align-self: center;
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
   margin: 0;
-  padding: 2px 6px;
+  padding: 2px 8px;
   border: 0;
   background: transparent;
   color: var(--mut);
@@ -488,7 +563,7 @@ body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
 .dc-note { margin: 0; color: var(--mut); font-size: 12.5px; text-align: center; }
 .dc-tally { padding-top: 4px; border-top: 1px dashed var(--line); }
 .dc-tally-detail { margin: 0 0 4px; color: var(--mut); font-size: 12.5px; line-height: 1.2; }
-.dc-tally .dc-btn { min-height: 34px; }
+.dc-tally .dc-btn { min-height: 40px; }
 
 /* the bankruptcy confirm swaps the actions for itself */
 .dc-confirm { display: flex; flex-direction: column; gap: 5px; text-align: center; }
@@ -497,7 +572,7 @@ body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
 
 /* ---- the auction dial ------------------------------------------------------- */
 .dc-auc { display: flex; flex-direction: column; gap: 5px; }
-.dc-astepline { display: grid; grid-template-columns: 38px 1fr 38px; gap: 5px; }
+.dc-astepline { display: grid; grid-template-columns: 44px 1fr 44px; gap: 5px; }
 .dc-astep, .dc-abid, .dc-apass {
   margin: 0;
   border: 1px solid var(--line);
@@ -505,11 +580,11 @@ body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
   font-weight: 700;
   cursor: pointer;
 }
-.dc-astep { height: 36px; padding: 0; background: var(--felt2); color: var(--cream); font-size: 19px; }
+.dc-astep { height: 44px; padding: 0; background: var(--felt2); color: var(--cream); font-size: 19px; }
 .dc-aval {
   display: grid;
   place-items: center;
-  height: 36px;
+  height: 44px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--inset);
@@ -517,7 +592,7 @@ body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
   font-variant-numeric: tabular-nums;
 }
 .dc-arow { display: flex; gap: 6px; }
-.dc-abid, .dc-apass { flex: 1 1 0; min-width: 0; min-height: 42px; padding: 6px 4px; font-size: 16px; }
+.dc-abid, .dc-apass { flex: 1 1 0; min-width: 0; min-height: 44px; padding: 6px 4px; font-size: 16px; }
 .dc-abid { background: var(--gold); border-color: var(--gold); color: var(--ink); box-shadow: 0 3px 0 var(--gold-deep); }
 .dc-apass { background: var(--felt2); color: var(--cream); }
 .dc-astep:disabled, .dc-abid:disabled, .dc-apass:disabled { cursor: default; background: var(--felt); border-style: dashed; box-shadow: none; color: #7f90ad; }
@@ -527,11 +602,11 @@ body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
 .dc-raise { display: flex; flex-direction: column; gap: 3px; padding-top: 5px; border-top: 1px dashed var(--line); }
 .dc-raise-top { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
 .dc-raise-hd { margin: 0; color: var(--mut); font: 600 12px var(--cond); letter-spacing: 0.03em; }
-.dc-raise .dc-allplaces { flex: none; padding: 0; font-size: 12px; }
-.dc-rc { display: flex; align-items: center; gap: 6px; padding: 2px 3px 2px 7px; border-radius: 8px; background: var(--inset); font-size: 12.5px; }
+.dc-raise .dc-allplaces { flex: none; padding: 2px 8px; font-size: 12.5px; }
+.dc-rc { display: flex; align-items: center; gap: 6px; padding: 0 0 0 7px; border-radius: 8px; background: var(--inset); font-size: 12.5px; }
 .dc-rc-sw { flex: none; width: 7px; height: 16px; border-radius: 2px; }
 .dc-rc-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dc-rcb { flex: none; min-height: 24px; padding: 2px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--felt2); color: var(--gold); font-size: 13px; font-weight: 700; cursor: pointer; }
+.dc-rcb { flex: none; min-height: 40px; padding: 2px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--felt2); color: var(--gold); font-size: 13px; font-weight: 700; cursor: pointer; }
 .dc-rcb:disabled { cursor: default; color: #7f90ad; }
 
 /* ---- live deals: one line each ------------------------------------------------- */
@@ -543,6 +618,7 @@ body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
   gap: 6px;
   width: 100%;
   min-width: 0;
+  min-height: 40px;
   margin: 0;
   padding: 3px 7px;
   border: 1px solid var(--line);
@@ -599,47 +675,150 @@ body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
 .dc-badge { flex: none; padding: 0 5px; border-radius: 9px; background: var(--gold); color: var(--ink); font-size: 11px; font-style: normal; font-weight: 700; }
 .dc-badge:empty { display: none; }
 
-/* ---- the deal sheet (builder and review): a paper sheet over the board ------- */
+/* ---- the sheet: My places, Deals, the deal builder and review, How to play ----------
+   One paper sheet over the board, at most 86% of the game's height, with a dim layer
+   behind it that closes it. The head and the foot stay put; the body scrolls. It spans
+   the whole screen width (the game has an 8px gutter, hence the negative margins). */
+.dc-dim {
+  position: absolute;
+  inset: 0 -8px;
+  z-index: 7;
+  background: rgb(11 7 24 / 0.66);
+}
 .dc-sheet {
-  position: fixed;
-  inset: auto 0 0 0;
+  position: absolute;
+  left: -8px;
+  right: -8px;
+  bottom: calc(-1 * env(safe-area-inset-bottom));
   z-index: 8;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  max-height: min(78dvh, 34rem);
-  overflow-y: auto;
-  padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+  max-height: 86%;
+  padding: 8px 14px 0;
+  overflow: hidden;
   border-radius: 20px 20px 0 0;
   background: var(--paper);
   color: var(--ink);
   box-shadow: 0 -10px 30px rgb(0 0 0 / 0.6);
 }
-.dc-sheet-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.dc-sheet-title { font: 800 19px var(--disp); }
-.dc-sheet .link-btn { margin: 0; padding: 2px 6px; color: var(--ink); font-size: 14px; }
-.dc-shelf { flex: none; padding: 9px; border: 1px solid #e2d5ba; border-radius: 12px; background: rgb(255 255 255 / 0.55); }
-.dc-shelf.is-give { border-left: 4px solid var(--p0); }
-.dc-shelf.is-get { border-left: 4px solid var(--p1); }
+.dc-grab { flex: none; align-self: center; width: 38px; height: 4px; margin-bottom: 2px; border-radius: 2px; background: #cdbf9f; }
+.dc-sheet-head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.dc-sheet-title { margin: 0; font: 800 20px var(--disp); }
+.dc-sheet-close {
+  min-width: 48px;
+  min-height: 44px;
+  margin: 0 -8px 0 0;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: 700 15px var(--cond);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.dc-sheet-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0 -14px;
+  padding: 2px 14px 10px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.dc-sheetfoot {
+  flex: none;
+  margin: 0 -14px;
+  padding: 8px 14px calc(10px + env(safe-area-inset-bottom));
+  border-top: 1px solid #e2d5ba;
+  background: var(--paper);
+}
+.dc-sheet .dc-sub { margin: 0 0 8px; color: var(--soft); font-size: 13.5px; }
+.dc-sheet .dc-none { display: block; margin: 4px 0 8px; color: var(--soft); font-size: 14px; }
+.dc-sheet .dc-note { margin: 0; color: var(--soft); font-size: 13.5px; line-height: 1.25; text-align: left; }
+.dc-sheet .dc-btn { min-height: 44px; }
+.dc-sheet .dc-btn.is-secondary { border: 1.5px solid var(--ink); background: transparent; color: var(--ink); box-shadow: none; }
+.dc-sheet .dc-btn.is-primary { border-color: var(--gold-deep); }
+.dc-sheet .dc-btn.is-danger { border-color: #b3261e; color: #b3261e; }
+.dc-sheet .dc-btn:disabled { border: 1.5px dashed #cdbf9f; background: #efe6d3; color: #8a8068; box-shadow: none; }
+.dc-sheet button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.dc-footrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.dc-footcash { font: 800 17px var(--disp); font-variant-numeric: tabular-nums; }
+.dc-done-btn { flex: none; width: auto; min-width: 104px; }
+
+/* My places */
+.dc-set { padding: 8px 0 4px; border-top: 1.5px solid #e2d5ba; }
+.dc-set-hd { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 0 0 2px; font: 700 12.5px var(--cond); letter-spacing: 0.04em; text-transform: uppercase; }
+.dc-set-price { flex: none; color: var(--soft); font-style: normal; font-weight: 600; letter-spacing: 0; text-transform: none; }
+.dc-place { padding: 6px 0 4px; }
+.dc-place + .dc-place { border-top: 1px dotted #d8cbb0; }
+.dc-place-top { display: flex; align-items: center; gap: 8px; }
+.dc-place-sw { flex: none; width: 8px; height: 30px; border-radius: 2px; }
+.dc-place-who { min-width: 0; display: flex; flex-direction: column; }
+.dc-place-name { font: 600 16px/1.1 var(--cond); }
+.dc-place-rent { color: var(--soft); font-size: 12.5px; }
+.dc-place.is-mortgaged .dc-place-name { opacity: 0.65; }
+.dc-place-ctl { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 3px 0 0 16px; }
+.dc-place-mort { display: flex; align-items: center; }
+.dc-mortbtn { min-height: 40px; padding: 0 12px; border: 1.5px solid var(--ink); border-radius: 10px; background: transparent; color: var(--ink); font: 700 14.5px var(--cond); cursor: pointer; }
+.dc-mortbtn:disabled { border-style: dashed; border-color: #cdbf9f; background: #efe6d3; color: #8a8068; cursor: default; }
+.dc-help { flex: none; display: grid; place-items: center; width: 40px; height: 40px; margin: 0; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.dc-help-dot { display: grid; place-items: center; width: 22px; height: 22px; border: 1.5px solid var(--soft); border-radius: 50%; color: var(--soft); font: 700 13px/1 var(--cond); }
+.dc-stp { display: flex; align-items: center; gap: 4px; }
+.dc-pstep { flex: none; width: 40px; height: 40px; margin: 0; padding: 0; border: 0; border-radius: 10px; background: var(--ink); color: var(--paper); font-size: 22px; line-height: 1; cursor: pointer; }
+.dc-pstep:disabled { background: #d8cbb0; color: #a59a82; cursor: default; }
+.dc-pips { display: flex; align-items: center; justify-content: center; gap: 2px; min-width: 56px; color: var(--soft); font-size: 12.5px; }
+.dc-pips .dc-pip { width: 9px; height: 9px; }
+.dc-pips .dc-pip.is-hotel { width: 22px; }
+.dc-pwhy { margin: 1px 0 2px 16px; color: var(--soft); font-size: 13px; line-height: 1.2; }
+
+/* Deals */
+.dc-dlist { display: flex; flex-direction: column; gap: 6px; }
+.dc-drow { display: flex; flex-direction: column; gap: 2px; width: 100%; min-height: 44px; margin: 0; padding: 7px 11px; border: 1.5px solid #d8cbb0; border-radius: 12px; background: #fff; color: var(--ink); font: 600 15px/1.2 var(--cond); text-align: left; cursor: pointer; }
+.dc-drow.is-answer { border-color: var(--gold-deep); background: #fff6e0; }
+.dc-drow.is-stale { border-style: dashed; }
+.dc-drow:disabled { cursor: default; }
+.dc-drow-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.dc-drow-text { min-width: 0; }
+.dc-drow-why { color: var(--soft); font-size: 13px; font-weight: 500; }
+.dc-sheet .dc-pill { flex: none; background: var(--gold); color: var(--ink); }
+.dc-sheet .dc-drow.is-waiting .dc-pill, .dc-sheet .dc-drow.is-stale .dc-pill { background: #e2d5ba; color: var(--soft); }
+.dc-sheetfoot .dc-problem { margin-top: 5px; }
+.dc-tallybox { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; padding-top: 9px; border-top: 1px dashed #cdbf9f; }
+.dc-rules .dc-tallybox { margin-top: 4px; }
+
+/* How to play */
+.dc-tabs { flex: none; display: flex; gap: 6px; margin: 0 -14px 6px; padding: 2px 14px; overflow-x: auto; scroll-padding: 0 14px; scrollbar-width: none; }
+.dc-tabs::-webkit-scrollbar { display: none; }
+.dc-tab { flex: none; min-height: 40px; margin: 0; padding: 0 14px; border: 1.5px solid #d8cbb0; border-radius: 99px; background: transparent; color: var(--soft); font: 700 14.5px var(--cond); white-space: nowrap; cursor: pointer; }
+.dc-tab.is-on { border-color: var(--ink); background: var(--ink); color: var(--paper); }
+.dc-rules { display: flex; flex-direction: column; gap: 8px; }
+.dc-rule { padding: 8px 11px 9px; border: 1px solid #e2d5ba; border-radius: 11px; background: rgb(255 255 255 / 0.55); }
+.dc-rule.is-focus { border-color: var(--gold-deep); box-shadow: 0 0 0 2px rgb(255 182 39 / 0.55); }
+.dc-rule-title { display: block; font: 800 15.5px var(--disp); }
+.dc-rule-text { margin: 2px 0 0; color: #4a4060; font-size: 14.5px; line-height: 1.25; }
+
+/* The deal builder and review */
+.dc-shelf { flex: none; margin-bottom: 8px; padding: 9px; border: 1px solid #e2d5ba; border-left: 4px solid var(--giver, var(--p0)); border-radius: 12px; background: rgb(255 255 255 / 0.55); }
 .dc-sheet .dc-lab { margin: 0 0 6px; color: var(--soft); font-size: 12px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; }
-.dc-chips { display: flex; flex-wrap: wrap; gap: 5px; }
-.dc-none { color: var(--soft); font-size: 13px; }
+.dc-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .dc-dchip {
   display: flex;
   align-items: center;
   gap: 5px;
   max-width: 100%;
+  min-height: 40px;
   margin: 0;
-  padding: 4px 9px;
+  padding: 4px 11px;
   border: 1.5px solid #d8cbb0;
   border-radius: 999px;
   background: #fff;
   color: var(--ink);
-  font-size: 14px;
+  font-size: 14.5px;
   line-height: 1.15;
   text-align: left;
   cursor: pointer;
 }
+.dc-dchip.is-static { min-height: 32px; }
 .dc-chipsw { flex: none; width: 8px; height: 8px; border-radius: 2px; }
 .dc-chipname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .dc-dchip.is-on { border-color: var(--ink); background: #f3e8cf; }
@@ -649,27 +828,18 @@ body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
 .dc-dchip.is-static { cursor: default; background: #f3e8cf; }
 .dc-dchip.is-money { font-variant-numeric: tabular-nums; }
 .dc-chipnote, .dc-chipwhy { flex: none; color: var(--soft); font-size: 12px; }
-.dc-stepwhy { margin-top: 5px; color: var(--soft); font-size: 12px; }
-.dc-cashrow { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
-.dc-step { flex: none; width: 36px; height: 36px; margin: 0; padding: 0; border: 0; border-radius: 10px; background: var(--ink); color: var(--paper); font-size: 20px; cursor: pointer; }
+.dc-none { color: var(--soft); font-size: 13px; }
+.dc-stepwhy { margin-top: 5px; color: var(--soft); font-size: 12.5px; }
+.dc-cashrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.dc-step { flex: none; width: 40px; height: 40px; margin: 0; padding: 0; border: 0; border-radius: 10px; background: var(--ink); color: var(--paper); font-size: 20px; cursor: pointer; }
 .dc-step:disabled { background: #d8cbb0; color: #a59a82; cursor: default; }
-.dc-cashbox { flex: 1; display: grid; place-items: center; height: 36px; border: 1.5px solid #d8cbb0; border-radius: 10px; background: #fff; font: 800 18px var(--disp); font-variant-numeric: tabular-nums; }
+.dc-cashbox { flex: 1 1 72px; display: grid; place-items: center; height: 40px; border: 1.5px solid #d8cbb0; border-radius: 10px; background: #fff; font: 800 18px var(--disp); font-variant-numeric: tabular-nums; }
 .dc-cashbox.is-zero { color: var(--soft); }
-.dc-sheetfoot {
-  position: sticky;
-  bottom: calc(-12px - env(safe-area-inset-bottom));
-  flex: none;
-  margin: 0 -14px calc(-12px - env(safe-area-inset-bottom));
-  padding: 8px 14px calc(12px + env(safe-area-inset-bottom));
-  border-top: 1px solid #e2d5ba;
-  background: var(--paper);
-}
+.dc-qchip { flex: none; min-height: 40px; margin: 0; padding: 0 11px; border: 1.5px solid var(--ink); border-radius: 10px; background: transparent; color: var(--ink); font: 700 14.5px var(--cond); font-variant-numeric: tabular-nums; cursor: pointer; }
 .dc-problems { padding-bottom: 6px; }
-.dc-problem { color: var(--soft); font-size: 13px; line-height: 1.2; }
+.dc-problems:empty { display: none; }
+.dc-problem { color: var(--soft); font-size: 13.5px; line-height: 1.2; }
 .dc-footbtns { flex-wrap: nowrap; }
-.dc-sheet .dc-btn.is-secondary { border: 1.5px solid var(--ink); background: transparent; color: var(--ink); box-shadow: none; }
-.dc-sheet .dc-btn.is-danger { border-color: #b3261e; color: #b3261e; }
-.dc-sheet .dc-btn:disabled { border: 1.5px dashed #cdbf9f; background: #efe6d3; color: #8a8068; }
 
 /* ---- things that move ------------------------------------------------------------ */
 .dc-tok { animation: dc-hop 180ms ease-out; }
@@ -732,16 +902,18 @@ body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
 
 /* ---- short screens ----------------------------------------------------------------- */
 @media (max-height: 700px) {
-  .dc-btn, .dc-abid, .dc-apass { min-height: 38px; }
+  /* The raise-cash list gives way to the lot and the buttons: two ways here, one below, the rest in My places. */
+  .dc-raise .dc-rc:nth-child(n+4) { display: none; }
+  .dc-btn, .dc-abid, .dc-apass { min-height: 40px; }
   .dc-btn { padding: 5px 8px; font-size: 16px; }
   .dc-die { width: 40px; height: 40px; padding: 6px; }
   .dc-dice3d { padding: 2px 0; }
-  .dc-astep, .dc-aval { height: 34px; }
+  .dc-astep, .dc-aval { height: 40px; }
+  .dc-astepline { grid-template-columns: 40px 1fr 40px; }
 }
 @media (max-height: 620px) {
-  .dc-btn, .dc-abid, .dc-apass { min-height: 34px; }
+  .dc-raise .dc-rc:nth-child(n+3) { display: none; }
   .dc-btn { font-size: 15.5px; }
   .dc-die { width: 36px; height: 36px; padding: 5px; }
   .dc-debt-amt { font-size: 28px; }
-  .dc-astep, .dc-aval { height: 32px; }
 }

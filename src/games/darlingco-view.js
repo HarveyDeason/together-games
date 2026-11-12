@@ -3,9 +3,10 @@
 // No document, no timers. darlingco-render.js draws from these descriptions.
 
 import {
-  SQUARES, SETS, STATION_RENT, UTIL_MULT, JAIL_FINE, LJ_CARDS, JB_CARDS, LJ_NAME, JB_NAME, MAX_TRADES, MAX_DEAL_CASH, MIN_BID, BID_STEP, PARKING_SQUARE
+  SQUARES, SETS, STATION_RENT, UTIL_MULT, GO_PAY, JAIL_FINE, LJ_CARDS, JB_CARDS, LJ_NAME, JB_NAME, MAX_TRADES, MAX_DEAL_CASH, MIN_BID, BID_STEP, PARKING_SQUARE
 } from './darlingco-board.js';
 import { readLog, readTrades, dealSummary } from './darlingco.js';
+import { RULE_TABS } from './darlingco-rules.js';
 import {
   sideGate, RAISE_ACTIONS, ownerOf, housesOn, isMortgaged, ownsFullSet, countKind, rentFor, canBuild, canSell, netWorth, dealProblem,
   BLANK_PROPS, setChar, dealChar, dealDest, dealWasMortgaged, dealSquares, squaresOwnedBy
@@ -327,24 +328,38 @@ const placeGroups = () => [
 ].sort((a, b) => a.squares[0] - b.squares[0]);
 
 /** Everything `mySeat` holds, grouped, with the buttons for each place; null
- *  for a watcher. Each button is exactly the property card's. */
+ *  for a watcher. Each button is exactly the property card's. A group carries
+ *  `headline` (what the sheet prints over it) and `stepper` (whether its places
+ *  can be built on at all: only a coloured set held whole); a place carries
+ *  `rentText`, the line under its name. */
 export function placesFor(state, mySeat) {
   if (mySeat !== 0 && mySeat !== 1) return null;
   const groups = [];
   for (const g of placeGroups()) {
     const owned = g.squares.filter((sq) => ownerOf(state, sq) === mySeat);
     if (!owned.length) continue;
+    const full = owned.length === g.squares.length;
+    const standing = full ? (g.built ? 'whole set, rent doubled' : `all ${g.squares.length}`) : `${owned.length} of ${g.squares.length}`;
     groups.push({
       key: g.key, name: g.name, icon: g.icon, colour: g.colour,
-      held: owned.length, of: g.squares.length, full: owned.length === g.squares.length,
+      held: owned.length, of: g.squares.length, full,
+      headline: `${g.icon} ${g.name} — ${standing}`,
       housePrice: g.built ? SQUARES[g.squares[0]].house : null,
+      stepper: g.built && full,
       places: owned.map((sq) => {
         const buttons = {};
         for (const b of manageButtons(state, mySeat, sq)) buttons[b.type] = b;
+        const mortgaged = isMortgaged(state, sq);
+        const spec = SQUARES[sq];
+        // A utility's rent is a multiple of the dice, so it has no figure until somebody rolls.
+        const rentText = mortgaged ? 'mortgaged · earns nothing'
+          : spec.kind === 'util' ? `rent ${UTIL_MULT[countKind(state, mySeat, 'util') - 1]}× the dice`
+          : `rent now ${sterling(rentFor(state, sq, 7))}`;
         return {
-          square: sq, name: SQUARES[sq].name,
-          rentNow: rentFor(state, sq, 7),
-          houses: housesOn(state, sq), mortgaged: isMortgaged(state, sq), buttons
+          square: sq, name: spec.name,
+          rentNow: rentFor(state, sq, 7), rentText,
+          gain: spec.mortgage, lift: unmortgageCost(spec.mortgage),
+          houses: housesOn(state, sq), mortgaged, buttons
         };
       })
     });
@@ -604,6 +619,15 @@ export function nudgeCash(draft, mySeat, shelf, dir) {
   return { ...draft, cash: fromYouPay(mySeat, shelf === 'give' ? next : -next) };
 }
 
+/** Add a quick amount (a chip: +50, +100, +500) to one shelf's money, never past
+ *  the most a deal can carry. Like nudgeCash, money on one shelf drives the other to zero. */
+export function bumpCash(draft, mySeat, shelf, amount) {
+  const pay = youPay(mySeat, draft.cash);
+  const shown = shelf === 'give' ? Math.max(pay, 0) : Math.max(-pay, 0);
+  const next = Math.min(shown + amount, MAX_DEAL_CASH);
+  return { ...draft, cash: fromYouPay(mySeat, shelf === 'give' ? next : -next) };
+}
+
 /** Put a square in the deal or take it out. A square you cannot add (not held
  *  by either side, or in a built set) is left alone; one already in can always come out. */
 export function toggleChip(state, mySeat, draft, sq) {
@@ -766,4 +790,31 @@ export function flipOrder(prev, next) {
     if (was >= 0 && now >= 0 && was !== now) out.push(i);
   }
   return out;
+}
+
+// ---- how to play -------------------------------------------------------------
+
+/** The rules copy keeps numbers and names in braces; they are read from the board here. */
+const fillRules = (text) => text
+  .replace(/\{GO_PAY\}/g, String(GO_PAY))
+  .replace(/\{JAIL_FINE\}/g, String(JAIL_FINE))
+  .replace(/\{POT_NAME\}/g, POT_NAME())
+  .replace(/\{LJ_NAME\}/g, LJ_NAME)
+  .replace(/\{JB_NAME\}/g, JB_NAME);
+
+/** The rules sheet for one tab: every tab (and which is showing) plus that tab's
+ *  cards, placeholders filled. An unknown id shows the first tab. */
+export function rulesFor(tabId) {
+  const tab = RULE_TABS.find((t) => t.id === tabId) || RULE_TABS[0];
+  return {
+    tab: tab.id,
+    tabs: RULE_TABS.map((t) => ({ id: t.id, title: t.title, on: t.id === tab.id })),
+    cards: tab.cards.map((c) => ({ id: c.id, title: fillRules(c.title), text: fillRules(c.text) }))
+  };
+}
+
+/** The tab that holds a card, for a "?" that opens the rules at that card; the first tab when none does. */
+export function helpTab(cardId) {
+  const tab = RULE_TABS.find((t) => t.cards.some((c) => c.id === cardId));
+  return tab ? tab.id : RULE_TABS[0].id;
 }

@@ -3,10 +3,10 @@
 // use anything across it at the top level.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { propertyFor, decisionFor, placesFor, raiseCashFor, storyFor } from '../src/games/darlingco-view.js';
-import { SQUARES, SETS } from '../src/games/darlingco-board.js';
+import { propertyFor, decisionFor, placesFor, raiseCashFor, storyFor, bumpCash, blankDraft, nudgeCash, dealSheetFor } from '../src/games/darlingco-view.js';
+import { SQUARES, SETS, MAX_DEAL_CASH } from '../src/games/darlingco-board.js';
 import { createInitialState, applyAction } from '../src/games/darlingco.js';
-import { setChar } from '../src/games/darlingco-state.js';
+import { setChar, dealChar, dealProblem, BLANK_PROPS } from '../src/games/darlingco-state.js';
 
 const fresh = () => createInitialState({ first: 0, rnd: () => 0.5 });
 
@@ -288,4 +288,103 @@ test('storyFor is the last lines of the feed, names in', () => {
   const s = { ...fresh(), log: ['Player 1 rolls', 'Player 2 buys', 'Player 1 pays'] };
   assert.deepEqual(storyFor(s, NAMES), ['Shruti buys', 'Harvey pays']);
   assert.deepEqual(storyFor(s, NAMES, 1), ['Harvey pays']);
+});
+
+// ---- Task 7: the deal chips and the My places headings -----------------------------
+
+const draftOf = (cash, extra = {}) => ({ props: BLANK_PROPS, cash, outs0: 0, outs1: 0, id: '', ...extra });
+const shelfCash = (state, seat, draft) => { const s = dealSheetFor(state, seat, draft, NAMES); return [s.give.cash, s.get.cash]; };
+
+test('bumpCash adds to the shelf it is given, for either seat', () => {
+  for (const seat of [0, 1]) {
+    let d = blankDraft();
+    d = bumpCash(d, seat, 'give', 50);
+    assert.deepEqual(shelfCash(table(), seat, d), [50, 0], `seat ${seat} give`);
+    d = bumpCash(d, seat, 'give', 100);
+    d = bumpCash(d, seat, 'give', 500);
+    assert.deepEqual(shelfCash(table(), seat, d), [650, 0], `seat ${seat} accumulates`);
+    let g = bumpCash(blankDraft(), seat, 'get', 100);
+    assert.deepEqual(shelfCash(table(), seat, g), [0, 100], `seat ${seat} get`);
+  }
+});
+
+test('bumpCash zeroes the other shelf, as nudgeCash does', () => {
+  for (const seat of [0, 1]) {
+    const gives = bumpCash(blankDraft(), seat, 'give', 500);
+    const swapped = bumpCash(gives, seat, 'get', 50);
+    assert.deepEqual(shelfCash(table(), seat, swapped), [0, 50], `seat ${seat}`);
+    const nudged = nudgeCash(gives, seat, 'get', +1);
+    assert.deepEqual(shelfCash(table(), seat, nudged), [0, 10], 'the same rule as the stepper');
+  }
+});
+
+test('bumpCash never goes past the most a deal can carry', () => {
+  for (const seat of [0, 1]) {
+    const near = bumpCash(blankDraft(), seat, 'give', MAX_DEAL_CASH - 20);
+    const over = bumpCash(near, seat, 'give', 500);
+    assert.deepEqual(shelfCash(table(), seat, over), [MAX_DEAL_CASH, 0]);
+    assert.equal(Math.abs(over.cash), MAX_DEAL_CASH);
+    assert.equal(dealSheetFor(table(), seat, over, NAMES).give.up.disabled, true, 'and the stepper says the same');
+  }
+});
+
+test('bumpCash leaves the rest of the draft alone and does not touch its input', () => {
+  const d = draftOf(0, { props: setChar(BLANK_PROPS, 24, '1'), outs0: 1, id: 't3' });
+  const frozen = Object.freeze({ ...d });
+  const next = bumpCash(frozen, 0, 'give', 100);
+  assert.equal(next.props, d.props);
+  assert.equal(next.outs0, 1);
+  assert.equal(next.id, 't3');
+  assert.equal(frozen.cash, 0);
+});
+
+test('a draft built with chips passes the engine when it is affordable, and not when it is not', () => {
+  // seat 0 owns 5 and seat 1 owns 15; cash is enough for 650 but not for 2,000
+  const s = table({ cash: [1500, 1500] });
+  for (const seat of [0, 1]) {
+    const mine = seat === 0 ? 5 : 15;   // stations: no houses stand on them
+    const props = setChar(BLANK_PROPS, mine, dealChar(1 - seat, false));
+    let d = draftOf(0, { props });
+    for (const n of [100, 500, 50]) d = bumpCash(d, seat, 'give', n);
+    const terms = { props: d.props, cash: d.cash, outs0: d.outs0, outs1: d.outs1, awaits: 1 - seat };
+    assert.equal(dealProblem(s, terms), '', `seat ${seat} affordable`);
+    assert.equal(dealSheetFor(s, seat, d, NAMES).problem, '', `seat ${seat} the sheet agrees`);
+    assert.equal(applyAction(s, { type: 'trade-offer', ...terms }, seat).error, undefined);
+    for (let k = 0; k < 3; k++) d = bumpCash(d, seat, 'give', 500);
+    const broke = { props: d.props, cash: d.cash, outs0: d.outs0, outs1: d.outs1, awaits: 1 - seat };
+    assert.equal(dealProblem(s, broke), 'cannot-afford', `seat ${seat} too much`);
+    assert.match(dealSheetFor(s, seat, d, NAMES).problem, /enough cash/);
+  }
+});
+
+test('placesFor heads each group with how much of it you hold, and says which can be built on', () => {
+  const s = table();
+  const p = placesFor(s, 0);
+  const group = (key) => p.groups.find((g) => g.key === key);
+  assert.equal(group('romcom').headline, '\u{1F3AC} Rom Coms — whole set, rent doubled');
+  assert.equal(group('romcom').stepper, true);
+  assert.equal(group('far').headline, '\u{1F4DE} Long Distance — whole set, rent doubled');
+  assert.equal(group('diwali'), undefined, 'a set you hold nothing of is not listed');
+  const mamma = placesFor(s, 1);
+  assert.equal(mamma.groups.find((g) => g.key === 'mamma').headline, '\u{1F483} Mamma Mia — whole set, rent doubled');
+  // a partial set and the non-set groups
+  const partial = placesFor(table({ own: setChar(table().own, 8, '.') }), 0);
+  const rom = partial.groups.find((g) => g.key === 'romcom');
+  assert.equal(rom.headline, '\u{1F3AC} Rom Coms — 2 of 3');
+  assert.equal(rom.stepper, false, 'a set you hold only part of cannot be built on');
+  const stn = p.groups.find((g) => g.key === 'stn');
+  assert.equal(stn.stepper, false);
+  assert.equal(stn.headline, '\u{1F689} Stations — 1 of 4');
+});
+
+test('placesFor words each place\'s rent, its mortgage and what lifting costs', () => {
+  const s = table();
+  const p = placesFor(s, 0);
+  const place = (sq) => p.groups.flatMap((g) => g.places).find((x) => x.square === sq);
+  assert.match(place(1).rentText, /^rent now £\d+$/);
+  assert.equal(place(6).rentText, 'mortgaged · earns nothing');
+  assert.equal(place(6).gain, SQUARES[6].mortgage);
+  assert.equal(place(6).lift, Math.ceil(SQUARES[6].mortgage * 11 / 10));
+  const util = placesFor(s, 1).groups.flatMap((g) => g.places).find((x) => x.square === 12);
+  assert.match(util.rentText, /^rent \d+× the dice$/);
 });

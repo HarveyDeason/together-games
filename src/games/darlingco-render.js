@@ -14,7 +14,7 @@ import { SQUARES, SETS, GAME_NAME, BID_STEP, LJ_NAME, JB_NAME } from './darlingc
 import {
   POT_NAME, chipParts, storyFor, decisionFor, auctionFor, cardFor, STRIP_CAP, builtReason, sterling, tradeStrips, stripsShown,
   canOpenDeal, blankDraft, draftFromDeal, nudgeCash, bumpCash, toggleChip, tidyDraft, dealSheetFor, dealReviewFor, walkPath, sendLanded, flipOrder,
-  placesFor, rulesFor, helpTab
+  placesFor, rulesFor, helpTab, wasRoll, DICE_MS
 } from './darlingco-view.js';
 import { PIECES, COLOURS, METAL_DEFS, DEFAULT_LOOKS, resolveLooks } from './darlingco-pieces.js';
 import { readTrades } from './darlingco.js';
@@ -251,10 +251,16 @@ function actionButton(world, spec, buildAction, className, onSend) {
     world.pending = true;
     if (onSend) onSend();
     let sent;
-    try { sent = world.onAction(buildAction()); } catch (e) { sent = Promise.reject(e); }
+    try {
+      const action = buildAction();
+      // Spin BEFORE the write: a local snapshot can arrive inside it and must be able to end the spin.
+      if (action && action.type === 'roll') setSpinning(world, true);
+      sent = world.onAction(action);
+    } catch (e) { sent = Promise.reject(e); }
     let chain = Promise.resolve(sent);
     if (spec.thenRoll) chain = chain.then(() => followWithRoll(world));
     chain.then(() => {}, () => {}).then(() => {
+      setSpinning(world, false);   // the write has settled: a refusal leaves no state to stop it
       world.pending = false;
       b.disabled = false;
       paint(world);       // the sheet closes here if the state shows the send landed
@@ -279,6 +285,7 @@ function decisionAction(spec) {
 function followWithRoll(world) {
   const s = world.state;
   if (!s || s.phase !== 'roll' || s.actor !== world.mySeat) return undefined;
+  setSpinning(world, true);
   return world.onAction(rollAction());
 }
 
@@ -315,21 +322,87 @@ function applyLooks(world, looks) {
   world.discs.forEach((disc, seat) => dress(disc, seat));
 }
 
-/** One die face, pips only. The 3D tumbling dice are a later task's job; this
- *  is the placeholder that shows the last roll. */
+/** The dice: two real cubes, built once and kept for the life of the board.
+ *  Each cube has six faces (pips as a 3x3 grid) and turns by CSS transform alone,
+ *  so a repaint of the stage must never tear the node down mid-tumble: paintStage
+ *  keeps this node and only shows or hides it. The mockup's rotation table says
+ *  which turn brings each face to the front. */
 const PIPS = { 1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8] };
-function dieFace(doc, n) {
-  const die = el(doc, 'span', 'dc-die');
+const SHOW = { 1: [0, 0], 2: [0, -90], 3: [-90, 0], 4: [90, 0], 5: [0, 90], 6: [0, 180] };
+// Nothing rolled yet (die1 is 0): a one, resting at the mockup's jaunty angle.
+const faceOf = (n) => (Number.isInteger(n) && n >= 1 && n <= 6 ? n : 1);
+// Every tumble adds two whole turns so the cube is always seen to spin forward and
+// still ends on the same face; the per-die sign keeps the two dice from moving as one.
+const orient = (n, k, turns) => {
+  const [x, y] = SHOW[n];
+  return `rotateX(${x - 14 + 720 * turns}deg) rotateY(${y + 16 + (k ? -1 : 1) * 720 * turns}deg)`;
+};
+
+function restDie(die, k, n) {
+  die.style.transform = orient(n, k, die.dcTurns);
   die.dataset.face = String(n);
-  if (!PIPS[n]) {
-    // Nothing rolled yet.
-    die.classList.add('is-blank');
-    die.appendChild(el(doc, 'b', 'dc-die-q', '?'));
+}
+
+function buildDice(doc) {
+  const diceStage = el(doc, 'div', 'dc-dicestage');
+  diceStage.hidden = true;
+  diceStage.appendChild(el(doc, 'div', 'dc-wm', GAME_NAME));
+  const diceBox = el(doc, 'div', 'dc-dice3d');
+  const dice = [0, 1].map((k) => {
+    const die = el(doc, 'span', 'dc-die');
+    for (let n = 1; n <= 6; n++) {
+      const face = el(doc, 'i', 'dc-face');
+      for (let q = 0; q < 9; q++) face.appendChild(el(doc, 's', PIPS[n].includes(q) ? 'is-pip' : ''));
+      die.appendChild(face);
+    }
+    die.dcTurns = 0;
+    restDie(die, k, 1);
+    diceBox.appendChild(die);
     return die;
+  });
+  diceStage.appendChild(diceBox);
+  diceStage.appendChild(el(doc, 'div', 'dc-dshadow'));
+  return { diceStage, diceBox, dice };
+}
+
+/** Rest the faces on the state's last roll, touching a die only if its face changed. */
+function showFaces(world) {
+  world.dice.forEach((die, k) => {
+    const n = faceOf(world.state[k ? 'die2' : 'die1']);
+    if (die.dataset.face !== String(n)) restDie(die, k, n);
+  });
+}
+
+/** The roller's own tap: the dice spin until the state arrives, or until the write
+ *  settles without one. A flourish, so it never throws. */
+function setSpinning(world, on) {
+  try {
+    if (on && !motionOn()) return;
+    world.diceBox.classList[on ? 'add' : 'remove']('is-spinning');
+  } catch (e) { /* losing a spin is cheap */ }
+}
+
+/** Throw the dice: each cube turns to the face the STATE names (the numbers never come
+ *  from the animation). Returns false, with nothing left half-done, if it could not. */
+function startTumble(world, s) {
+  try {
+    world.diceBox.classList.remove('is-spinning');
+    world.dice.forEach((die, k) => {
+      die.dcTurns += 1;
+      die.style.transform = orient(faceOf(s[k ? 'die2' : 'die1']), k, die.dcTurns);
+    });
+    world.tumbling = true;
+    return true;
+  } catch (e) {
+    world.tumbling = false;
+    return false;
   }
-  const on = PIPS[n];
-  for (let k = 0; k < 9; k++) die.appendChild(el(doc, 'i', on.includes(k) ? 'is-pip' : ''));
-  return die;
+}
+
+/** The dice land: announce the faces of the LATEST state. */
+function endTumble(world) {
+  world.dice.forEach((die, k) => restDie(die, k, faceOf(world.state[k ? 'die2' : 'die1'])));
+  world.tumbling = false;
 }
 
 const SLOTS = [
@@ -413,6 +486,7 @@ function buildWorld(doc, host) {
     bidStep: null, bidKey: '', sheetMode: null, rulesTab: 'turn', rulesCard: '', draft: null, reviewId: null, sent: null, pending: false, busy: false,
     generation: 0, flipGeneration: 0, hold: null, animatedKey: null, stateJson: '',
     shown: null, builtSeen: null, state: null, mySeat: null, names: [],
+    tumbling: false, ...buildDice(doc),
     looks: null, looksKey: '', chat: { toggle() {}, unread: () => 0 }, onLook: () => {}, onRematch: () => {}, onAction: () => {}
   };
   tiles.forEach((tile, i) => {
@@ -1122,14 +1196,10 @@ function paintPicker(world) {
 
 // ---- the subject ---------------------------------------------------------------
 
+/** The dice live in one persistent node (see buildDice); painting them is showing it.
+ *  Their faces are kept right by paintStage, whether or not they are shown. */
 function paintDice(world) {
-  const { state, doc, subject } = world;
-  subject.appendChild(el(doc, 'div', 'dc-wm', GAME_NAME));
-  // Task 8 replaces the contents of this box with the tumbling dice.
-  const box = el(doc, 'div', 'dc-dice3d');
-  box.appendChild(dieFace(doc, state.die1 > 0 ? state.die1 : 0));
-  box.appendChild(dieFace(doc, state.die2 > 0 ? state.die2 : 0));
-  subject.appendChild(box);
+  world.diceStage.hidden = false;
 }
 
 function paintDebt(world, d) {
@@ -1219,7 +1289,9 @@ function paintSay(world, d) {
 function paintSubject(world, d) {
   const { state, mySeat, names } = world;
   // Short of cash, what matters is the amount and the shortfall, not the title deed.
-  const sub = d.short ? { kind: 'debt' } : d.subject;
+  // While the dice are in the air they stay the subject, whatever the roll landed on: the lot or the
+  // card comes once they have settled.
+  const sub = world.tumbling ? { kind: 'dice' } : d.short ? { kind: 'debt' } : d.subject;
   switch (sub.kind) {
     case 'deed': {
       const c = cardFor(state, mySeat, sub.square, names);
@@ -1232,7 +1304,7 @@ function paintSubject(world, d) {
     case 'result': paintResult(world, d); break;
     default: paintDice(world);
   }
-  paintSay(world, d);
+  if (!world.tumbling) paintSay(world, d);
 }
 
 // ---- the buttons -----------------------------------------------------------------
@@ -1437,11 +1509,22 @@ function paintStrips(world, cap) {
   if (more > 0) strips.appendChild(el(doc, 'div', 'dc-more', `+${more} more${moreMine ? ` (${moreMine} waiting on you)` : ''}`));
 }
 
+/** Empty the subject except the dice, which are never torn down (a tumble in the air would
+ *  stop). They sit first, hidden unless this paint is about them. */
+function clearSubject(world) {
+  const { subject, diceStage } = world;
+  for (const c of Array.from(subject.children)) if (c !== diceStage) c.remove();
+  if (!Array.from(subject.children).includes(diceStage)) subject.appendChild(diceStage);
+  diceStage.hidden = true;
+}
+
 function paintStage(world, d) {
   const { state, mySeat, names, mid, story, subject, strips, actions } = world;
   clear(story);
-  clear(subject);
+  clearSubject(world);
   clear(actions);
+  // Whatever the stage shows, the dice rest on the last roll unless a tumble is in the air.
+  if (!world.tumbling) showFaces(world);
   const c = world.selected >= 0 ? cardFor(state, mySeat, world.selected, names) : null;
   if (!c) world.selected = -1;
   const seated = mySeat === 0 || mySeat === 1;
@@ -1581,10 +1664,10 @@ export function renderBoard(state, host, ctx = {}) {
   // A genuinely new state ends any question that was open about the old one; a state
   // delivered twice (the room redraws on every listener) leaves it alone.
   const json = JSON.stringify(state);
-  if (json !== world.stateJson) { world.stateJson = json; world.confirming = false; }
+  if (json !== world.stateJson) { world.stateJson = json; world.confirming = false; setSpinning(world, false); }
   applyLooks(world, resolveLooks(looks));
   noteChanges(world, prev);
-  animate(world);
+  animate(world, prev);
   paint(world);
 }
 
@@ -1686,16 +1769,19 @@ function flick(world, from, to, amount) {
 function settle(world, repaint) {
   world.shown = [...world.state.pos];
   world.busy = false;
+  world.tumbling = false;
   if (repaint) paint(world);
 }
 
-/** Walk the moving token(s) from where they are SHOWN to where the state says,
- *  one square per tick. Keyed on moves and the actor, so a state delivered
- *  twice (the room listens to the whole game node, and a `game/scored` write
- *  after a win re-delivers it) starts nothing: a chain already running carries
- *  on and settles on whatever the latest state is. A new key bumps the
- *  generation, which stops the old chain at its next tick. */
-function animate(world) {
+/** A roll plays as one chain: the dice tumble for DICE_MS and settle on the state's
+ *  numbers, then the token(s) walk from where they are SHOWN to where the state says,
+ *  one square per tick. Keyed on moves and the actor, so a state delivered twice (the
+ *  room listens to the whole game node, and a `game/scored` write after a win
+ *  re-delivers it) starts nothing: a chain already running carries on and settles on
+ *  whatever the latest state is. A new key bumps the generation, which stops the old
+ *  chain, tumble or walk, at its next tick. `world.busy` is true from the first throw to
+ *  the last step and is released on every way out. */
+function animate(world, prev) {
   const s = world.state;
   const key = `${s.moves}:${s.actor}`;
   if (!world.shown) { settle(world, false); world.animatedKey = key; return; }
@@ -1706,12 +1792,12 @@ function animate(world) {
   world.animatedKey = key;
   const generation = ++world.generation;
   const superseded = () => world.generation !== generation;
+  world.tumbling = false;   // a tumble this chain replaces is over; the dice rest on the latest faces
 
+  const rolled = motionOn() && wasRoll(prev, s);
   const paths = [0, 1].map((seat) => (motionOn() ? walkPath(world.shown[seat], s.pos[seat]) : []));
-  if (!paths[0].length && !paths[1].length) { settle(world, false); return; }
+  if (!rolled && !paths[0].length && !paths[1].length) { settle(world, false); return; }
 
-  // A seat that is not walking (or jumps) is simply where the state says.
-  for (const seat of [0, 1]) if (!paths[seat].length) world.shown[seat] = s.pos[seat];
   const step = [0, 0];
   world.busy = true;
   const hop = () => {
@@ -1730,11 +1816,34 @@ function animate(world) {
     } catch (e) {
       // Never strand the buttons disabled: a failed step ends the walk.
       world.busy = false;
+      world.tumbling = false;
       world.shown = [...world.state.pos];
       throw e;
     }
   };
-  hop();
+  const walk = () => {
+    // A seat that is not walking (or jumps) is simply where the state says.
+    for (const seat of [0, 1]) if (!paths[seat].length) world.shown[seat] = s.pos[seat];
+    if (!paths[0].length && !paths[1].length) { settle(world, true); return; }
+    hop();
+  };
+
+  if (rolled && startTumble(world, s)) {
+    setTimeout(() => {
+      if (superseded()) return;
+      try {
+        endTumble(world);
+        walk();
+      } catch (e) {
+        world.busy = false;
+        world.tumbling = false;
+        world.shown = [...world.state.pos];
+        throw e;
+      }
+    }, DICE_MS);
+    return;
+  }
+  walk();
 }
 
 /** Between steps only the tokens change; repaint just the tiles that hold one

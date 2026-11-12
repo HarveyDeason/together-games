@@ -350,7 +350,7 @@ body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
   scrollbar-color: var(--line) transparent;
 }
 /* margin:auto centres a short subject without making a tall one unreachable. */
-.dc-subject > :first-child { margin-top: auto; }
+.dc-subject > :first-child, .dc-subject > [hidden] + * { margin-top: auto; }
 .dc-subject > :last-child { margin-bottom: auto; }
 .dc-actions { flex: none; display: flex; flex-direction: column; gap: 5px; }
 .dc-wm { color: rgb(255 255 255 / 0.2); font: 800 14px var(--disp); text-align: center; }
@@ -359,25 +359,64 @@ body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
 .dc-say-title { font-size: 15px; font-weight: 700; }
 .dc-say-detail { color: var(--mut); font-size: 12.5px; }
 
-/* dice (placeholder faces; the tumbling dice replace the contents of .dc-dice3d) */
-.dc-dice3d { display: flex; gap: 22px; align-items: center; justify-content: center; padding: 8px 0; }
+/* dice: two real cubes. The stage keeps them for the life of the board (a repaint never
+   rebuilds them, or a tumble in the air would stop); --d is the cube's edge. */
+.dc-dicestage { --d: 46px; display: flex; flex-direction: column; align-items: center; flex: none; }
+.dc-dicestage[hidden] { display: none; }
+.dc-dice3d {
+  display: flex;
+  gap: 26px;
+  align-items: center;
+  justify-content: center;
+  height: calc(var(--d) * 1.75);
+  perspective: 500px;
+}
 .dc-die {
+  position: relative;
+  width: var(--d);
+  height: var(--d);
+  transform-style: preserve-3d;
+  transform: rotateX(-14deg) rotateY(16deg);
+  /* the cubic-bezier overshoots a little, so the cube settles with a wobble */
+  transition: transform 0.9s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
+.dc-face {
+  position: absolute;
+  inset: 0;
   display: grid;
   grid-template: repeat(3, 1fr) / repeat(3, 1fr);
-  width: 46px;
-  height: 46px;
-  padding: 7px;
+  padding: calc(var(--d) * 0.15);
   gap: 1px;
-  border-radius: 9px;
+  border-radius: calc(var(--d) * 0.2);
   background: var(--cream);
-  box-shadow: inset 0 0 0 1.5px #d9cbb0, inset 0 -4px 8px rgb(0 0 0 / 0.1), 0 6px 12px rgb(0 0 0 / 0.4);
-  transform: rotate(-6deg);
+  box-shadow: inset 0 0 0 1.5px #d9cbb0, inset 0 -4px 8px rgb(0 0 0 / 0.1);
+  backface-visibility: hidden;
 }
-.dc-die + .dc-die { transform: rotate(5deg); }
-.dc-die i { border-radius: 50%; }
-.dc-die.is-blank { display: flex; align-items: center; justify-content: center; color: #c9bba0; font: 800 24px var(--disp); }
-.dc-die-q { font-weight: 800; }
-.dc-die i.is-pip { background: var(--ink); }
+.dc-face:nth-child(1) { transform: translateZ(calc(var(--d) / 2)); }
+.dc-face:nth-child(2) { transform: rotateY(90deg) translateZ(calc(var(--d) / 2)); }
+.dc-face:nth-child(3) { transform: rotateX(90deg) translateZ(calc(var(--d) / 2)); }
+.dc-face:nth-child(4) { transform: rotateX(-90deg) translateZ(calc(var(--d) / 2)); }
+.dc-face:nth-child(5) { transform: rotateY(-90deg) translateZ(calc(var(--d) / 2)); }
+.dc-face:nth-child(6) { transform: rotateY(180deg) translateZ(calc(var(--d) / 2)); }
+.dc-face s { border-radius: 50%; }
+.dc-face s.is-pip { background: var(--ink); }
+.dc-dshadow {
+  width: calc(var(--d) * 3);
+  height: 10px;
+  margin-top: -6px;
+  background: radial-gradient(rgb(0 0 0 / 0.45), transparent 70%);
+}
+/* The roller's tap: the cubes spin freely until the roll arrives (then they tumble onto it). */
+.dc-dice3d.is-spinning .dc-die { transition: none; animation: dc-spin 0.6s linear infinite; }
+@keyframes dc-spin {
+  from { transform: rotateX(-14deg) rotateY(16deg); }
+  to { transform: rotateX(346deg) rotateY(736deg); }
+}
+.dc-dice3d.is-spinning .dc-die + .dc-die { animation-direction: reverse; }
+@media (prefers-reduced-motion: reduce) {
+  .dc-die { transition: none; }
+  .dc-dice3d.is-spinning .dc-die { animation: none; }
+}
 
 /* the title deed */
 .dc-deed {
@@ -906,14 +945,13 @@ body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
   .dc-raise .dc-rc:nth-child(n+4) { display: none; }
   .dc-btn, .dc-abid, .dc-apass { min-height: 40px; }
   .dc-btn { padding: 5px 8px; font-size: 16px; }
-  .dc-die { width: 40px; height: 40px; padding: 6px; }
-  .dc-dice3d { padding: 2px 0; }
+  .dc-dicestage { --d: 42px; }
   .dc-astep, .dc-aval { height: 40px; }
   .dc-astepline { grid-template-columns: 40px 1fr 40px; }
 }
 @media (max-height: 620px) {
   .dc-raise .dc-rc:nth-child(n+3) { display: none; }
   .dc-btn { font-size: 15.5px; }
-  .dc-die { width: 36px; height: 36px; padding: 5px; }
+  .dc-dicestage { --d: 36px; }
   .dc-debt-amt { font-size: 28px; }
 }

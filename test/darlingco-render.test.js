@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { gridCell, edgeOf, buildBoard, paintTile, decisionFor, feedLines, propertyFor, cardFor, walkPath, chipParts, tradeStrips, canOpenDeal, sendLanded, stripsShown, STRIP_CAP, auctionFor,
-  dealSheetFor, dealReviewFor, flipOrder, nudgeCash, toggleChip, draftFromDeal, tidyDraft } from '../src/games/darlingco-render.js';
+  dealSheetFor, dealReviewFor, flipOrder, nudgeCash, toggleChip, draftFromDeal, tidyDraft, DICE_MS } from '../src/games/darlingco-render.js';
 import { readFileSync } from 'node:fs';
 import { createInitialState, render, applyAction, meta } from '../src/games/darlingco.js';
 import { COLOURS, DEFAULT_LOOKS } from '../src/games/darlingco-pieces.js';
@@ -691,7 +691,8 @@ test('a superseded chain does nothing when its timer fires', () => {
 
 test('a hop that throws still releases busy', () => {
   withTimers((t) => {
-    const h = mount(at([3, 0], { moves: 1 }), 0);
+    // Not a roll (the phase was not 'roll'), so the walk starts at once with no tumble in front of it.
+    const h = mount(at([3, 0], { moves: 1, phase: 'end' }), 0);
     const tile = h.__dc.tiles[4];
     const real = tile.dcTokens;
     tile.dcTokens = null;                    // paintTile throws when it reaches this tile
@@ -2900,4 +2901,282 @@ test('a player name that looks like markup arrives escaped in the story line', (
   assert.ok(line.innerHTML.includes('&lt;img src=x onerror=alert(1)&gt;'), line.innerHTML);
   assert.ok(line.innerHTML.includes('<b>&lt;img'), 'the name is still bold');
   assert.equal(line.textContent, `${evil} pays 5 to Bo.`);
+});
+
+// ---- dice that roll ------------------------------------------------------------------
+// A roll is built through the real engine (applyAction), so the state the renderer
+// sees is the one a phone would get.
+const rollFrom = (pos, a, b, extra = {}) => {
+  const from = at(pos, { moves: 1, ...extra });
+  const r = applyAction(from, { type: 'roll', die1: a, die2: b }, 0);
+  assert.ok(r.state, `the roll ${a},${b} was refused: ${r.error}`);
+  return { from, next: r.state };
+};
+const facesOf = (h) => h.__dc.dice.map((d) => d.dataset.face);
+const spinning = (h) => h.__dc.diceBox.classes.has('is-spinning');
+const rollBtn = (h) => buttonsIn(h).find((b) => /roll/i.test(b.textContent));
+
+test('the dice rest on the last roll in the roll phase and in the end phase', () => {
+  withTimers((t) => {
+    const { from, next } = rollFrom([3, 0], 2, 3);
+    const h = mount(next, 0);
+    assert.equal(t.pending(), 0, 'the first render tumbles nothing');
+    assert.deepEqual(facesOf(h), ['2', '3'], `phase ${next.phase}: the faces are the roll`);
+    const later = { ...from, die1: 5, die2: 4, phase: 'roll' };
+    draw(h, later, { mySeat: 0 });
+    assert.deepEqual(facesOf(h), ['5', '4']);
+    draw(h, { ...later, moves: 3, phase: 'end', die1: 6, die2: 1 }, { mySeat: 0 });
+    t.flush();
+    assert.deepEqual(facesOf(h), ['6', '1']);
+    assert.equal(h.__dc.diceStage.hidden, false, 'the end phase shows the dice');
+  });
+});
+
+test('before any roll both dice show a one, never a question mark', () => {
+  withTimers(() => {
+    const h = mount(fresh(), 0);
+    assert.deepEqual(facesOf(h), ['1', '1']);
+    assert.ok(!text(h.__dc.diceStage).includes('?'));
+    assert.equal(h.__dc.diceStage.hidden, false);
+  });
+});
+
+test('each die has six faces with the right pips, and the dice stage is a persistent node', () => {
+  withTimers(() => {
+    const h = mount(fresh(), 0);
+    for (const die of h.__dc.dice) {
+      assert.equal(die.children.length, 6);
+      die.children.forEach((face, k) => {
+        assert.equal(face.children.length, 9);
+        assert.equal(face.children.filter((s) => s.classes.has('is-pip')).length, k + 1, `face ${k + 1} pips`);
+      });
+    }
+    const stage = h.__dc.diceStage;
+    draw(h, at([3, 0], { moves: 2, phase: 'end' }));
+    assert.equal(h.__dc.diceStage, stage, 'the same node, so a running tumble is never torn down by a repaint');
+    assert.ok(h.__dc.subject.children.includes(stage));
+  });
+});
+
+test('the token does not move until the dice settle', () => {
+  withTimers((t) => {
+    const { from, next } = rollFrom([3, 0], 2, 3);          // 3 -> 8
+    const h = mount(from, 1);
+    draw(h, next);
+    assert.equal(h.__dc.busy, true, 'busy from the start of the tumble');
+    assert.equal(h.__dc.tumbling, true);
+    assert.equal(t.pending(), 1, 'one timer: the tumble');
+    assert.deepEqual(shownOf(h), [3, 0], 'the token waits');
+    assert.equal(tileOfTok(h, 0), 3);
+    assert.deepEqual(facesOf(h), ['1', '1'], 'the faces are not announced until they land');
+    t.step();                                                // the tumble ends
+    assert.equal(h.__dc.tumbling, false);
+    assert.deepEqual(facesOf(h), ['2', '3']);
+    assert.equal(h.__dc.busy, true, 'still busy: the walk is next');
+    assert.equal(shownOf(h)[0], 4, 'the first step is taken only after the dice settled');
+    t.flush();
+    assert.deepEqual(shownOf(h), [8, 0]);
+    assert.equal(h.__dc.busy, false);
+  });
+});
+
+test('the stage shows the dice while they tumble even though the roll landed on a lot', () => {
+  withTimers((t) => {
+    const { from, next } = rollFrom([3, 0], 2, 3);
+    assert.equal(next.phase, 'buy');
+    const h = mount(from, 1);
+    draw(h, next);
+    assert.equal(h.__dc.diceStage.hidden, false);
+    assert.ok(!all(h.__dc.subject).some((n) => n.classes.has('dc-lot') || n.classes.has('dc-deed')), 'no lot yet');
+    t.flush();
+  });
+});
+
+test('a roll that does not move the token still tumbles, settles and releases busy', () => {
+  withTimers((t) => {
+    const { from, next } = rollFrom([10, 0], 1, 2, { jail: [1, 0] });
+    assert.deepEqual([...next.pos], [10, 0]);
+    const h = mount(from, 1);
+    draw(h, next);
+    assert.equal(h.__dc.busy, true);
+    assert.equal(h.__dc.tumbling, true);
+    t.step();
+    assert.equal(h.__dc.busy, false);
+    assert.equal(h.__dc.tumbling, false);
+    assert.deepEqual(facesOf(h), ['1', '2']);
+    assert.equal(t.pending(), 0);
+  });
+});
+
+test('a roll that jumps (three doubles to jail) tumbles first, then the token is where the state says', () => {
+  withTimers((t) => {
+    const from = at([25, 0], { moves: 1, doubles: 2 });
+    const r = applyAction(from, { type: 'roll', die1: 3, die2: 3 }, 0);
+    assert.ok(r.state && r.state.jail[0] > 0, 'the third double sends you to jail');
+    const h = mount(from, 1);
+    draw(h, r.state);
+    assert.equal(shownOf(h)[0], 25, 'the token stays put during the tumble');
+    t.flush();
+    assert.equal(shownOf(h)[0], r.state.pos[0]);
+    assert.equal(h.__dc.busy, false);
+    assert.deepEqual(facesOf(h), ['3', '3']);
+  });
+});
+
+test('a re-delivered state does not tumble again', () => {
+  withTimers((t) => {
+    const { from, next } = rollFrom([3, 0], 2, 3);
+    const h = mount(from, 1);
+    draw(h, next);
+    const gen = h.__dc.generation, queued = t.pending();
+    draw(h, { ...next, scored: true });                      // mid-tumble
+    assert.equal(h.__dc.generation, gen);
+    assert.equal(t.pending(), queued, 'no second tumble');
+    t.flush();
+    assert.deepEqual(shownOf(h), [8, 0]);
+    draw(h, { ...next, scored: true });                      // after it landed
+    assert.equal(h.__dc.generation, gen);
+    assert.equal(h.__dc.tumbling, false);
+    assert.equal(t.pending(), 0);
+    assert.deepEqual(facesOf(h), ['2', '3']);
+  });
+});
+
+test('a newer state stops a tumble in flight', () => {
+  withTimers((t) => {
+    const { from, next } = rollFrom([3, 0], 2, 3);           // seat 0 would walk 3 -> 8
+    const h = mount(from, 1);
+    draw(h, next);
+    const first = h.__dc.generation;
+    // A newer state while the dice are in the air: seat 1 moves instead, seat 0 stays on 3.
+    draw(h, at([3, 5], { moves: 3, actor: 1, phase: 'end', die1: 2, die2: 3 }));
+    assert.equal(h.__dc.generation, first + 1);
+    const seen = [];
+    while (t.step()) seen.push(shownOf(h)[0]);
+    for (const p of seen) assert.equal(p, 3, 'the old chain walked seat 0 after it was superseded');
+    assert.deepEqual(shownOf(h), [3, 5]);
+    assert.equal(h.__dc.busy, false);
+    assert.equal(h.__dc.tumbling, false, 'a superseded tumble does not leave the dice mid-air');
+    assert.deepEqual(facesOf(h), ['2', '3']);
+  });
+});
+
+test('busy is released if the tumble throws', () => {
+  withTimers((t) => {
+    const { from, next } = rollFrom([3, 0], 2, 3);
+    const h = mount(from, 0);
+    draw(h, next, { mySeat: 0 });
+    assert.equal(h.__dc.busy, true);
+    h.__dc.dice[0].style = null;                             // settling the faces now throws
+    assert.throws(() => t.step());
+    assert.equal(h.__dc.busy, false);
+    assert.equal(h.__dc.tumbling, false);
+    assert.deepEqual(shownOf(h), [8, 0], 'the token is where the state says');
+  });
+});
+
+test('a throw while the tumble starts costs the flourish, not the paint or the buttons', () => {
+  withTimers((t) => {
+    const { from, next } = rollFrom([3, 0], 2, 3);
+    const h = mount(from, 0);
+    h.__dc.diceBox.classList = null;                         // only the tumble touches this
+    assert.doesNotThrow(() => draw(h, next, { mySeat: 0 }));
+    t.flush();
+    assert.equal(h.__dc.busy, false);
+    assert.deepEqual(shownOf(h), [8, 0]);
+  });
+});
+
+test('reduced motion: the faces change at once and nothing tumbles', () => {
+  withTimers((t) => {
+    const { from, next } = rollFrom([3, 0], 2, 3);
+    const h = mount(from, 1);
+    draw(h, next);
+    assert.equal(t.pending(), 0);
+    assert.equal(h.__dc.busy, false);
+    assert.equal(h.__dc.tumbling, false);
+    assert.deepEqual(facesOf(h), ['2', '3']);
+    assert.deepEqual(shownOf(h), [8, 0]);
+  }, { reduced: true });
+});
+
+test('without setTimeout the faces change at once', () => {
+  const real = globalThis.setTimeout;
+  try {
+    const { from, next } = rollFrom([3, 0], 2, 3);
+    const h = mount(from, 1);
+    globalThis.setTimeout = undefined;
+    draw(h, next);
+    assert.equal(h.__dc.busy, false);
+    assert.deepEqual(facesOf(h), ['2', '3']);
+  } finally { globalThis.setTimeout = real; }
+});
+
+test('the rollers own tap starts the dice spinning, and the next state stops it', () => {
+  withTimers((t) => {
+    const { from, next } = rollFrom([3, 0], 2, 3);
+    const h = mount(from, 0, () => new Promise(() => {}));
+    assert.equal(spinning(h), false);
+    rollBtn(h).click();
+    assert.equal(spinning(h), true, 'spinning from the tap, before any state');
+    draw(h, next, { mySeat: 0, onAction: () => new Promise(() => {}) });
+    assert.equal(spinning(h), false, 'the state ends the spin (the tumble takes over)');
+    assert.equal(h.__dc.tumbling, true);
+    t.flush();
+  });
+});
+
+test('a refused roll stops the spin where it was when the write settles', async () => {
+  const h = mount(fresh(), 0, () => Promise.resolve());     // resolves, state never changes: a refusal
+  rollBtn(h).click();
+  assert.equal(spinning(h), true);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(spinning(h), false, 'never left spinning');
+  assert.deepEqual(facesOf(h), ['1', '1']);
+});
+
+test('a failed write stops the spin too', async () => {
+  const h = mount(fresh(), 0, () => Promise.reject(new Error('offline')));
+  rollBtn(h).click();
+  assert.equal(spinning(h), true);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(spinning(h), false);
+});
+
+test('reduced motion: the tap does not spin the dice', () => {
+  withTimers(() => {
+    const h = mount(fresh(), 0, () => new Promise(() => {}));
+    rollBtn(h).click();
+    assert.equal(spinning(h), false);
+  }, { reduced: true });
+});
+
+test('the tumble lasts DICE_MS', () => {
+  const realSet = globalThis.setTimeout;
+  const delays = [];
+  globalThis.setTimeout = (f, ms) => { delays.push(ms); return 1; };
+  try {
+    const { from, next } = rollFrom([3, 0], 2, 3);
+    const h = mount(from, 1);
+    draw(h, next);
+    assert.ok(delays.includes(DICE_MS), `timers asked for ${delays}`);
+  } finally { globalThis.setTimeout = realSet; }
+});
+
+test('the old tumble, when its timer fires, does not settle the board under the newer walk', () => {
+  withTimers((t) => {
+    // The first roll moves nobody (stays in jail), so if its tumble were allowed to finish it would
+    // settle the whole board: release busy and snap the other token to its end square mid-walk.
+    const { from, next } = rollFrom([10, 0], 1, 2, { jail: [1, 0] });
+    const h = mount(from, 1);
+    draw(h, next);
+    draw(h, at([10, 5], { moves: 3, actor: 1, phase: 'end', die1: 1, die2: 2, jail: [2, 0] }));
+    assert.equal(shownOf(h)[1], 1, 'the newer chain has taken its first step');
+    t.step();                                                // the OLD tumble timer fires first
+    assert.equal(h.__dc.busy, true, 'the old chain released busy under the newer walk');
+    assert.deepEqual(shownOf(h), [10, 1], 'the old chain snapped the board to its end state');
+    t.flush();
+    assert.deepEqual(shownOf(h), [10, 5]);
+    assert.equal(h.__dc.busy, false);
+  });
 });

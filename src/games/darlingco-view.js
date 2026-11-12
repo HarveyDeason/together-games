@@ -752,6 +752,16 @@ export function dealReviewFor(state, mySeat, id, names) {
   };
 }
 
+export const DICE_MS = 900;   // how long the dice tumble before they settle and the token walks
+
+/** Did this state arrive by a roll? A roll is the only action that leaves the
+ *  roll phase with the move counter up (jail fines, cards, sides, trades and
+ *  tallies all keep the phase), and it never ends the game. Pure. */
+export function wasRoll(prev, next) {
+  return !!prev && !!next && prev.phase === 'roll' && next.moves > prev.moves
+    && next.phase !== 'roll' && next.phase !== 'over';
+}
+
 const MAX_WALK = 12;    // beyond this a move is a jump (jail, a card), not a walk
 
 /** The squares a token steps on going from `from` to `to`, forward round the

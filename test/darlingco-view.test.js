@@ -3,7 +3,7 @@
 // use anything across it at the top level.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { propertyFor, decisionFor, placesFor, raiseCashFor, storyFor, bumpCash, blankDraft, nudgeCash, dealSheetFor } from '../src/games/darlingco-view.js';
+import { wasRoll, DICE_MS, propertyFor, decisionFor, placesFor, raiseCashFor, storyFor, bumpCash, blankDraft, nudgeCash, dealSheetFor } from '../src/games/darlingco-view.js';
 import { SQUARES, SETS, MAX_DEAL_CASH } from '../src/games/darlingco-board.js';
 import { createInitialState, applyAction } from '../src/games/darlingco.js';
 import { setChar, dealChar, dealProblem, BLANK_PROPS } from '../src/games/darlingco-state.js';
@@ -387,4 +387,61 @@ test('placesFor words each place\'s rent, its mortgage and what lifting costs', 
   assert.equal(place(6).lift, Math.ceil(SQUARES[6].mortgage * 11 / 10));
   const util = placesFor(s, 1).groups.flatMap((g) => g.places).find((x) => x.square === 12);
   assert.match(util.rentText, /^rent \d+× the dice$/);
+});
+
+// ---- wasRoll: did this state arrive by a roll? ---------------------------------------
+
+test('wasRoll is true for a roll that leaves the roll phase, whatever it lands on', () => {
+  // (1,2) lands on a lot, (1,3) on a debt, (1,1) on a card, (4,6) on nothing.
+  for (const [a, b, phase] of [[1, 2, 'buy'], [1, 3, 'pay'], [1, 1, 'card'], [4, 6, 'end']]) {
+    const next = applyAction(fresh(), { type: 'roll', die1: a, die2: b }, 0).state;
+    assert.equal(next.phase, phase, `the roll ${a},${b} should reach ${phase}`);
+    assert.equal(wasRoll(fresh(), next), true, phase);
+  }
+});
+
+test('wasRoll is true for a roll that does not move the token (staying in jail)', () => {
+  const jailed = { ...fresh(), jail: [1, 0] };
+  const next = applyAction(jailed, { type: 'roll', die1: 1, die2: 2 }, 0).state;
+  assert.equal(next.jail[0], 2);
+  assert.equal(wasRoll(jailed, next), true);
+});
+
+test('wasRoll is false for every other action that moves the counter', () => {
+  const jailed = { ...fresh(), jail: [1, 0], cash: [1500, 1500] };
+  const paid = applyAction(jailed, { type: 'jail-pay' }, 0).state;
+  assert.ok(paid.moves > jailed.moves && paid.phase === 'roll', 'jail-pay keeps the roll phase');
+  assert.equal(wasRoll(jailed, paid), false);
+
+  const t = table({ phase: 'roll', actor: 0, turn: 0 });
+  const mortgaged = applyAction(t, { type: 'mortgage', square: 8 }, 0).state;
+  assert.ok(mortgaged.phase === 'roll');
+  assert.equal(wasRoll(t, mortgaged), false);
+
+  const offered = applyAction(fresh(), { type: 'offer-tally' }, 1).state;
+  assert.ok(offered.moves > fresh().moves);
+  assert.equal(wasRoll(fresh(), offered), false);
+
+  const accepted = applyAction(offered, { type: 'accept-tally' }, 0).state;
+  assert.equal(accepted.phase, 'over');
+  assert.equal(wasRoll(offered, accepted), false, 'a game that ends is not a roll');
+});
+
+test('wasRoll is false for the same state twice and when there is no previous state', () => {
+  const next = applyAction(fresh(), { type: 'roll', die1: 1, die2: 2 }, 0).state;
+  assert.equal(wasRoll(next, next), false);
+  assert.equal(wasRoll(undefined, next), false);
+  assert.equal(wasRoll(null, next), false);
+});
+
+test('DICE_MS is the tumble length the spec names', () => {
+  assert.equal(DICE_MS, 900);
+});
+
+test('wasRoll is false for an action that leaves a phase other than roll', () => {
+  const buy = applyAction(fresh(), { type: 'roll', die1: 1, die2: 2 }, 0).state;
+  assert.equal(buy.phase, 'buy');
+  const declined = applyAction(buy, { type: 'decline' }, 0).state;
+  assert.ok(declined.moves > buy.moves && declined.phase !== 'roll' && declined.phase !== 'over', `phase ${declined.phase}`);
+  assert.equal(wasRoll(buy, declined), false, 'declining a lot is not a roll');
 });

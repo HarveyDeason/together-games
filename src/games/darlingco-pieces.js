@@ -6,7 +6,9 @@
 // filled from the shared `dc-metal` gradient (METAL_DEFS must be present once
 // in the page's SVG) and carries one pale highlight path to read as metal.
 
-const FILL = 'fill="url(#dc-metal)" stroke="#3c4450" stroke-width=".5" stroke-linejoin="round"';
+// The outline is drawn under the fill (paint-order), so only its outer half shows:
+// 1.3 units is about 0.65 visible, enough to lift pewter off every one of the six colours.
+const FILL = 'fill="url(#dc-metal)" stroke="#2b2140" stroke-width="1.3" paint-order="stroke" stroke-linejoin="round"';
 const SHINE = 'fill="#ffffff" opacity=".35"';
 
 export const METAL_DEFS =
@@ -25,8 +27,9 @@ export const PIECES = [
     + `<circle ${FILL} cx="7" cy="18.6" r="2.7"/><circle ${FILL} cx="17.2" cy="18.6" r="2.7"/>`
     + `<path ${SHINE} d="M3.2 14.4l3-.8-.2 1.2H3.2z"/>` },
   { id: 'dog', name: 'Dog', svg:
-    `<path ${FILL} d="M2 10.4c0-1.2.8-2 2-2.4l1.4-.5c.2-1.7 1-2.9 2.2-3.5.6 1 1 2 1.4 3H16.5c1-1.4 2.5-2.4 4.5-2.6l.6 1.2c-.8 1.2-1.4 2.6-1.4 4.4v8c0 .9-.6 1.5-1.5 1.5s-1.5-.6-1.5-1.5v-4H10.8v4c0 .9-.6 1.5-1.5 1.5s-1.5-.6-1.5-1.5v-6.1c-.8-.1-1.6-.2-2.4-.4C3.4 12.1 2 11.7 2 10.4z"/>`
-    + `<path ${SHINE} d="M10.6 8.7h5.2v1.3h-5.2z"/>` },
+    `<path ${FILL} d="M2 5l3.4 3.8H13.6L14.6 3.8l2.6 1.8 1.7-.8c1.6 0 2.6.9 3 2.4l1 1.5v1.8l-2 .8-2.4.4-.6 1.4v7.6h-3V15.2H8.8v5.6h-3v-6.4c-1-.9-1.7-2.3-1.9-4.2z"/>`
+    + `<circle fill="#2b2140" cx="19.4" cy="7.9" r=".85"/>`
+    + `<path ${SHINE} d="M6.6 9.6h6v1.3h-6z"/>` },
   { id: 'boot', name: 'Boot', svg:
     `<path ${FILL} d="M5 2.6h8.4V11c0 1.6 1.7 2.5 4 3.1 2.8.7 4.4 1.6 4.4 3.4v2.7H10.2v1.6H5z"/>`
     + `<path ${SHINE} d="M6.6 4.2h1.7v8H6.6z"/>` },
@@ -38,9 +41,10 @@ export const PIECES = [
     + `<path ${FILL} d="M3.8 17h16.4v3.8H3.8z"/>`
     + `<path ${SHINE} d="M8.8 6.2C9.4 4.8 10.2 4.2 11 4c-1 1.6-1.2 5-1.2 7.6H8.8z"/>` },
   { id: 'iron', name: 'Flat iron', svg:
-    `<path ${FILL} d="M1.5 19.8C2.5 15.5 5.5 12.4 9.5 12h10c1.9 0 2.9 1.4 2.9 3.4v4.4z"/>`
-    + `<path ${FILL} d="M9 12V9.5C9 6.8 10.6 5 12.8 5h2.8c2.4 0 4 1.8 4 4.5V12h-3.2V9.8c0-.9-.4-1.6-1.2-1.6h-1.6c-.8 0-1.2.7-1.2 1.6V12z"/>`
-    + `<path ${SHINE} d="M4.4 17.2c.7-1.8 2-3 3.8-3.6l-.8 3.6z"/>` },
+    `<path ${FILL} fill-rule="evenodd" d="M2 19.4v-5.2q0-2.8 2.6-2.8h.2V9.8Q4.8 4.2 9.8 4.2h.8q5 0 5 5.6v1.6h.4q1.8 0 3 1.4l3 3.6q1.2 1.6.2 3-.4.4-1.2.4zM7.6 11.4V9.6q0-2.6 2.6-2.6t2.6 2.6v1.8z"/>`
+    + `<path fill="#4c5560" d="M2.4 17.4h19.8l.6.8q.3 1.2-.8 1.2H2.4z"/>`
+    + `<circle fill="#2b2140" cx="8" cy="14.6" r="1"/>`
+    + `<path ${SHINE} d="M3.4 15.6v-2h1.2v2z"/>` },
   { id: 'cat', name: 'Cat', svg:
     `<path ${FILL} d="M6.5 2.5l3.5 3h4l3.5-3v6c0 1.6-.6 2.8-1.6 3.6 2.2 1.2 3.4 3.6 3.4 6.4v3H6.7v-3c0-2.8 1.2-5.2 3.4-6.4C9.1 11.3 8.5 10.1 8.5 8.5z"/>`
     + `<path ${FILL} d="M19 21.5c3.6 0 4.6-3.6 3-6.6-.2 1.8-.8 3.2-2.2 4z"/>`

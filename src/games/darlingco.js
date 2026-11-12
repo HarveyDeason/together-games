@@ -20,7 +20,7 @@ import {
   SIDE_ACTIONS, sideGate
 } from './darlingco-state.js';
 
-export const meta = { id: GAME_ID, name: GAME_NAME, seats: 2, sound: true };
+export const meta = { id: GAME_ID, name: GAME_NAME, seats: 2, sound: true, chrome: 'own' };
 
 /** The cards' codes in a random order, as a string. Fisher-Yates driven by
  *  `rnd`, which is injectable so tests are deterministic. */

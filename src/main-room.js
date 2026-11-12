@@ -482,6 +482,8 @@ async function start() {
   });
 
   chat = initChat({ code, identity, namesFor: (clientId) => players[clientId]?.name ?? 'Them' });
+  // The game's own Chat slot carries the unread count, so it is redrawn when that changes.
+  chat.onUnread(() => draw());
   initReactions({ code, identity });
 }
 

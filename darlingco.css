@@ -1,0 +1,747 @@
+/* Darling & Co. -- the "Midnight" look.
+   Everything here is scoped to .dc-game (and its sheets) or to
+   body[data-game="darlingco"], so the lobby and the other games keep the site
+   palette. Fonts: Fraunces for money, deed titles and headings; Barlow Condensed
+   for everything else (condensed is what lets a place name fit a tile). Both are
+   loaded from Google Fonts in room.html; the fallback stacks keep the game
+   readable offline.
+
+   Layout: .dc-game fills the height under the room header: plates, the board
+   (which takes whatever is left, never below 420px), and a bar that stays
+   reachable. On a short screen the page scrolls a little. */
+
+.dc-game {
+  --table: #0e1420;
+  --felt: #172033;
+  --felt2: #1f2b44;
+  --line: #2b3a59;
+  --inset: #0b111c;
+  --paper: #fbf7ee;
+  --paper2: #ece6d8;
+  --ink: #2b2140;
+  --soft: #6d6384;
+  --gold: #ffb627;
+  --gold-deep: #b3760a;
+  --cream: #fff8ea;
+  --mut: #9fb0cc;
+  --danger: #ff8a7a;
+  --p0: #e8537a;
+  --p1: #19a79c;
+  --disp: 'Fraunces', Georgia, serif;
+  --cond: 'Barlow Condensed', 'Arial Narrow', sans-serif;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  color: var(--cream);
+  font-family: var(--cond);
+  font-size: 15px;
+  line-height: 1.25;
+  -webkit-tap-highlight-color: transparent;
+}
+.dc-game *, .dc-game *::before, .dc-game *::after { box-sizing: border-box; }
+.dc-game button { font-family: inherit; }
+
+/* ---- the page around the board ------------------------------------------ */
+body[data-game="darlingco"] {
+  background: #0e1420;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+body[data-game="darlingco"] .room-head {
+  flex: none;
+  padding: 0.35rem 0.6rem;
+  background: #0e1420;
+  border-bottom: 0;
+}
+body[data-game="darlingco"] .menu-toggle { padding: 0.2rem 0.65rem; font-size: 0.85rem; }
+body[data-game="darlingco"] .room-code { font-size: 1rem; }
+body[data-game="darlingco"] .room-main {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-width: none;
+  margin: 0;
+  padding: 0 8px env(safe-area-inset-bottom);
+}
+body[data-game="darlingco"] #board {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
+
+/* ---- the plates ----------------------------------------------------------- */
+.dc-plates {
+  position: relative;
+  flex: none;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 6px;
+  height: 48px;
+  margin: 2px 0 6px;
+}
+.dc-plate {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 9px;
+  background: var(--felt);
+  border: 1.5px solid transparent;
+  border-radius: 12px;
+}
+.dc-plate[data-seat="1"] { flex-direction: row-reverse; text-align: right; }
+.dc-plate.is-turn { border-color: var(--gold); background: var(--felt2); box-shadow: 0 0 12px rgb(255 182 39 / 0.22); }
+.dc-plate[data-me] { cursor: pointer; }
+.dc-disc {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--p0);
+  box-shadow: inset 0 -2px 0 rgb(0 0 0 / 0.25), 0 1px 3px rgb(0 0 0 / 0.4);
+}
+.dc-disc[data-seat="1"] { background: var(--p1); }
+.dc-pc { display: block; width: 80%; height: 80%; }
+.dc-pc svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.dc-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+.dc-who { display: flex; flex-direction: column; min-width: 0; }
+.dc-pn {
+  overflow: hidden;
+  color: var(--mut);
+  font-size: 13px;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dc-cash { margin-top: 3px; font: 800 18px/1 var(--disp); font-variant-numeric: tabular-nums; }
+.dc-pot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  color: var(--gold);
+  font-size: 11px;
+  line-height: 1.05;
+}
+.dc-pot b { font: 800 14px var(--disp); }
+
+/* ---- the board -------------------------------------------------------------- */
+.dc-board {
+  --dc-band: 9px;
+  position: relative;
+  flex: 1 1 0;
+  min-height: 420px;
+  display: grid;
+  grid-template-columns: 44px repeat(9, minmax(0, 1fr)) 44px;
+  grid-template-rows: 60px repeat(9, minmax(0, 1fr)) 60px;
+  gap: 1.5px;
+  background: var(--table);
+}
+.dc-tile {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--paper);
+  color: var(--ink);
+  text-align: center;
+}
+.dc-corner { background: var(--paper2); }
+.dc-tile[data-deed] { cursor: pointer; }
+.dc-tile[data-own="0"] { background: color-mix(in srgb, var(--p0) 42%, var(--paper)); }
+.dc-tile[data-own="1"] { background: color-mix(in srgb, var(--p1) 42%, var(--paper)); }
+
+.dc-ic { font-size: 13px; line-height: 1.1; }
+.dc-corner .dc-ic { font-size: 18px; }
+.dc-nm {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  max-width: 100%;
+  padding: 0 1px;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-size: 7.4px;
+  font-weight: 600;
+  line-height: 1.02;
+}
+.dc-tile[data-edge="left"] .dc-nm, .dc-tile[data-edge="right"] .dc-nm { -webkit-line-clamp: 3; }
+.dc-nm[data-long] { font-size: 6.5px; }
+.dc-corner .dc-nm { font-size: 8px; font-weight: 700; }
+.dc-pr { color: var(--soft); font-size: 6.8px; font-weight: 600; line-height: 1.1; }
+.dc-pr:empty { display: none; }
+
+/* The set stripe sits on the edge facing the middle; houses are drawn on it. */
+.dc-stripe, .dc-houses { position: absolute; display: flex; align-items: center; justify-content: center; gap: 1px; }
+.dc-tile[data-edge="bottom"] .dc-stripe, .dc-tile[data-edge="bottom"] .dc-houses { top: 0; left: 0; right: 0; height: var(--dc-band); }
+.dc-tile[data-edge="top"] .dc-stripe, .dc-tile[data-edge="top"] .dc-houses { bottom: 0; left: 0; right: 0; height: var(--dc-band); }
+.dc-tile[data-edge="left"] .dc-stripe, .dc-tile[data-edge="left"] .dc-houses { right: 0; top: 0; bottom: 0; width: var(--dc-band); flex-direction: column; }
+.dc-tile[data-edge="right"] .dc-stripe, .dc-tile[data-edge="right"] .dc-houses { left: 0; top: 0; bottom: 0; width: var(--dc-band); flex-direction: column; }
+.dc-tile[data-edge="bottom"]:not(.dc-corner) { padding-top: calc(var(--dc-band) + 1px); }
+.dc-tile[data-edge="top"]:not(.dc-corner) { padding-bottom: calc(var(--dc-band) + 1px); }
+.dc-tile[data-edge="left"]:not(.dc-corner) { padding-right: calc(var(--dc-band) + 1px); }
+.dc-tile[data-edge="right"]:not(.dc-corner) { padding-left: calc(var(--dc-band) + 1px); }
+.dc-pip { width: 5px; height: 5px; border-radius: 1px; background: #1f8a4c; box-shadow: 0 0 0 0.6px #fff; }
+.dc-pip.is-hotel { width: 9px; background: #c9302c; }
+.dc-tile[data-edge="left"] .dc-pip.is-hotel, .dc-tile[data-edge="right"] .dc-pip.is-hotel { width: 5px; height: 9px; }
+
+/* Mortgaged: hatched and dimmed, with a letter so colour is not the only cue. */
+.dc-tile.is-mortgaged { background-image: repeating-linear-gradient(135deg, transparent 0 4px, rgb(0 0 0 / 0.14) 4px 6px); }
+.dc-tile.is-mortgaged .dc-ic, .dc-tile.is-mortgaged .dc-nm { opacity: 0.5; }
+.dc-mort {
+  position: absolute;
+  top: 10px;
+  left: 1px;
+  color: #8a1c14;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+}
+.dc-mort:empty { display: none; }
+.dc-potv {
+  position: absolute;
+  bottom: 2px;
+  left: 2px;
+  padding: 0 3px;
+  border-radius: 6px;
+  background: var(--ink);
+  color: var(--gold);
+  font: 700 8px/1.3 var(--cond);
+}
+.dc-potv:empty { display: none; }
+
+/* The square the live decision is about glows gold; the lot under the hammer too. */
+.dc-tile[data-lit], .dc-tile[data-lot] {
+  z-index: 3;
+  outline: 2.5px solid var(--gold);
+  outline-offset: -1px;
+  box-shadow: 0 0 14px var(--gold);
+}
+.dc-tile.is-picked { outline: 2.5px solid var(--cream); outline-offset: -1px; z-index: 3; }
+
+/* Tokens: the player's chosen piece on a disc of their colour. */
+.dc-toks { position: absolute; right: 1px; bottom: 1px; display: flex; z-index: 4; }
+/* A corner's name is centred, so its tokens ride the top edge instead. */
+.dc-corner .dc-toks { top: 2px; bottom: auto; }
+.dc-tok {
+  display: grid;
+  place-items: center;
+  width: 19px;
+  height: 19px;
+  border: 1.5px solid #fff;
+  border-radius: 50%;
+  background: var(--p0);
+  box-shadow: 0 2px 4px rgb(0 0 0 / 0.5), inset 0 -2px 0 rgb(0 0 0 / 0.25);
+}
+.dc-tok[data-seat="1"] { background: var(--p1); }
+.dc-tok + .dc-tok { margin-left: -7px; }
+
+/* ---- the stage: the centre, one decision at a time ------------------------- */
+.dc-mid {
+  grid-area: 2 / 2 / 11 / 11;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  min-height: 0;
+  padding: 8px;
+  overflow: hidden;
+  border-radius: 10px;
+  background: radial-gradient(120% 90% at 50% 0%, var(--felt2), var(--felt));
+}
+.dc-story {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  max-height: 2.5em;
+  overflow: hidden;
+  color: var(--mut);
+  font-size: 13px;
+  line-height: 1.2;
+  text-align: center;
+  cursor: pointer;
+}
+.dc-story.is-open { max-height: 9em; overflow-y: auto; justify-content: flex-start; text-align: left; }
+.dc-line { margin: 0; }
+.dc-line b { color: var(--cream); font-weight: 600; }
+.dc-line:last-child { color: var(--cream); }
+.dc-subject {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 2px 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+/* margin:auto centres a short subject without making a tall one unreachable. */
+.dc-subject > :first-child { margin-top: auto; }
+.dc-subject > :last-child { margin-bottom: auto; }
+.dc-actions { flex: none; display: flex; flex-direction: column; gap: 5px; }
+.dc-wm { color: rgb(255 255 255 / 0.2); font: 800 14px var(--disp); text-align: center; }
+
+.dc-say { display: flex; flex-direction: column; align-items: center; gap: 1px; text-align: center; }
+.dc-say-title { font-size: 15px; font-weight: 700; }
+.dc-say-detail { color: var(--mut); font-size: 12.5px; }
+
+/* dice (placeholder faces; the tumbling dice replace the contents of .dc-dice3d) */
+.dc-dice3d { display: flex; gap: 22px; align-items: center; justify-content: center; padding: 8px 0; }
+.dc-die {
+  display: grid;
+  grid-template: repeat(3, 1fr) / repeat(3, 1fr);
+  width: 46px;
+  height: 46px;
+  padding: 7px;
+  gap: 1px;
+  border-radius: 9px;
+  background: var(--cream);
+  box-shadow: inset 0 0 0 1.5px #d9cbb0, inset 0 -4px 8px rgb(0 0 0 / 0.1), 0 6px 12px rgb(0 0 0 / 0.4);
+  transform: rotate(-6deg);
+}
+.dc-die + .dc-die { transform: rotate(5deg); }
+.dc-die i { border-radius: 50%; }
+.dc-die.is-blank { display: flex; align-items: center; justify-content: center; color: #c9bba0; font: 800 24px var(--disp); }
+.dc-die-q { font-weight: 800; }
+.dc-die i.is-pip { background: var(--ink); }
+
+/* the title deed */
+.dc-deed {
+  flex: none;
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 8px 22px rgb(0 0 0 / 0.5);
+}
+.dc-deed:not(.is-stage) { transform: rotate(-1.2deg); }
+.dc-deed-hd { position: relative; padding: 6px 10px 7px; text-align: center; }
+.dc-deed-set { display: block; min-height: 19px; padding-top: 2px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.85; }
+.dc-deed-title { display: block; font: 800 17px/1.05 var(--disp); }
+.dc-close {
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  padding: 0 8px;
+  border: 1.5px solid currentColor;
+  border-radius: 99px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  line-height: 15px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.dc-rents { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.dc-rents td { padding: 1px 10px; }
+.dc-rents td:last-child { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+.dc-rents tr.now td { background: rgb(255 182 39 / 0.28); }
+.dc-deed-ft {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 3px;
+  padding: 4px 10px 0;
+  border-top: 1px dashed #cbbd9f;
+  color: var(--soft);
+  font-size: 11.5px;
+}
+.dc-deed-own { padding: 0 10px 5px; color: var(--soft); font-size: 11.5px; }
+
+/* a drawn card */
+.dc-cardface {
+  flex: none;
+  padding: 8px 12px 10px;
+  border-radius: 10px;
+  background: var(--paper);
+  color: var(--ink);
+  text-align: center;
+  box-shadow: 0 8px 22px rgb(0 0 0 / 0.5);
+  transform: rotate(1deg);
+}
+.dc-cardface small { display: block; font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--soft); }
+.dc-cardface[data-deck="lj"] { border-top: 6px solid #f2993d; }
+.dc-cardface[data-deck="jb"] { border-top: 6px solid #19a79c; }
+.dc-card-mark { display: block; font: 800 22px/1.1 var(--disp); }
+.dc-card-text { margin: 2px 0 0; font: 600 15px/1.2 var(--disp); }
+
+/* a debt */
+.dc-debt { display: flex; flex-direction: column; align-items: center; gap: 1px; text-align: center; color: var(--mut); }
+.dc-debt small { font-size: 13px; }
+.dc-debt-amt { color: var(--gold); font: 800 34px/1 var(--disp); }
+.dc-short { margin-top: 3px; color: var(--danger); font-size: 14px; font-weight: 700; }
+
+/* the lot under the hammer */
+.dc-lot { display: flex; gap: 8px; align-items: center; flex: none; padding: 6px 8px; border-radius: 10px; background: var(--paper); color: var(--ink); }
+.dc-aswatch { flex: none; align-self: stretch; width: 9px; border-radius: 3px; }
+.dc-lot-txt { min-width: 0; }
+.dc-alot { display: block; font: 800 15px/1.05 var(--disp); }
+.dc-aworth { display: block; color: var(--soft); font-size: 11.5px; }
+.dc-astanding { flex: none; display: flex; align-items: baseline; justify-content: center; gap: 8px; text-align: center; }
+.dc-aamt { color: var(--gold); font: 800 28px/1 var(--disp); font-variant-numeric: tabular-nums; }
+.dc-aamt.is-none { color: var(--mut); font-size: 20px; font-weight: 600; }
+.dc-awho { color: var(--mut); font-size: 12.5px; }
+.dc-awho[data-seat="0"] { color: var(--p0); }
+.dc-awho[data-seat="1"] { color: var(--p1); }
+
+/* game over */
+.dc-result { display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; }
+.dc-result small { color: var(--mut); font-size: 12.5px; letter-spacing: 0.1em; text-transform: uppercase; }
+.dc-result-hd { color: var(--gold); font: 800 26px/1.05 var(--disp); }
+.dc-result-why { margin: 0 0 4px; color: var(--mut); font-size: 13px; }
+.dc-rematch { width: 100%; }
+
+/* the piece picker */
+.dc-picker { display: flex; flex-direction: column; gap: 5px; text-align: center; }
+.dc-pick-top { position: relative; display: flex; align-items: center; justify-content: center; min-height: 26px; }
+.dc-pick-hd { margin: 0; font: 800 16px var(--disp); }
+.dc-done {
+  position: absolute;
+  right: 0;
+  padding: 2px 11px;
+  border: 0;
+  border-radius: 99px;
+  background: var(--gold);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.dc-pick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+.dc-pk {
+  display: grid;
+  place-items: center;
+  height: 42px;
+  padding: 3px;
+  border: 1.5px solid var(--line);
+  border-radius: 12px;
+  background: var(--inset);
+  cursor: pointer;
+}
+.dc-pk .dc-pc { width: 34px; height: 34px; }
+.dc-pk.is-on { border-color: var(--gold); background: var(--felt2); box-shadow: 0 0 0 2px rgb(255 182 39 / 0.35); }
+.dc-pk:disabled { cursor: default; border-style: dashed; }
+.dc-pk:disabled .dc-pc { opacity: 0.3; }
+.dc-lab { margin: 0; color: var(--mut); font-size: 12.5px; }
+.dc-cols { display: flex; justify-content: center; gap: 9px; }
+.dc-col { width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; box-shadow: inset 0 -3px 0 rgb(0 0 0 / 0.25); cursor: pointer; }
+.dc-col.is-on { outline: 2.5px solid var(--cream); outline-offset: 2px; }
+.dc-col:disabled { opacity: 0.25; cursor: default; }
+
+/* ---- buttons ---------------------------------------------------------------- */
+.dc-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.dc-btns.is-grid { display: grid; grid-template-columns: 1fr 1fr; }
+.dc-act { flex: 1 1 0; display: flex; flex-direction: column; align-items: stretch; gap: 2px; min-width: 0; }
+.dc-act.is-wide { flex-basis: 100%; }
+.dc-btn {
+  width: 100%;
+  min-height: 42px;
+  margin: 0;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  font: 700 16.5px/1.1 var(--cond);
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+.dc-btn.is-primary { background: var(--gold); color: var(--ink); box-shadow: 0 3px 0 var(--gold-deep); }
+.dc-btn.is-secondary { background: var(--felt2); color: var(--cream); border-color: var(--line); box-shadow: 0 3px 0 var(--inset); }
+.dc-btn.is-danger { background: transparent; color: var(--danger); border-color: var(--danger); }
+.dc-btn:disabled { cursor: default; background: var(--felt); color: #7f90ad; border: 1px dashed var(--line); box-shadow: none; }
+.dc-btn:active:not(:disabled) { transform: translateY(2px); box-shadow: none; }
+.dc-btn:focus-visible, .dc-slot:focus-visible, .dc-quiet:focus-visible, .dc-allplaces:focus-visible { outline: 2px solid var(--cream); outline-offset: 2px; }
+/* The reason a control is off, always as text and never dimmed. */
+.dc-why { color: var(--mut); font-size: 12px; line-height: 1.15; text-align: center; }
+.dc-quiet, .dc-allplaces {
+  align-self: center;
+  margin: 0;
+  padding: 2px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--mut);
+  font-size: 13px;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.dc-quiet:disabled { cursor: default; text-decoration: none; }
+.dc-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 0 14px; }
+.dc-note { margin: 0; color: var(--mut); font-size: 12.5px; text-align: center; }
+.dc-tally { padding-top: 4px; border-top: 1px dashed var(--line); }
+.dc-tally-detail { margin: 0 0 4px; color: var(--mut); font-size: 12.5px; line-height: 1.2; }
+.dc-tally .dc-btn { min-height: 34px; }
+
+/* the bankruptcy confirm swaps the actions for itself */
+.dc-confirm { display: flex; flex-direction: column; gap: 5px; text-align: center; }
+.dc-confirm-hd { font: 800 16px var(--disp); }
+.dc-confirm-detail { margin: 0; color: var(--mut); font-size: 13px; }
+
+/* ---- the auction dial ------------------------------------------------------- */
+.dc-auc { display: flex; flex-direction: column; gap: 5px; }
+.dc-astepline { display: grid; grid-template-columns: 38px 1fr 38px; gap: 5px; }
+.dc-astep, .dc-abid, .dc-apass {
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.dc-astep { height: 36px; padding: 0; background: var(--felt2); color: var(--cream); font-size: 19px; }
+.dc-aval {
+  display: grid;
+  place-items: center;
+  height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--inset);
+  font: 800 18px var(--disp);
+  font-variant-numeric: tabular-nums;
+}
+.dc-arow { display: flex; gap: 6px; }
+.dc-abid, .dc-apass { flex: 1 1 0; min-width: 0; min-height: 42px; padding: 6px 4px; font-size: 16px; }
+.dc-abid { background: var(--gold); border-color: var(--gold); color: var(--ink); box-shadow: 0 3px 0 var(--gold-deep); }
+.dc-apass { background: var(--felt2); color: var(--cream); }
+.dc-astep:disabled, .dc-abid:disabled, .dc-apass:disabled { cursor: default; background: var(--felt); border-style: dashed; box-shadow: none; color: #7f90ad; }
+.dc-anote { color: var(--mut); font-size: 12px; line-height: 1.15; text-align: center; }
+
+/* ---- raising cash -------------------------------------------------------------- */
+.dc-raise { display: flex; flex-direction: column; gap: 3px; padding-top: 5px; border-top: 1px dashed var(--line); }
+.dc-raise-top { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+.dc-raise-hd { margin: 0; color: var(--mut); font: 600 12px var(--cond); letter-spacing: 0.03em; }
+.dc-raise .dc-allplaces { flex: none; padding: 0; font-size: 12px; }
+.dc-rc { display: flex; align-items: center; gap: 6px; padding: 2px 3px 2px 7px; border-radius: 8px; background: var(--inset); font-size: 12.5px; }
+.dc-rc-sw { flex: none; width: 7px; height: 16px; border-radius: 2px; }
+.dc-rc-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dc-rcb { flex: none; min-height: 24px; padding: 2px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--felt2); color: var(--gold); font-size: 13px; font-weight: 700; cursor: pointer; }
+.dc-rcb:disabled { cursor: default; color: #7f90ad; }
+
+/* ---- live deals: one line each ------------------------------------------------- */
+.dc-deals { flex: none; display: flex; flex-direction: column; gap: 3px; }
+.dc-more { color: var(--mut); font-size: 12px; text-align: center; }
+.dc-deal {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--inset);
+  color: var(--cream);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.dc-deal:disabled { cursor: default; }
+.dc-deal.is-answer { border-left: 3px solid var(--gold); }
+.dc-deal.is-stale { border-style: dashed; }
+.dc-dealwhy { color: var(--mut); }
+.dc-dt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dc-pill { flex: none; padding: 0 7px; border-radius: 99px; background: var(--gold); color: var(--ink); font-size: 11px; font-weight: 700; }
+.dc-deal.is-waiting .dc-pill, .dc-deal.is-stale .dc-pill { background: var(--line); color: var(--mut); }
+
+/* ---- the bar -------------------------------------------------------------------- */
+.dc-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 6;
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin: 0 -8px;
+  padding: 7px 8px calc(7px + env(safe-area-inset-bottom));
+  background: var(--table);
+}
+.dc-slot {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  min-height: 44px;
+  margin: 0;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--felt);
+  color: var(--cream);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.dc-slot-lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dc-slot-note { color: var(--mut); font-size: 10.5px; }
+.dc-slot-note:empty { display: none; }
+.dc-slot:disabled { cursor: default; color: #7f90ad; }
+.dc-badge { flex: none; padding: 0 5px; border-radius: 9px; background: var(--gold); color: var(--ink); font-size: 11px; font-style: normal; font-weight: 700; }
+.dc-badge:empty { display: none; }
+
+/* ---- the deal sheet (builder and review): a paper sheet over the board ------- */
+.dc-sheet {
+  position: fixed;
+  inset: auto 0 0 0;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(78dvh, 34rem);
+  overflow-y: auto;
+  padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+  border-radius: 20px 20px 0 0;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 -10px 30px rgb(0 0 0 / 0.6);
+}
+.dc-sheet-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.dc-sheet-title { font: 800 19px var(--disp); }
+.dc-sheet .link-btn { margin: 0; padding: 2px 6px; color: var(--ink); font-size: 14px; }
+.dc-shelf { flex: none; padding: 9px; border: 1px solid #e2d5ba; border-radius: 12px; background: rgb(255 255 255 / 0.55); }
+.dc-shelf.is-give { border-left: 4px solid var(--p0); }
+.dc-shelf.is-get { border-left: 4px solid var(--p1); }
+.dc-sheet .dc-lab { margin: 0 0 6px; color: var(--soft); font-size: 12px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; }
+.dc-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.dc-none { color: var(--soft); font-size: 13px; }
+.dc-dchip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  margin: 0;
+  padding: 4px 9px;
+  border: 1.5px solid #d8cbb0;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.15;
+  text-align: left;
+  cursor: pointer;
+}
+.dc-chipsw { flex: none; width: 8px; height: 8px; border-radius: 2px; }
+.dc-chipname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.dc-dchip.is-on { border-color: var(--ink); background: #f3e8cf; }
+.dc-dchip.is-on::after { content: '\2713'; font-size: 12px; font-weight: 700; }
+.dc-dchip:disabled { cursor: default; border-style: dashed; }
+.dc-dchip:disabled .dc-chipsw, .dc-dchip:disabled .dc-chipname { opacity: 0.55; }
+.dc-dchip.is-static { cursor: default; background: #f3e8cf; }
+.dc-dchip.is-money { font-variant-numeric: tabular-nums; }
+.dc-chipnote, .dc-chipwhy { flex: none; color: var(--soft); font-size: 12px; }
+.dc-stepwhy { margin-top: 5px; color: var(--soft); font-size: 12px; }
+.dc-cashrow { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.dc-step { flex: none; width: 36px; height: 36px; margin: 0; padding: 0; border: 0; border-radius: 10px; background: var(--ink); color: var(--paper); font-size: 20px; cursor: pointer; }
+.dc-step:disabled { background: #d8cbb0; color: #a59a82; cursor: default; }
+.dc-cashbox { flex: 1; display: grid; place-items: center; height: 36px; border: 1.5px solid #d8cbb0; border-radius: 10px; background: #fff; font: 800 18px var(--disp); font-variant-numeric: tabular-nums; }
+.dc-cashbox.is-zero { color: var(--soft); }
+.dc-sheetfoot {
+  position: sticky;
+  bottom: calc(-12px - env(safe-area-inset-bottom));
+  flex: none;
+  margin: 0 -14px calc(-12px - env(safe-area-inset-bottom));
+  padding: 8px 14px calc(12px + env(safe-area-inset-bottom));
+  border-top: 1px solid #e2d5ba;
+  background: var(--paper);
+}
+.dc-problems { padding-bottom: 6px; }
+.dc-problem { color: var(--soft); font-size: 13px; line-height: 1.2; }
+.dc-footbtns { flex-wrap: nowrap; }
+.dc-sheet .dc-btn.is-secondary { border: 1.5px solid var(--ink); background: transparent; color: var(--ink); box-shadow: none; }
+.dc-sheet .dc-btn.is-danger { border-color: #b3261e; color: #b3261e; }
+.dc-sheet .dc-btn:disabled { border: 1.5px dashed #cdbf9f; background: #efe6d3; color: #8a8068; }
+
+/* ---- things that move ------------------------------------------------------------ */
+.dc-tok { animation: dc-hop 180ms ease-out; }
+@keyframes dc-hop {
+  0% { transform: translateY(0) scale(1); }
+  45% { transform: translateY(-3px) scale(1.35); }
+  100% { transform: translateY(0) scale(1); }
+}
+.dc-tile.dc-pop .dc-houses { animation: dc-pop 420ms cubic-bezier(0.3, 1.6, 0.5, 1); }
+@keyframes dc-pop {
+  0% { transform: scale(0) translateY(40%); opacity: 0; }
+  60% { transform: scale(1.7); opacity: 1; }
+  100% { transform: scale(1); }
+}
+.dc-coin {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  z-index: 2;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--gold);
+  color: var(--ink);
+  font: 700 13px var(--cond);
+  pointer-events: none;
+  white-space: nowrap;
+  transform: translate(0, -50%);
+  animation: dc-flick-right 650ms ease-in-out forwards;
+}
+.dc-coin[data-to="0"] { left: auto; right: 0; animation-name: dc-flick-left; }
+@keyframes dc-flick-right {
+  0% { left: 8%; opacity: 0; transform: translate(0, -50%) scale(0.6); }
+  20% { opacity: 1; transform: translate(0, -110%) scale(1.1); }
+  80% { opacity: 1; }
+  100% { left: 40%; opacity: 0; transform: translate(0, -50%) scale(0.8); }
+}
+@keyframes dc-flick-left {
+  0% { right: 40%; opacity: 0; transform: translate(0, -50%) scale(0.6); }
+  20% { opacity: 1; transform: translate(0, -110%) scale(1.1); }
+  80% { opacity: 1; }
+  100% { right: 70%; opacity: 0; transform: translate(0, -50%) scale(0.8); }
+}
+.dc-tile.dc-flip { animation: dc-flip 420ms ease-in-out; z-index: 2; }
+@keyframes dc-flip {
+  0% { transform: scaleX(1); }
+  50% { transform: scaleX(0.05); }
+  100% { transform: scaleX(1); }
+}
+.dc-tile.dc-gavel { animation: dc-gavel 480ms cubic-bezier(0.3, 1.4, 0.5, 1); z-index: 2; }
+@keyframes dc-gavel {
+  0% { transform: translateY(-30%) scale(1.35); }
+  45% { transform: translateY(6%) scale(0.88); }
+  70% { transform: translateY(-2%) scale(1.06); }
+  100% { transform: translateY(0) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dc-tok, .dc-tile.dc-pop .dc-houses, .dc-coin, .dc-tile.dc-flip, .dc-tile.dc-gavel { animation: none; }
+  .dc-coin { display: none; }
+}
+
+/* ---- short screens ----------------------------------------------------------------- */
+@media (max-height: 700px) {
+  .dc-btn, .dc-abid, .dc-apass { min-height: 38px; }
+  .dc-btn { padding: 5px 8px; font-size: 16px; }
+  .dc-die { width: 40px; height: 40px; padding: 6px; }
+  .dc-dice3d { padding: 2px 0; }
+  .dc-astep, .dc-aval { height: 34px; }
+}
+@media (max-height: 620px) {
+  .dc-btn, .dc-abid, .dc-apass { min-height: 34px; }
+  .dc-btn { font-size: 15.5px; }
+  .dc-die { width: 36px; height: 36px; padding: 5px; }
+  .dc-debt-amt { font-size: 28px; }
+  .dc-astep, .dc-aval { height: 32px; }
+}

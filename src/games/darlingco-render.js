@@ -1,18 +1,21 @@
-// Draws the Darling & Co. board: an 11 x 11 ring of forty tiles. The middle
-// (grid rows 2-10, columns 2-10) is left empty for the centre panel.
+// Draws Darling & Co.: the player plates, the tall 11 x 11 board, the centre
+// "stage" (one decision at a time) and the bar. The middle of the ring (grid
+// rows 2-10, columns 2-10) is the stage.
 //
 // Tiles are built once by buildBoard and repainted in place by paintTile; the
-// stylesheet does all the looking (tint, stripe edge, sizes) from the data
-// attributes set here: data-edge, data-own, data-built, and .is-mortgaged.
+// stylesheet (darlingco.css) does all the looking (tint, stripe edge, sizes)
+// from the data attributes set here: data-edge, data-own, data-built, data-lit,
+// and .is-mortgaged. Owner tint reads --p0 / --p1 on the root, set from `looks`.
 //
 // What the screen should SAY is described by the pure functions in
 // darlingco-view.js (re-exported below); this file only draws it.
 
-import { SQUARES, SETS, GAME_NAME, BID_STEP } from './darlingco-board.js';
+import { SQUARES, SETS, GAME_NAME, BID_STEP, LJ_NAME, JB_NAME } from './darlingco-board.js';
 import {
-  POT_NAME, FEED_LINES, chipParts, feedLines, decisionFor, auctionFor, cardFor, STRIP_CAP, builtReason, sterling, tradeStrips, stripsShown,
+  POT_NAME, chipParts, storyFor, decisionFor, auctionFor, cardFor, STRIP_CAP, builtReason, sterling, tradeStrips, stripsShown,
   canOpenDeal, blankDraft, draftFromDeal, nudgeCash, toggleChip, tidyDraft, dealSheetFor, dealReviewFor, walkPath, sendLanded, flipOrder
 } from './darlingco-view.js';
+import { PIECES, COLOURS, METAL_DEFS, DEFAULT_LOOKS, resolveLooks } from './darlingco-pieces.js';
 import { readTrades } from './darlingco.js';
 import { ownerOf, housesOn, isMortgaged, setChar } from './darlingco-state.js';
 
@@ -73,12 +76,26 @@ export function buildBoard(doc) {
       stripe.style.background = set.colour;
       tile.appendChild(stripe);
     }
-    tile.appendChild(el(doc, 'span', 'dc-houses'));
+    // Houses and the hotel are drawn on the stripe: four pips and one wide mark,
+    // made once and shown or hidden by paintTile.
+    const houses = el(doc, 'span', 'dc-houses');
+    tile.dcPips = [];
+    for (let h = 1; h <= 5; h++) {
+      const pip = el(doc, 'span', h === 5 ? 'dc-pip is-hotel' : 'dc-pip');
+      pip.hidden = true;
+      houses.appendChild(pip);
+      tile.dcPips.push(pip);
+    }
+    tile.appendChild(houses);
     tile.appendChild(el(doc, 'span', 'dc-mort'));
     // Free Parking alone carries the pot, in the row corners leave empty.
     if (i === FREE_PARKING) tile.appendChild(el(doc, 'span', 'dc-potv'));
     tile.appendChild(el(doc, 'span', 'dc-ic', set ? set.icon : sq.icon));
-    tile.appendChild(el(doc, 'span', 'dc-nm', sq.name));
+    const nm = el(doc, 'span', 'dc-nm', sq.name);
+    // A single long word has nowhere to wrap in a 27px tile; the stylesheet sets it a size smaller.
+    if (sq.name.split(/\s+/).some((w) => w.length >= 10)) nm.dataset.long = '1';
+    tile.appendChild(nm);
+    tile.appendChild(el(doc, 'span', 'dc-pr'));
     tile.appendChild(el(doc, 'span', 'dc-toks'));
     tile.dcTokens = [0, 1].map((seat) => {
       const tok = el(doc, 'span', `dc-tok s${seat}`);
@@ -109,8 +126,12 @@ export function paintTile(tile, state, i) {
   const built = housesOn(state, i);
   if (built > 0) tile.dataset.built = String(built);
   else delete tile.dataset.built;
-  // Four pips for four houses; one wide hotel mark. Never the same text.
-  part(tile, 'dc-houses').textContent = built === 5 ? '🏨' : '▲'.repeat(built);
+  // Four pips for four houses; one wide hotel mark. Never the same picture.
+  tile.dcPips.forEach((pip, k) => { pip.hidden = built === 5 ? k !== 4 : k >= built; });
+
+  // Price while unowned, on the squares that have one.
+  const price = part(tile, 'dc-pr');
+  price.textContent = owner < 0 && SQUARES[i].price !== undefined ? sterling(SQUARES[i].price) : '';
 
   part(tile, 'dc-mort').textContent = mortgaged ? 'M' : '';
 
@@ -149,9 +170,8 @@ const prefersReducedMotion = () =>
   typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 const motionOn = () => !prefersReducedMotion() && typeof setTimeout === 'function';
 
-// ---- drawing ---------------------------------------------------------------
 
-const FACES = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
+// ---- drawing ---------------------------------------------------------------
 
 /** A button that disables itself while its write is in flight and always
  *  comes back: a failed write leaves no snapshot to re-render from, so
@@ -163,9 +183,12 @@ const FACES = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
  *  transaction failed) shakes the board and RETURNS NORMALLY: the promise
  *  never rejects, so "resolved" means nothing. Whether a move happened is
  *  read from state, by whoever cares (see sendLanded, for the builder's Send).
- *  `onSend`, if given, runs just before the write, to record what to look for. */
+ *  `onSend`, if given, runs just before the write, to record what to look for.
+ *
+ *  A spec with `thenRoll` (Roll again, after a double) sends its own action and
+ *  then, only if the state now shows this seat on the roll, the roll. */
 function actionButton(world, spec, buildAction, className, onSend) {
-  const b = el(world.doc, 'button', className || `btn dc-btn dc-btn-${spec.kind || 'secondary'}`, spec.label);
+  const b = el(world.doc, 'button', className || `dc-btn is-${spec.kind || 'secondary'}`, spec.label);
   b.type = 'button';
   b.disabled = !!spec.disabled || world.pending || world.busy;
   if (spec.why) b.setAttribute('title', spec.why);
@@ -176,7 +199,9 @@ function actionButton(world, spec, buildAction, className, onSend) {
     if (onSend) onSend();
     let sent;
     try { sent = world.onAction(buildAction()); } catch (e) { sent = Promise.reject(e); }
-    Promise.resolve(sent).then(() => {}, () => {}).then(() => {
+    let chain = Promise.resolve(sent);
+    if (spec.thenRoll) chain = chain.then(() => followWithRoll(world));
+    chain.then(() => {}, () => {}).then(() => {
       world.pending = false;
       b.disabled = false;
       paint(world);       // the sheet closes here if the state shows the send landed
@@ -189,58 +214,178 @@ function actionButton(world, spec, buildAction, className, onSend) {
 // The dice are made here and nowhere else: applyAction must stay pure, so both
 // phones agree on the same action.
 const rollDie = () => 1 + Math.floor(Math.random() * 6);
+const rollAction = () => ({ type: 'roll', die1: rollDie(), die2: rollDie() });
 
 function decisionAction(spec) {
-  return () => (spec.type === 'roll' ? { type: 'roll', die1: rollDie(), die2: rollDie() } : { type: spec.type });
+  return () => (spec.type === 'roll' ? rollAction() : { type: spec.type });
 }
+
+/** The second half of Roll again. The end write has landed only if the state
+ *  now has this seat on the roll; a refused end leaves it where it was, and
+ *  then there is nothing more to do (the board has shaken already). */
+function followWithRoll(world) {
+  const s = world.state;
+  if (!s || s.phase !== 'roll' || s.actor !== world.mySeat) return undefined;
+  return world.onAction(rollAction());
+}
+
+const hexOf = (looks, seat) => COLOURS[looks[seat].colour].hex;
+
+function setVar(node, name, value) {
+  if (node.style && typeof node.style.setProperty === 'function') node.style.setProperty(name, value);
+  else node.style[name] = value;
+}
+
+/** A piece's silhouette: inline SVG on the shared metal gradient. The markup
+ *  goes in through a wrapper's innerHTML, so the same call works wherever the
+ *  document is. */
+function pieceNode(doc, pieceIndex) {
+  const wrap = el(doc, 'span', 'dc-pc');
+  wrap.dataset.piece = String(pieceIndex);
+  wrap.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${PIECES[pieceIndex].svg}</svg>`;
+  return wrap;
+}
+
+/** Re-dress every token and plate disc when the looks change; only then. */
+function applyLooks(world, looks) {
+  const key = looks.map((l) => `${l.piece}.${l.colour}`).join('/');
+  if (world.looksKey === key) return;
+  world.looksKey = key;
+  world.looks = looks;
+  [0, 1].forEach((seat) => setVar(world.root, `--p${seat}`, hexOf(looks, seat)));
+  const dress = (disc, seat) => {
+    clear(disc);
+    disc.appendChild(pieceNode(world.doc, looks[seat].piece));
+    disc.dataset.piece = String(looks[seat].piece);
+  };
+  world.tiles.forEach((tile) => tile.dcTokens.forEach((tok, seat) => dress(tok, seat)));
+  world.discs.forEach((disc, seat) => dress(disc, seat));
+}
+
+/** One die face, pips only. The 3D tumbling dice are a later task's job; this
+ *  is the placeholder that shows the last roll. */
+const PIPS = { 1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8] };
+function dieFace(doc, n) {
+  const die = el(doc, 'span', 'dc-die');
+  die.dataset.face = String(n);
+  if (!PIPS[n]) {
+    // Nothing rolled yet.
+    die.classList.add('is-blank');
+    die.appendChild(el(doc, 'b', 'dc-die-q', '?'));
+    return die;
+  }
+  const on = PIPS[n];
+  for (let k = 0; k < 9; k++) die.appendChild(el(doc, 'i', on.includes(k) ? 'is-pip' : ''));
+  return die;
+}
+
+const SLOTS = [
+  { slot: 'deals', icon: '\u{1F91D}', label: 'Deals' },
+  { slot: 'places', icon: '\u{1F3E0}', label: 'My places' },
+  { slot: 'rules', icon: '\u{1F4D6}', label: 'Rules' },
+  { slot: 'chat', icon: '\u{1F4AC}', label: 'Chat' }
+];
 
 function buildWorld(doc, host) {
   const root = el(doc, 'div', 'dc-game');
-  const bar = el(doc, 'div', 'dc-bar');
-  const chips = [0, 1].map((seat) => el(doc, 'div', `dc-chip s${seat}`));
-  const potChip = el(doc, 'div', 'dc-chip dc-pot');
-  chips.forEach((c) => bar.appendChild(c));
-  bar.appendChild(potChip);
-  root.appendChild(bar);
+
+  // One hidden copy of the metal gradient every piece fills from. Not display:none,
+  // which stops some browsers resolving a gradient that lives inside it.
+  const defs = el(doc, 'span', 'dc-defs');
+  defs.setAttribute('aria-hidden', 'true');
+  defs.innerHTML = `<svg width="0" height="0" focusable="false"><defs>${METAL_DEFS}</defs></svg>`;
+  root.appendChild(defs);
+
+  const plates = el(doc, 'div', 'dc-plates');
+  const discs = [];
+  const plateNodes = [0, 1].map((seat) => {
+    const plate = el(doc, 'div', 'dc-plate');
+    plate.dataset.seat = String(seat);
+    const disc = el(doc, 'span', 'dc-disc');
+    disc.dataset.seat = String(seat);
+    discs.push(disc);
+    const who = el(doc, 'div', 'dc-who');
+    who.appendChild(el(doc, 'span', 'dc-pn'));
+    who.appendChild(el(doc, 'span', 'dc-cash'));
+    plate.appendChild(disc);
+    plate.appendChild(who);
+    return plate;
+  });
+  const pot = el(doc, 'div', 'dc-pot');
+  pot.appendChild(el(doc, 'span', 'dc-potname'));
+  pot.appendChild(el(doc, 'b', 'dc-potamt'));
+  plates.appendChild(plateNodes[0]);
+  plates.appendChild(pot);
+  plates.appendChild(plateNodes[1]);
+  root.appendChild(plates);
 
   const { board, tiles } = buildBoard(doc);
   const mid = el(doc, 'div', 'dc-mid');
-  const head = el(doc, 'div', 'dc-head');
-  head.appendChild(el(doc, 'span', 'dc-title', GAME_NAME));
-  const dice = el(doc, 'span', 'dc-dice');
-  head.appendChild(dice);
-  const feed = el(doc, 'ol', 'dc-feed');
-  const sheet = el(doc, 'div', 'dc-sheet');
+  const story = el(doc, 'div', 'dc-story');
+  const subject = el(doc, 'div', 'dc-subject');
   const strips = el(doc, 'div', 'dc-deals');
-  const decision = el(doc, 'div', 'dc-decision');
-  const newDeal = el(doc, 'div', 'dc-newdeal');
-  [head, feed, strips, decision, newDeal].forEach((n) => mid.appendChild(n));
+  const actions = el(doc, 'div', 'dc-actions');
+  [story, subject, strips, actions].forEach((n) => mid.appendChild(n));
   board.appendChild(mid);
   root.appendChild(board);
-  const room = el(doc, 'div', 'dc-room');
-  root.appendChild(room);
-  // A bottom sheet over the board, not part of the centre: the deed is far taller
-  // than the 9 x 9 middle can ever be.
+
+  const bar = el(doc, 'div', 'dc-bar');
+  const slots = {};
+  for (const spec of SLOTS) {
+    const b = el(doc, 'button', 'dc-slot');
+    b.type = 'button';
+    b.dataset.slot = spec.slot;
+    b.appendChild(el(doc, 'span', 'dc-slot-ico', spec.icon));
+    b.appendChild(el(doc, 'span', 'dc-slot-lbl', spec.label));
+    b.appendChild(el(doc, 'span', 'dc-slot-note'));
+    b.appendChild(el(doc, 'em', 'dc-badge'));
+    bar.appendChild(b);
+    slots[spec.slot] = b;
+  }
+  root.appendChild(bar);
+
+  // The deal builder and review still use one bottom sheet over the board.
+  const sheet = el(doc, 'div', 'dc-sheet');
   sheet.hidden = true;
   root.appendChild(sheet);
   host.appendChild(root);
 
   const world = {
-    doc, root, bar, chips, potChip, tiles, dice, feed, sheet, strips, decision, newDeal, room,
-    selected: -1, bidStep: null, bidKey: '', sheetMode: 'property', draft: null, reviewId: null, sent: null, pending: false, busy: false, generation: 0, flipGeneration: 0, hold: null, animatedKey: null,
-    shown: null, builtSeen: null, state: null, mySeat: null, names: [], onAction: () => {}
+    doc, root, plates, plateNodes, discs, pot, bar, slots, tiles, mid, story, subject, strips, actions, sheet,
+    selected: -1, picking: false, confirming: false, storyOpen: false, pickedHere: false,
+    bidStep: null, bidKey: '', sheetMode: 'property', draft: null, reviewId: null, sent: null, pending: false, busy: false,
+    generation: 0, flipGeneration: 0, hold: null, animatedKey: null, stateJson: '',
+    shown: null, builtSeen: null, state: null, mySeat: null, names: [],
+    looks: null, looksKey: '', chat: { toggle() {}, unread: () => 0 }, onLook: () => {}, onRematch: () => {}, onAction: () => {}
   };
   tiles.forEach((tile, i) => {
     tile.addEventListener('click', () => {
       if (!cardFor(world.state, world.mySeat, i, world.names)) return;
       world.selected = world.selected === i ? -1 : i;
+      world.picking = false;
+      world.confirming = false;
       paint(world);
     });
   });
+  plateNodes.forEach((plate, seat) => {
+    plate.addEventListener('click', () => {
+      if (world.mySeat !== seat || !world.state || world.state.phase === 'over') return;
+      world.picking = !world.picking;
+      world.selected = -1;
+      paint(world);
+    });
+  });
+  world.story.addEventListener('click', () => { world.storyOpen = !world.storyOpen; paint(world); });
+  slots.deals.addEventListener('click', () => {
+    if (slots.deals.disabled) return;
+    openBuilder(world, blankDraft());
+  });
+  slots.chat.addEventListener('click', () => world.chat.toggle());
+  // My places and Rules are the next tasks' sheets; until they land the slots are present but inert.
   return world;
 }
 
-const money = (r) => (r.times ? `${r.amount}\u00d7` : `\u00a3${r.amount.toLocaleString('en-GB')}`);
+
 
 // Dark ink on a light set colour, light ink on a dark one.
 function inkFor(hex) {
@@ -249,14 +394,20 @@ function inkFor(hex) {
   return lum > 0.55 ? '#0d1310' : '#ffffff';
 }
 
-/** The one sheet node serves every mode: the property card ('property'), the
- *  deal builder ('deal', world.draft) and a deal under review ('review',
- *  world.reviewId). The mode is chosen first, so a deal mode cannot blank the
- *  sheet by way of the card's selection. */
+/** The one sheet node serves the deal builder ('deal', world.draft) and a deal
+ *  under review ('review', world.reviewId); in any other mode it is hidden. The
+ *  deed of a tapped tile is drawn in the stage, never here. */
 function paintSheet(world) {
   if (world.sheetMode === 'deal') paintBuilder(world);
   else if (world.sheetMode === 'review') paintReview(world);
-  else paintCard(world);
+  else hideSheet(world);
+}
+
+/** No deal sheet open: the sheet node is empty and out of sight. The deed of a tapped
+ *  tile is drawn in the stage, not here. */
+function hideSheet(world) {
+  clear(world.sheet);
+  world.sheet.hidden = true;
 }
 
 /** Back to the plain board: no sheet, no draft, nothing selected. */
@@ -334,12 +485,12 @@ function stepButton(world, label, step, spec, onTap) {
 
 function paintBuilder(world) {
   const { state, mySeat, names, doc } = world;
-  if (!world.draft || (mySeat !== 0 && mySeat !== 1)) { world.sheetMode = 'property'; world.draft = null; paintCard(world); return; }
+  if (!world.draft || (mySeat !== 0 && mySeat !== 1)) { world.sheetMode = 'property'; world.draft = null; hideSheet(world); return; }
   // A send that landed has put the deal out of the draft's hands: the sheet closes itself. One that
   // was refused leaves the draft as it was, and the problem line below says what changed.
   if (sendLanded(state, mySeat, world.sent)) {
     world.sheetMode = 'property'; world.draft = null; world.sent = null; world.selected = -1;
-    paintCard(world);
+    hideSheet(world);
     return;
   }
   world.draft = tidyDraft(state, mySeat, world.draft);
@@ -426,7 +577,7 @@ function paintReview(world) {
   const r = world.reviewId ? dealReviewFor(state, mySeat, world.reviewId, names) : null;
   // The deal is gone (answered here or there): back to the board. Accept, Decline and Cancel rely on this
   // rather than closing on a resolved write, which a refusal also does.
-  if (!r) { world.sheetMode = 'property'; world.reviewId = null; world.selected = -1; paintCard(world); return; }
+  if (!r) { world.sheetMode = 'property'; world.reviewId = null; world.selected = -1; hideSheet(world); return; }
   const restore = resetSheet(world);
   const { sheet } = world;
   sheet.appendChild(sheetHead(world, r.title, 'close', () => closeSheet(world)));
@@ -475,47 +626,93 @@ function paintReview(world) {
   restore();
 }
 
-function paintCard(world) {
-  const { sheet, state, mySeat, doc } = world;
-  clear(sheet);
-  const c = world.selected >= 0
-    ? cardFor(state, mySeat, world.selected, world.names) : null;
-  if (!c) world.selected = -1;
-  sheet.hidden = !c;
-  if (!c) return;
 
-  const card = el(doc, 'div', 'dc-card');
-  const top = el(doc, 'div', 'dc-cardtop');
-  top.style.background = c.setColour;
-  top.style.color = inkFor(c.setColour);
-  top.appendChild(el(doc, 'small', 'dc-cardset', c.setName));
-  const head = el(doc, 'div', 'dc-sheet-head');
-  head.appendChild(el(doc, 'span', 'dc-sheet-title', c.title));
-  const close = el(doc, 'button', 'link-btn dc-close', 'Close');
-  close.type = 'button';
-  close.addEventListener('click', () => { world.selected = -1; paint(world); });
-  head.appendChild(close);
-  top.appendChild(head);
-  card.appendChild(top);
+// ---- the stage ---------------------------------------------------------------
+// The centre shows one decision at a time, top to bottom: what just happened
+// (story), the subject (dice, deed, card, lot, debt, result), the live deals,
+// then the buttons. Only the subject scrolls when the room runs short; the
+// buttons never leave the stage. Every disabled control says why in text.
 
+const money = (r) => (r.times ? `${r.amount}×` : `£${r.amount.toLocaleString('en-GB')}`);
+
+const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const escapeHtml = (t) => String(t).replace(/[&<>"']/g, (c) => ESCAPES[c]);
+const escapeRegex = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** One story line, with the players' names in bold. textContent carries the
+ *  whole plain line (what a screen reader and the tests read); the markup is
+ *  escaped before names are wrapped. */
+function storyLine(world, text) {
+  const line = el(world.doc, 'p', 'dc-line', text);
+  const names = [0, 1].map((seat) => world.names[seat])
+    .filter((n) => typeof n === 'string' && n.trim()).map((n) => n.trim())
+    .sort((a, b) => b.length - a.length);
+  if (names.length) {
+    const re = new RegExp(`(${names.map(escapeRegex).join('|')})`, 'g');
+    line.innerHTML = text.split(re).map((part, k) => (k % 2 ? `<b>${escapeHtml(part)}</b>` : escapeHtml(part))).join('');
+  }
+  return line;
+}
+
+/** A button and, when it is disabled, the reason as text beneath it. */
+function actCell(world, button, why, extra) {
+  const cell = el(world.doc, 'div', `dc-act${extra ? ` ${extra}` : ''}`);
+  cell.appendChild(button);
+  if (why) cell.appendChild(el(world.doc, 'span', 'dc-why', why));
+  return cell;
+}
+
+/** My places is the next task's sheet. Until it lands the entry points exist
+ *  (the bar's slot, the raise list's link) and open nothing. */
+function openPlaces() {}
+
+function deedCard(world, c, { stage }) {
+  const doc = world.doc;
+  const card = el(doc, 'div', stage ? 'dc-deed is-stage' : 'dc-deed');
+  const hd = el(doc, 'div', 'dc-deed-hd');
+  hd.style.background = c.setColour;
+  hd.style.color = inkFor(c.setColour);
+  hd.appendChild(el(doc, 'small', 'dc-deed-set', c.setName));
+  hd.appendChild(el(doc, 'b', 'dc-deed-title', c.title));
+  if (stage) {
+    const close = el(doc, 'button', 'dc-close', 'Close');
+    close.type = 'button';
+    close.setAttribute('aria-label', 'Close the deed');
+    close.addEventListener('click', () => { world.selected = -1; paint(world); });
+    hd.appendChild(close);
+  }
+  card.appendChild(hd);
+
+  // House cost and mortgage value sit in the foot, as on the printed card.
   const table = el(doc, 'table', 'dc-rents');
   for (const r of c.rows) {
-    const tr = el(doc, 'tr', `${r.now ? 'now' : ''} ${r.rule ? 'rule' : ''}`.trim());
+    if (r.label === 'House costs' || r.label === 'Mortgage value') continue;
+    const tr = el(doc, 'tr', r.now ? 'now' : '');
     tr.appendChild(el(doc, 'td', '', r.label));
     tr.appendChild(el(doc, 'td', '', money(r)));
     table.appendChild(tr);
   }
   card.appendChild(table);
-  const foot = el(doc, 'div', 'dc-cardfoot');
-  for (const part of c.footParts) if (part) foot.appendChild(el(doc, 'span', '', part));
-  card.appendChild(foot);
-  sheet.appendChild(card);
-  if (c.detail) sheet.appendChild(el(doc, 'div', 'dc-detail', c.detail));
 
+  const spec = SQUARES[c.square];
+  const foot = el(doc, 'div', 'dc-deed-ft');
+  if (spec.house) foot.appendChild(el(doc, 'span', '', `A house costs ${sterling(spec.house)}`));
+  foot.appendChild(el(doc, 'span', '', `Mortgage ${sterling(spec.mortgage)}`));
+  card.appendChild(foot);
+  const owned = c.footParts[1] !== '';
+  const who = el(doc, 'div', 'dc-deed-own', [owned ? c.footParts.join(' · ') : `For sale · ${sterling(spec.price)}`, c.detail].filter(Boolean).join(' · '));
+  card.appendChild(who);
+  return card;
+}
+
+/** The deed of a tapped tile, in place of everything else in the stage. */
+function paintDeedStage(world, c) {
+  const { subject, actions, doc, state, mySeat } = world;
+  subject.appendChild(deedCard(world, c, { stage: true }));
   if (c.buttons.length) {
-    const row = el(doc, 'div', 'dc-btns dc-btns-grid');
-    for (const b of c.buttons) row.appendChild(actionButton(world, b, () => b.action));
-    sheet.appendChild(row);
+    const grid = el(doc, 'div', 'dc-btns is-grid');
+    for (const b of c.buttons) grid.appendChild(actCell(world, actionButton(world, b, () => b.action, 'dc-btn is-secondary'), b.why));
+    actions.appendChild(grid);
   }
   if (c.dealButton) {
     // Opens the builder with this square already on its shelf. Only a square somebody
@@ -523,14 +720,341 @@ function paintCard(world) {
     const can = canOpenDeal(state, mySeat);
     const why = !can.ok ? can.why
       : ownerOf(state, c.square) < 0 ? 'Nobody owns this yet' : builtReason(state, c.square);
-    if (why) sheet.appendChild(el(doc, 'div', 'dc-detail', why));
-    const row = el(doc, 'div', 'dc-btns');
     const open = openerButton(world, { label: c.dealButton.label, disabled: !!why, why },
-      () => openBuilder(world, toggleChip(state, mySeat, blankDraft(), c.square)), 'btn dc-btn dc-btn-secondary');
+      () => openBuilder(world, toggleChip(state, mySeat, blankDraft(), c.square)), 'dc-btn is-secondary');
     open.dataset.type = 'new-deal';
-    row.appendChild(open);
-    sheet.appendChild(row);
+    const row = el(doc, 'div', 'dc-btns');
+    row.appendChild(actCell(world, open, why));
+    actions.appendChild(row);
   }
+}
+
+// ---- the piece picker, in the stage ----------------------------------------
+
+function paintPicker(world) {
+  const { subject, doc, mySeat, names } = world;
+  const me = mySeat;
+  const other = 1 - me;
+  const looks = world.looks;
+  const wrap = el(doc, 'div', 'dc-picker');
+  const head = el(doc, 'div', 'dc-pick-top');
+  head.appendChild(el(doc, 'p', 'dc-pick-hd', 'Pick your piece'));
+  // Done sits beside the heading, where it is always in view; Roll stays live underneath.
+  const done = el(doc, 'button', 'dc-done', 'Done');
+  done.type = 'button';
+  done.dataset.type = 'picker-done';
+  done.addEventListener('click', () => { world.picking = false; paint(world); });
+  head.appendChild(done);
+  wrap.appendChild(head);
+  const pick = (patch) => {
+    world.pickedHere = true;
+    world.onLook({ piece: looks[me].piece, colour: looks[me].colour, ...patch });
+    paint(world);
+  };
+  const pieces = el(doc, 'div', 'dc-pick');
+  PIECES.forEach((p, k) => {
+    const b = el(doc, 'button', `dc-pk${k === looks[me].piece ? ' is-on' : ''}`);
+    b.type = 'button';
+    b.dataset.piece = String(k);
+    b.setAttribute('aria-label', p.name);
+    b.disabled = k === looks[other].piece;
+    b.appendChild(pieceNode(doc, k));
+    b.addEventListener('click', () => { if (!b.disabled) pick({ piece: k }); });
+    pieces.appendChild(b);
+  });
+  wrap.appendChild(pieces);
+  wrap.appendChild(el(doc, 'p', 'dc-lab', 'and your colour'));
+  const cols = el(doc, 'div', 'dc-cols');
+  COLOURS.forEach((c, k) => {
+    const b = el(doc, 'button', `dc-col${k === looks[me].colour ? ' is-on' : ''}`);
+    b.type = 'button';
+    b.dataset.colour = String(k);
+    b.setAttribute('aria-label', c.name);
+    b.style.background = c.hex;
+    b.disabled = k === looks[other].colour;
+    b.addEventListener('click', () => { if (!b.disabled) pick({ colour: k }); });
+    cols.appendChild(b);
+  });
+  wrap.appendChild(cols);
+  const them = (names && names[other]) || `Player ${other + 1}`;
+  wrap.appendChild(el(doc, 'p', 'dc-why', `${them} has the greyed-out piece and colour.`));
+  subject.appendChild(wrap);
+}
+
+// ---- the subject ---------------------------------------------------------------
+
+function paintDice(world) {
+  const { state, doc, subject } = world;
+  subject.appendChild(el(doc, 'div', 'dc-wm', GAME_NAME));
+  // Task 8 replaces the contents of this box with the tumbling dice.
+  const box = el(doc, 'div', 'dc-dice3d');
+  box.appendChild(dieFace(doc, state.die1 > 0 ? state.die1 : 0));
+  box.appendChild(dieFace(doc, state.die2 > 0 ? state.die2 : 0));
+  subject.appendChild(box);
+}
+
+function paintDebt(world, d) {
+  const { state, doc, subject, mySeat, names } = world;
+  const actor = state.actor;
+  const name = (seat) => (names && names[seat]) || `Player ${seat + 1}`;
+  const to = state.owedTo < 0 ? `the ${POT_NAME()} pot` : (state.owedTo === mySeat ? 'you' : name(state.owedTo));
+  const box = el(doc, 'div', 'dc-debt');
+  box.appendChild(el(doc, 'small', '', actor === mySeat ? 'You owe' : `${name(actor)} owes`));
+  box.appendChild(el(doc, 'b', 'dc-debt-amt', sterling(state.owed)));
+  box.appendChild(el(doc, 'small', '', `to ${to}`));
+  if (d.short) box.appendChild(el(doc, 'span', 'dc-short', `${sterling(d.short)} short`));
+  subject.appendChild(box);
+}
+
+function paintDrawnCard(world, sub) {
+  const { doc, subject } = world;
+  const card = el(doc, 'div', 'dc-cardface');
+  card.dataset.deck = sub.deck;
+  card.appendChild(el(doc, 'small', '', sub.deck === 'lj' ? LJ_NAME : JB_NAME));
+  card.appendChild(el(doc, 'b', 'dc-card-mark', sub.deck === 'lj' ? '?' : '★'));
+  card.appendChild(el(doc, 'p', 'dc-card-text', sub.text));
+  subject.appendChild(card);
+}
+
+function paintLot(world, p) {
+  const { doc, subject } = world;
+  const lot = el(doc, 'div', 'dc-lot');
+  const sw = el(doc, 'span', 'dc-aswatch');
+  sw.style.background = p.setColour;
+  lot.appendChild(sw);
+  const txt = el(doc, 'div', 'dc-lot-txt');
+  txt.appendChild(el(doc, 'b', 'dc-alot', p.lot));
+  txt.appendChild(el(doc, 'small', 'dc-aworth', `${p.setName ? `${p.setName} · ` : ''}worth ${sterling(p.worth)}`));
+  lot.appendChild(txt);
+  subject.appendChild(lot);
+  const stand = el(doc, 'div', 'dc-astanding');
+  stand.appendChild(el(doc, 'span', p.standingBy ? 'dc-aamt' : 'dc-aamt is-none', p.standingBy ? sterling(p.standing) : 'No bid yet'));
+  if (p.standingBy) {
+    const who = el(doc, 'span', 'dc-awho', p.standingBy);
+    who.dataset.seat = String(p.standingSeat);   // the seat's own colour, as on the plates and tiles
+    stand.appendChild(who);
+  }
+  subject.appendChild(stand);
+}
+
+function paintResult(world, d) {
+  const { state, doc, subject, mySeat, names } = world;
+  const name = (seat) => (names && names[seat]) || `Player ${seat + 1}`;
+  const box = el(doc, 'div', 'dc-result');
+  box.appendChild(el(doc, 'small', '', 'Game over'));
+  const headline = state.winner >= 0 ? (state.winner === mySeat ? 'You win' : `${name(state.winner)} wins`) : 'A draw';
+  box.appendChild(el(doc, 'b', 'dc-result-hd', headline));
+  box.appendChild(el(doc, 'p', 'dc-result-why', d.detail));
+  if (mySeat === 0 || mySeat === 1) {
+    const again = el(doc, 'button', 'dc-btn is-primary dc-rematch', 'Rematch');
+    again.type = 'button';
+    again.dataset.type = 'rematch';
+    again.addEventListener('click', () => world.onRematch());
+    box.appendChild(again);
+  }
+  subject.appendChild(box);
+}
+
+/** The line that says who we are waiting on (or what to do), under the subject. */
+function paintSay(world, d) {
+  const { state, doc, subject } = world;
+  const kind = d.short ? 'debt' : d.subject.kind;
+  if (d.auction || kind === 'result') return;
+  const phase = state.phase;
+  let title = '';
+  let detail = '';
+  if (!d.mine) {
+    title = d.title;
+    detail = kind === 'card' ? '' : d.detail;
+  } else if (phase === 'buy') detail = d.detail;
+  else if (phase === 'pay') { if (kind !== 'debt') title = d.title; }
+  else if (phase === 'end') detail = d.detail;
+  else if (phase === 'roll' && state.jail[world.mySeat] > 0) detail = d.detail;
+  if (!title && !detail) return;
+  const say = el(doc, 'div', 'dc-say');
+  if (title) say.appendChild(el(doc, 'b', 'dc-say-title', title));
+  if (detail) say.appendChild(el(doc, 'span', 'dc-say-detail', detail));
+  subject.appendChild(say);
+}
+
+function paintSubject(world, d) {
+  const { state, mySeat, names } = world;
+  // Short of cash, what matters is the amount and the shortfall, not the title deed.
+  const sub = d.short ? { kind: 'debt' } : d.subject;
+  switch (sub.kind) {
+    case 'deed': {
+      const c = cardFor(state, mySeat, sub.square, names);
+      if (c) world.subject.appendChild(deedCard(world, c, { stage: false }));
+      break;
+    }
+    case 'card': paintDrawnCard(world, sub); break;
+    case 'debt': paintDebt(world, d); break;
+    case 'lot': paintLot(world, auctionModel(world)); break;
+    case 'result': paintResult(world, d); break;
+    default: paintDice(world);
+  }
+  paintSay(world, d);
+}
+
+// ---- the buttons -----------------------------------------------------------------
+
+/** A control of the auction panel. Its own class (never .dc-btn): a blocked control
+ *  is drawn plainly blocked, and its reason is the note line. */
+function auctionButton(world, spec, className, type) {
+  const b = el(world.doc, 'button', className, spec.label);
+  b.type = 'button';
+  b.dataset.type = type;
+  b.disabled = !!spec.disabled || world.pending || world.busy;
+  if (spec.why) b.setAttribute('title', spec.why);
+  return b;
+}
+
+function auctionModel(world) {
+  const { state, mySeat, names } = world;
+  // The dial starts again at the minimum whenever the bidding moves on.
+  const key = [state.aucSq, state.aucBid, state.aucBy, state.aucPass, state.actor].join(':');
+  if (key !== world.bidKey) { world.bidKey = key; world.bidStep = null; }
+  return auctionFor(state, mySeat, world.bidStep, names);
+}
+
+function paintAuctionActions(world) {
+  const { actions, doc } = world;
+  const p = auctionModel(world);
+  const panel = el(doc, 'div', 'dc-auc');
+  // The stepper only moves what is shown; nothing is sent until Bid.
+  const line = el(doc, 'div', 'dc-astepline');
+  const down = auctionButton(world, { label: '−', ...p.down }, 'dc-astep', 'bid-down');
+  down.setAttribute('aria-label', 'Bid less');
+  down.addEventListener('click', () => { if (!down.disabled) { world.bidStep = p.step - BID_STEP; paint(world); } });
+  const val = el(doc, 'span', 'dc-aval', sterling(p.step));
+  const up = auctionButton(world, { label: '+', ...p.up }, 'dc-astep', 'bid-up');
+  up.setAttribute('aria-label', 'Bid more');
+  up.addEventListener('click', () => { if (!up.disabled) { world.bidStep = p.step + BID_STEP; paint(world); } });
+  [down, val, up].forEach((n) => line.appendChild(n));
+  panel.appendChild(line);
+
+  // Bid and Pass are real writes, so they go through actionButton and its guard.
+  const row = el(doc, 'div', 'dc-arow');
+  const bid = actionButton(world, p.bid, () => ({ type: 'bid', amount: p.bid.amount }), 'dc-abid');
+  bid.dataset.type = 'bid';
+  const pass = actionButton(world, p.pass, () => ({ type: 'pass' }), 'dc-apass');
+  pass.dataset.type = 'pass';
+  row.appendChild(bid);
+  row.appendChild(pass);
+  panel.appendChild(row);
+  panel.appendChild(el(doc, 'div', 'dc-anote', p.note));
+  actions.appendChild(panel);
+}
+
+/** Your places that can raise money right now, one tap each. */
+function raiseNode(world, raise) {
+  if (!raise || (raise.short === 0 && !raise.options.length)) return null;
+  const { doc } = world;
+  const box = el(doc, 'div', 'dc-raise');
+  const head = el(doc, 'div', 'dc-raise-top');
+  head.appendChild(el(doc, 'h4', 'dc-raise-hd', raise.short > 0 ? `${sterling(raise.short)} short — raise it` : 'Raise cash'));
+  const all = el(doc, 'button', 'dc-allplaces', raise.more > 0 ? `All my places (+${raise.more})` : 'All my places');
+  all.type = 'button';
+  all.addEventListener('click', () => openPlaces(world));
+  head.appendChild(all);
+  box.appendChild(head);
+  for (const o of raise.options) {
+    const row = el(doc, 'div', 'dc-rc');
+    row.dataset.square = String(o.square);
+    const sw = el(doc, 'i', 'dc-rc-sw');
+    sw.style.background = o.colour;
+    row.appendChild(sw);
+    row.appendChild(el(doc, 'span', 'dc-rc-name', o.name));
+    const b = actionButton(world, { label: o.label }, () => o.action, 'dc-rcb');
+    b.dataset.type = o.action.type;
+    row.appendChild(b);
+    box.appendChild(row);
+  }
+  if (!raise.options.length) box.appendChild(el(doc, 'p', 'dc-why', 'Nothing you own can raise cash right now.'));
+  return box;
+}
+
+function paintConfirm(world, bankrupt) {
+  const { actions, doc } = world;
+  const c = bankrupt.confirm;
+  const box = el(doc, 'div', 'dc-confirm');
+  box.appendChild(el(doc, 'b', 'dc-confirm-hd', c.title));
+  box.appendChild(el(doc, 'p', 'dc-confirm-detail', c.detail));
+  const row = el(doc, 'div', 'dc-btns');
+  const keep = el(doc, 'button', 'dc-btn is-primary', c.no);
+  keep.type = 'button';
+  keep.dataset.type = 'keep-playing';
+  keep.addEventListener('click', () => { world.confirming = false; paint(world); });
+  const yes = actionButton(world, { label: c.yes.label }, () => ({ type: c.yes.type }), 'dc-btn is-danger');
+  yes.dataset.type = c.yes.type;
+  row.appendChild(keep);
+  row.appendChild(yes);
+  box.appendChild(row);
+  actions.appendChild(box);
+}
+
+function paintActions(world, d) {
+  const { actions, doc, state, mySeat } = world;
+  if (d.bankrupt && world.confirming) { paintConfirm(world, d.bankrupt); return; }
+  world.confirming = false;
+
+  if (d.auction) paintAuctionActions(world);
+  else if (d.buttons.length) {
+    const row = el(doc, 'div', 'dc-btns');
+    d.buttons.forEach((b, k) => {
+      const wide = k === 0 && d.buttons.length > 1 && b.type === 'roll';
+      row.appendChild(actCell(world, actionButton(world, b, decisionAction(b)), b.why, wide ? 'is-wide' : ''));
+    });
+    actions.appendChild(row);
+  }
+
+  const raise = raiseNode(world, d.raise);
+  if (raise) actions.appendChild(raise);
+
+  if (d.bankrupt) {
+    // Short of cash: a deal is the other way out, and bankruptcy sits behind a link and a confirm.
+    const can = canOpenDeal(state, mySeat);
+    const deal = openerButton(world, { label: 'Make a deal', disabled: !can.ok, why: can.why }, () => openBuilder(world, blankDraft()), 'dc-btn is-secondary');
+    deal.dataset.type = 'new-deal';
+    const row = el(doc, 'div', 'dc-btns');
+    row.appendChild(actCell(world, deal, can.why));
+    actions.appendChild(row);
+    const link = el(doc, 'button', 'dc-quiet dc-bankrupt', d.bankrupt.label);
+    link.type = 'button';
+    link.dataset.type = 'bankrupt-link';
+    link.addEventListener('click', () => { world.confirming = true; paint(world); });
+    actions.appendChild(link);
+  }
+
+  // An incoming tally-up offer is answered here; offering one is a quiet link, left out
+  // where the stage is already full.
+  if (d.tally.buttons.length) {
+    const t = el(doc, 'div', 'dc-tally');
+    t.appendChild(el(doc, 'p', 'dc-tally-detail', d.tally.detail));
+    const row = el(doc, 'div', 'dc-btns');
+    for (const b of d.tally.buttons) row.appendChild(actionButton(world, b, () => ({ type: b.type })));
+    t.appendChild(row);
+    actions.appendChild(t);
+  } else if (d.tally.waiting) {
+    actions.appendChild(el(doc, 'p', 'dc-note', d.tally.detail));
+  }
+  // Quiet links share one row, so a calm stage spends one line on them, not two.
+  const links = el(doc, 'div', 'dc-links');
+  const calm = !raise && !d.auction && !d.bankrupt && world.mid.dataset.mode !== 'picker';
+  if (!d.tally.buttons.length && !d.tally.waiting && d.tally.canOffer && calm) {
+    links.appendChild(actionButton(world, { label: 'Offer to tally up' }, () => ({ type: 'offer-tally' }), 'dc-quiet dc-tally-offer'));
+  }
+
+  // Before the first roll, a player who has not chosen yet is offered the picker. Roll stays live.
+  const seated = mySeat === 0 || mySeat === 1;
+  if (seated && state.moves === 0 && state.phase !== 'over' && calm && !world.pickedHere && world.looks
+    && world.looks[mySeat].piece === DEFAULT_LOOKS[mySeat].piece && world.looks[mySeat].colour === DEFAULT_LOOKS[mySeat].colour) {
+    const link = el(doc, 'button', 'dc-quiet dc-picklink', 'Pick your piece');
+    link.type = 'button';
+    link.addEventListener('click', () => { world.picking = true; paint(world); });
+    links.appendChild(link);
+  }
+  if (links.children.length) actions.appendChild(links);
 }
 
 const PILL = { answer: 'Answer', waiting: 'Waiting', stale: 'Expired' };
@@ -549,12 +1073,13 @@ function openerButton(world, spec, onOpen, className) {
   return b;
 }
 
-function paintStrips(world) {
-  const { strips, newDeal, state, mySeat, doc } = world;
+/** Live deals, one line each. Few are drawn so the buttons stay in view; the rest are
+ *  counted, and the bar's Deals slot carries how many wait on you. */
+function paintStrips(world, cap) {
+  const { strips, state, mySeat, doc } = world;
   clear(strips);
   const everyDeal = tradeStrips(state, mySeat, world.names);
-  // A live auction is the urgent thing: it takes one strip's room, and "+N more" says what is queued.
-  const { shown: list, more, moreMine } = stripsShown(everyDeal, state.phase === 'auction' ? STRIP_CAP - 1 : STRIP_CAP);
+  const { shown: list, more, moreMine } = stripsShown(everyDeal, cap);
   strips.hidden = everyDeal.length === 0;
   for (const t of list) {
     // One line per deal, and the whole line is the tap target: it opens the
@@ -572,163 +1097,113 @@ function paintStrips(world) {
     strips.appendChild(row);
   }
   if (more > 0) strips.appendChild(el(doc, 'div', 'dc-more', `+${more} more${moreMine ? ` (${moreMine} waiting on you)` : ''}`));
-
-  clear(newDeal);
-  newDeal.hidden = (mySeat !== 0 && mySeat !== 1) || state.phase === 'over';
-  if (!newDeal.hidden) {
-    const can = canOpenDeal(state, mySeat);
-    const b = openerButton(world, { label: '+ New deal', disabled: !can.ok, why: can.why }, () => openBuilder(world, blankDraft()),
-      'link-btn dc-newdeal-btn');
-    b.dataset.type = 'new-deal';
-    newDeal.appendChild(b);
-    // A title is invisible on a phone, so the reason the button is greyed is also text beside it.
-    if (!can.ok) newDeal.appendChild(el(doc, 'span', 'dc-newdealwhy', can.why));
-  }
 }
 
-/** One control of the auction panel. Its own class (never a board-tile one, and
- *  never .btn.dc-btn, whose disabled rule dims the label): a blocked control is
- *  drawn plainly blocked, and its reason is the panel's note line. */
-function auctionButton(world, spec, className, type) {
-  const b = el(world.doc, 'button', className, spec.label);
-  b.type = 'button';
-  b.dataset.type = type;
-  b.disabled = !!spec.disabled || world.pending || world.busy;
-  if (spec.why) b.setAttribute('title', spec.why);
-  return b;
+function paintStage(world, d) {
+  const { state, mySeat, names, mid, story, subject, strips, actions } = world;
+  clear(story);
+  clear(subject);
+  clear(actions);
+  const c = world.selected >= 0 ? cardFor(state, mySeat, world.selected, names) : null;
+  if (!c) world.selected = -1;
+  const seated = mySeat === 0 || mySeat === 1;
+  const picking = world.picking && seated && state.phase !== 'over' && !!world.looks;
+  if (!picking) world.picking = false;
+  mid.dataset.mode = c ? 'deed' : picking ? 'picker' : 'live';
+
+  if (c) {
+    story.hidden = true;
+    strips.hidden = true;
+    paintDeedStage(world, c);
+    return;
+  }
+
+  // A crowded stage (raising cash, an auction) keeps one line of story so the buttons fit.
+  const crowded = !!(d.raise || d.auction || d.bankrupt);
+  const lines = storyFor(state, names, world.storyOpen ? 6 : crowded ? 1 : 2);
+  story.hidden = picking || !lines.length;
+  story.classList[world.storyOpen ? 'add' : 'remove']('is-open');
+  lines.forEach((line) => story.appendChild(storyLine(world, line)));
+
+  if (picking) {
+    clear(strips);
+    strips.hidden = true;
+    paintPicker(world);
+  } else {
+    // Room for the live decision's buttons first: one strip row fewer when the stage is crowded.
+    paintStrips(world, d.raise || d.auction ? STRIP_CAP - 1 : STRIP_CAP);
+    paintSubject(world, d);
+  }
+  paintActions(world, d);
 }
 
-function paintAuction(world) {
-  const { decision, state, mySeat, names, doc } = world;
-  // The dial starts again at the minimum whenever the bidding moves on.
-  const key = [state.aucSq, state.aucBid, state.aucBy, state.aucPass, state.actor].join(':');
-  if (key !== world.bidKey) { world.bidKey = key; world.bidStep = null; }
-  const p = auctionFor(state, mySeat, world.bidStep, names);
-
-  const panel = el(doc, 'div', 'dc-auc');
-  // Four short rows, because the centre has ~100px for the decision: the lot (its
-  // set's colour, and what it is worth), the standing bid beside the dial, the
-  // two buttons, and the one line of text that says why anything is blocked.
-  const top = el(doc, 'div', 'dc-atop');
-  const swatch = el(doc, 'span', 'dc-aswatch');
-  swatch.style.background = p.setColour;
-  if (p.setName) swatch.setAttribute('title', p.setName);
-  top.appendChild(swatch);
-  top.appendChild(el(doc, 'span', 'dc-alot', p.lot));
-  top.appendChild(el(doc, 'span', 'dc-aworth', `worth ${sterling(p.worth)}`));
-  panel.appendChild(top);
-
-  const standing = el(doc, 'div', 'dc-astanding');
-  const bidder = el(doc, 'span', 'dc-abidder');
-  bidder.appendChild(el(doc, 'span', 'dc-aamt', p.standingBy ? sterling(p.standing) : 'No bid yet'));
-  if (p.standingBy) {
-    const who = el(doc, 'span', 'dc-awho', p.standingBy);
-    who.dataset.seat = String(p.standingSeat);   // the seat's own colour, as on the chips and tiles
-    bidder.appendChild(who);
-  }
-  standing.appendChild(bidder);
-  panel.appendChild(standing);
-
-  // The stepper only moves what is shown; nothing is sent until Bid.
-  const line = el(doc, 'div', 'dc-astepline');
-  const down = auctionButton(world, { label: '−', ...p.down }, 'dc-astep', 'bid-down');
-  down.setAttribute('aria-label', 'Bid less');
-  down.addEventListener('click', () => { if (!down.disabled) { world.bidStep = p.step - BID_STEP; paint(world); } });
-  const val = el(doc, 'span', 'dc-aval', sterling(p.step));
-  const up = auctionButton(world, { label: '+', ...p.up }, 'dc-astep', 'bid-up');
-  up.setAttribute('aria-label', 'Bid more');
-  up.addEventListener('click', () => { if (!up.disabled) { world.bidStep = p.step + BID_STEP; paint(world); } });
-  [down, val, up].forEach((n) => line.appendChild(n));
-  standing.appendChild(line);
-
-  // Bid and Pass are real writes, so they go through actionButton and its guard.
-  const row = el(doc, 'div', 'dc-arow');
-  const bid = actionButton(world, p.bid, () => ({ type: 'bid', amount: p.bid.amount }), 'dc-abid');
-  bid.dataset.type = 'bid';
-  const pass = actionButton(world, p.pass, () => ({ type: 'pass' }), 'dc-apass');
-  pass.dataset.type = 'pass';
-  row.appendChild(bid);
-  row.appendChild(pass);
-  panel.appendChild(row);
-  panel.appendChild(el(doc, 'div', 'dc-anote', p.note));
-  decision.appendChild(panel);
+function paintPlates(world) {
+  const { state, mySeat, names } = world;
+  [0, 1].forEach((seat) => {
+    const plate = world.plateNodes[seat];
+    const parts = chipParts(names, seat, mySeat, state.cash[seat]);
+    plate.children[1].children[0].textContent = parts.name;
+    plate.children[1].children[1].textContent = sterling(state.cash[seat]);
+    if (state.phase !== 'over' && state.actor === seat) plate.classList.add('is-turn');
+    else plate.classList.remove('is-turn');
+    if (seat === mySeat) plate.dataset.me = '1';
+    else delete plate.dataset.me;
+  });
+  world.pot.children[0].textContent = 'pot';
+  world.pot.children[1].textContent = sterling(state.pot);
+  world.pot.setAttribute('title', POT_NAME());
 }
 
-function paintDecision(world) {
-  const { decision, state, mySeat, names } = world;
-  clear(decision);
-  const d = decisionFor(state, mySeat, names);
-  decision.dataset.mine = d.mine ? '1' : '0';
-  if (d.auction) {
-    paintAuction(world);
-    appendTally(world, d);
-    return d;
-  }
-  decision.appendChild(el(world.doc, 'div', 'dc-dtitle', d.title));
-  if (d.detail) decision.appendChild(el(world.doc, 'div', 'dc-detail', d.detail));
-  if (d.buttons.length) {
-    const row = el(world.doc, 'div', 'dc-btns');
-    for (const b of d.buttons) row.appendChild(actionButton(world, b, decisionAction(b)));
-    decision.appendChild(row);
-  }
-  appendTally(world, d);
-  return d;
-}
+function paintBar(world) {
+  const { state, mySeat, slots } = world;
+  const seated = mySeat === 0 || mySeat === 1;
+  const note = (slot, text) => { slots[slot].children[2].textContent = text; };
+  const badge = (slot, n) => {
+    slots[slot].children[3].textContent = n > 0 ? String(n) : '';
+    slots[slot].children[3].hidden = !(n > 0);
+  };
 
-function appendTally(world, d) {
-  if (!d.tally.buttons.length) return;
-  const t = el(world.doc, 'div', 'dc-tally');
-  t.appendChild(el(world.doc, 'div', 'dc-detail', d.tally.detail));
-  const row = el(world.doc, 'div', 'dc-btns');
-  for (const b of d.tally.buttons) row.appendChild(actionButton(world, b, () => ({ type: b.type })));
-  t.appendChild(row);
-  world.decision.appendChild(t);
-}
+  const can = canOpenDeal(state, mySeat);
+  slots.deals.disabled = !can.ok;
+  if (slots.deals.setAttribute && !can.ok) slots.deals.setAttribute('title', can.why);
+  // A greyed slot says why in words, not only in a title.
+  note('deals', can.ok ? '' : !seated ? 'Watching' : state.phase === 'over' ? 'Over' : 'Full');
+  const waitingOnMe = seated ? tradeStrips(state, mySeat, world.names).filter((t) => t.badge === 'answer').length : 0;
+  badge('deals', waitingOnMe);
 
-function paintRoom(world, d) {
-  const { room } = world;
-  clear(room);
-  if (d.tally.canOffer) {
-    room.appendChild(actionButton(world, { label: 'Offer to tally up' }, () => ({ type: 'offer-tally' }),
-      'link-btn dc-tally-offer'));
-  } else if (d.tally.waiting) {
-    room.appendChild(el(world.doc, 'span', 'dc-note', d.tally.detail));
-  }
+  slots.places.disabled = !seated;
+  note('places', seated ? '' : 'Players only');
+  badge('places', 0);
+  note('rules', '');
+  badge('rules', 0);
+  note('chat', '');
+  badge('chat', world.chat.unread());
 }
 
 function paint(world) {
   const { state, mySeat, names } = world;
-  for (const seat of [0, 1]) {
-    const chip = world.chips[seat];
-    const parts = chipParts(names, seat, mySeat, state.cash[seat]);
-    clear(chip);
-    chip.appendChild(el(world.doc, 'span', 'dc-chip-name', parts.name));
-    chip.appendChild(el(world.doc, 'span', 'dc-chip-cash', parts.cash));
-    if (state.phase !== 'over' && state.actor === seat) chip.classList.add('is-turn');
-    else chip.classList.remove('is-turn');
-  }
-  clear(world.potChip);
-  world.potChip.appendChild(el(world.doc, 'span', 'dc-chip-name', POT_NAME()));
-  world.potChip.appendChild(el(world.doc, 'span', 'dc-chip-cash', String(state.pot)));
+  paintPlates(world);
+  const d = decisionFor(state, mySeat, names);
 
   // Tokens are drawn where the walk has got to, not where the state says they
   // end up: the state, with the positions shown so far.
   const view = viewOf(world);
+  const lit = Number.isInteger(d.subject.square) ? d.subject.square : -1;
   world.tiles.forEach((tile, i) => {
     paintTile(tile, view, i);
     if (i === world.selected) tile.classList.add('is-picked');
     else tile.classList.remove('is-picked');
+    // The square the live decision is about is lit, whatever else the stage shows.
+    if (i === lit) tile.dataset.lit = '1';
+    else delete tile.dataset.lit;
   });
 
-  world.dice.textContent = state.die1 > 0 ? `${FACES[state.die1 - 1]} ${FACES[state.die2 - 1]}` : '';
-
-  clear(world.feed);
-  for (const line of feedLines(state, FEED_LINES, names)) world.feed.appendChild(el(world.doc, 'li', 'dc-line', line));
-
   paintSheet(world);
-  paintStrips(world);
-  paintRoom(world, paintDecision(world));
+  paintStage(world, d);
+  paintBar(world);
 }
+
+
 
 /** The state as the board should show it right now: tokens where the walk has
  *  got to, and a traded tile still in its old owner's colour until its turn
@@ -743,10 +1218,13 @@ function viewOf(world) {
   return view;
 }
 
+
 /** The room calls this on every snapshot. The scene is built once and cached
  *  on the host; if the host has since been cleared (the room switched games)
- *  it is built again. */
-export function renderBoard(state, host, { mySeat, names, onAction }) {
+ *  it is built again. Everything in `ctx` beyond mySeat, names and onAction is
+ *  optional: a missing looks gives the defaults, and the rest does nothing. */
+export function renderBoard(state, host, ctx = {}) {
+  const { mySeat, names, onAction, looks, onLook, chat, onRematch } = ctx;
   let world = host.__dc;
   if (!world || !Array.from(host.children).includes(world.root)) {
     world = buildWorld(host.ownerDocument, host);
@@ -756,11 +1234,21 @@ export function renderBoard(state, host, { mySeat, names, onAction }) {
   world.state = state;
   world.mySeat = mySeat === undefined ? null : mySeat;
   world.names = names || [];
-  world.onAction = onAction;
+  world.onAction = onAction || (() => {});
+  world.onLook = onLook || (() => {});
+  world.onRematch = onRematch || (() => {});
+  world.chat = chat || { toggle() {}, unread: () => 0 };
+  // A genuinely new state ends any question that was open about the old one; a state
+  // delivered twice (the room redraws on every listener) leaves it alone.
+  const json = JSON.stringify(state);
+  if (json !== world.stateJson) { world.stateJson = json; world.confirming = false; }
+  applyLooks(world, resolveLooks(looks));
   noteChanges(world, prev);
   animate(world);
   paint(world);
 }
+
+
 
 /** The cheap one-shot flourishes. Each compares against what was last seen, so
  *  a re-delivered state (the score write after a win) triggers nothing. */
@@ -851,7 +1339,7 @@ function flick(world, from, to, amount) {
   coin.dataset.from = String(from);
   coin.dataset.to = String(to);
   coin.setAttribute('aria-hidden', 'true');
-  world.bar.appendChild(coin);
+  world.plates.appendChild(coin);
   setTimeout(() => { if (typeof coin.remove === 'function') coin.remove(); }, COIN_MS);
 }
 

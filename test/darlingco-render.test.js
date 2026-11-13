@@ -295,7 +295,7 @@ test('the other seat gets Accept and Decline, never Offer', () => {
 
 test('the offer shows live net worth, so accepting is never a surprise', () => {
   const t = decisionFor(withState({ settleOffer: 0, cash: [1000, 1400] }), 1).tally;
-  assert.ok(t.detail.includes('1000') && t.detail.includes('1400'));
+  assert.ok(t.detail.includes('you £1,400, them £1,000'), t.detail);
 });
 
 test('every button the centre offers is accepted by the engine', () => {
@@ -1102,14 +1102,14 @@ test('the Deals slot opens the sheet; + New deal is off with its reason at the c
   const fresh = byType(h.__dc.sheet, 'new-deal');
   assert.equal(fresh.disabled, true);
   assert.match(text(h.__dc.sheet), /limit/i);
-  // Phones have no hover: a watcher's slot says why in the slot itself.
+  // A greyed slot just looks greyed: the reason is the title, not part of the label.
   render(s, h, { mySeat: null, names: ['Ann', 'Bo'], onAction: () => {} });
   assert.equal(slot.disabled, true);
-  assert.match(text(slot), /watching/i);
+  assert.equal(slot.attrs.title, 'Only the players can make deals');
   assert.equal(h.__dc.sheetMode, null, 'a watcher has no deals sheet');
   render({ ...s, phase: 'over' }, h, { mySeat: 0, names: ['Ann', 'Bo'], onAction: () => {} });
   assert.equal(slot.disabled, true);
-  assert.match(text(slot), /over/i);
+  assert.equal(slot.attrs.title, 'The game is over');
 });
 
 test('Counter is enabled for the seat being asked, and it opens the builder rather than sending', () => {
@@ -2612,7 +2612,8 @@ test('My places lists each group with its standing, each place with rent, pips a
   const rom = all(sheetOf(host)).find((n) => n.classes.has('dc-set') && n.dataset.set === 'romcom');
   const row6 = all(rom).find((n) => n.classes.has('dc-place') && n.dataset.square === '6');
   assert.equal(all(row6).filter((n) => n.classes.has('dc-pip')).length, 2, 'two houses are two pips');
-  assert.ok(byType(row6, 'sell') && byType(row6, 'build') && byType(row6, 'mortgage'));
+  assert.ok(byType(row6, 'sell') && byType(row6, 'build'));
+  assert.equal(byType(row6, 'mortgage'), undefined, 'mortgaging is off the table while the set has houses');
   // a set you hold only part of has no stepper at all (nothing to build on): just Mortgage
   const far = all(sheetOf(host)).find((n) => n.classes.has('dc-set') && n.dataset.set === 'far');
   assert.equal(byType(far, 'build'), undefined);
@@ -3493,4 +3494,35 @@ test('every flourish class the renderer adds has a rule that targets something i
   // Reduced motion: no coin, and no animation on any of them.
   const rm = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce) {\n  .dc-tok, .dc-tile.dc-pop'));
   assert.ok(/\.dc-coin[^{]*\{\s*display:\s*none/.test(rm.slice(0, rm.indexOf('\n}\n') + 3)), 'the coin is hidden');
+});
+
+test('a set with buildings draws no Mortgage control or reason; a clear set and a mortgaged place still do', () => {
+  const built = ownerState([6, 8, 9], 0, { built: setChar(BLANK_BUILT, 6, '1') });
+  const { host } = stage(built);
+  clickSlot(host, 'places');
+  const rows = all(sheetOf(host)).filter((n) => n.classes.has('dc-place'));
+  assert.equal(rows.length, 3);
+  for (const row of rows) {
+    assert.equal(byType(row, 'mortgage'), undefined, `Mortgage drawn on ${row.dataset.square}`);
+    assert.doesNotMatch(text(row), /Sell the set/);
+  }
+  const clear = stage(ownerState([6, 8, 9], 0));
+  clickSlot(clear.host, 'places');
+  for (const row of all(sheetOf(clear.host)).filter((n) => n.classes.has('dc-place'))) assert.ok(byType(row, 'mortgage'), `no Mortgage on ${row.dataset.square}`);
+  const lifted = stage(ownerState([6, 8, 9], 0, { mortg: setChar(BLANK_MORTG, 6, '1') }));
+  clickSlot(lifted.host, 'places');
+  const six = all(sheetOf(lifted.host)).find((n) => n.classes.has('dc-place') && n.dataset.square === '6');
+  assert.ok(byType(six, 'unmortgage'));
+});
+
+test('a greyed bar slot does not print its reason into the label, but keeps it as title and aria-label', () => {
+  const over = withState({ phase: 'over', over: 'bankrupt', winner: 1 });
+  const { host } = stage(over);
+  for (const slot of ['deals', 'places']) {
+    const b = host.__dc.slots[slot];
+    assert.equal(b.disabled, true);
+    assert.doesNotMatch(text(b), /Over/, slot);
+    assert.equal(b.attrs.title, 'The game is over');
+    assert.equal(b.attrs['aria-label'], 'The game is over');
+  }
 });

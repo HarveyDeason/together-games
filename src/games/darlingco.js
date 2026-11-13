@@ -134,6 +134,8 @@ function addCash(state, seat, delta) {
 }
 
 /** `state` with `line` on its log. */
+const pounds = (n) => `£${n.toLocaleString('en-GB')}`;
+
 function say(state, line) {
   return { ...state, log: logged(state, line) };
 }
@@ -542,8 +544,8 @@ function doTally(state, type, seat) {
   // auction is genuinely live (bankrupt cannot: it is gated to 'pay'). Hence the clear-down.
   const end = { ...clearedForEnd(counted), phase: 'over', over: 'tally', winner };
   return { state: say(end, winner === -1
-    ? `Tallied up: ${mine} each. A draw.`
-    : `Tallied up: Player ${winner + 1} is ahead, ${Math.max(mine, theirs)} to ${Math.min(mine, theirs)}.`) };
+    ? `Tallied up: ${pounds(mine)} each. A draw.`
+    : `Tallied up: Player ${winner + 1} is ahead, ${pounds(Math.max(mine, theirs))} to ${pounds(Math.min(mine, theirs))}.`) };
 }
 
 /** The trade actions belong to whoever is at the table, like the tally ones:

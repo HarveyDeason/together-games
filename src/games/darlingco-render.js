@@ -743,14 +743,17 @@ function placeRow(world, group, p) {
   const controls = el(doc, 'div', 'dc-place-ctl');
   const mortgage = p.mortgaged ? p.buttons.unmortgage : p.buttons.mortgage;
   const left = el(doc, 'div', 'dc-place-mort');
-  const pill = actionButton(world, { label: p.mortgaged ? `Lift · ${sterling(p.lift)}` : `Mortgage +${sterling(p.gain)}`, disabled: mortgage.disabled, why: mortgage.why },
-    () => mortgage.action, 'dc-mortbtn');
-  pill.dataset.type = mortgage.type;
-  left.appendChild(pill);
-  left.appendChild(helpButton(world, 'mortgage', 'What is a mortgage?'));
+  const whys = [];
+  if (p.mortgageOnTable) {
+    const pill = actionButton(world, { label: p.mortgaged ? `Lift · ${sterling(p.lift)}` : `Mortgage +${sterling(p.gain)}`, disabled: mortgage.disabled, why: mortgage.why },
+      () => mortgage.action, 'dc-mortbtn');
+    pill.dataset.type = mortgage.type;
+    left.appendChild(pill);
+    left.appendChild(helpButton(world, 'mortgage', 'What is a mortgage?'));
+    whys.push(mortgage.disabled ? mortgage.why : '');
+  }
   controls.appendChild(left);
 
-  const whys = [mortgage.disabled ? mortgage.why : ''];
   if (group.stepper) {
     const { sell, build } = p.buttons;
     const step = el(doc, 'div', 'dc-stp');
@@ -1617,6 +1620,10 @@ function paintBar(world) {
   const { state, mySeat, slots } = world;
   const seated = mySeat === 0 || mySeat === 1;
   const note = (slot, text) => { slots[slot].children[2].textContent = text; };
+  const reason = (slot, why) => {
+    if (why && slot.setAttribute) { slot.setAttribute('title', why); slot.setAttribute('aria-label', why); }
+    else if (slot.removeAttribute) { slot.removeAttribute('title'); slot.removeAttribute('aria-label'); }
+  };
   const badge = (slot, n) => {
     slots[slot].children[3].textContent = n > 0 ? String(n) : '';
     slots[slot].children[3].hidden = !(n > 0);
@@ -1626,14 +1633,15 @@ function paintBar(world) {
   // greys it; a full table of deals is said inside, on + New deal.
   const open = seated && state.phase !== 'over';
   slots.deals.disabled = !open;
-  if (slots.deals.setAttribute && !open) slots.deals.setAttribute('title', canOpenDeal(state, mySeat).why);
-  // A greyed slot says why in words, not only in a title.
-  note('deals', open ? '' : !seated ? 'Watching' : 'Over');
+  reason(slots.deals, open ? '' : canOpenDeal(state, mySeat).why);
+  // A greyed slot just looks greyed; its reason rides on the title and aria-label.
+  note('deals', '');
   const waitingOnMe = seated ? tradeStrips(state, mySeat, world.names).filter((t) => t.badge === 'answer').length : 0;
   badge('deals', waitingOnMe);
 
   slots.places.disabled = !seated || state.phase === 'over';
-  note('places', !seated ? 'Players only' : state.phase === 'over' ? 'Over' : '');
+  note('places', '');
+  reason(slots.places, !seated ? 'Players only' : state.phase === 'over' ? 'The game is over' : '');
   badge('places', 0);
   note('rules', '');
   badge('rules', 0);

@@ -1840,3 +1840,13 @@ test('calling it with an auction and a deal both live leaves neither in the save
   assert.equal(over.aucBid, 0);
   assert.equal(over.aucBy, -1);
 });
+
+test('the tally lines show money with a pound sign and a thousands separator', () => {
+  const rich = { ...createInitialState(), cash: [500, 2046] };
+  const s = ok(tally(ok(tally(rich, 'offer-tally', 0)), 'accept-tally', 1));
+  const line = s.log[s.log.length - 1];
+  assert.match(line, /^Tallied up: Player 2 is ahead, £2,046 to £500\.$/);
+  assert.ok(line.length <= MAX_LOG_LINE);
+  const draw = ok(tally(ok(tally(createInitialState(), 'offer-tally', 1)), 'accept-tally', 0));
+  assert.match(draw.log[draw.log.length - 1], /^Tallied up: £[\d,]+ each\. A draw\.$/);
+});

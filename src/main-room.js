@@ -370,7 +370,11 @@ async function switchGame(id) {
       }
       return { id, state: getGame(id).createInitialState() };
     }).then((result) => {
-      if (!result.committed) showBanner('Finish this game before switching.');
+      if (!result.committed) {
+        const text = 'Finish this game before switching.';
+        showBanner(text);
+        setTimeout(() => { if (bannerEl.textContent === text) showBanner(''); }, 2500);
+      }
     });
   } catch {
     showBanner('Could not switch game.');

@@ -506,3 +506,20 @@ test('soundsFor: money in sounds for the receiver', async () => {
   assert.deepEqual(soundsFor(s, up, 0), ['cashIn']);
   assert.deepEqual(soundsFor(s, up, 1), ['cashOut']);
 });
+
+test('storyFor drops the card text while the card is up, but the stored log and later views keep it', () => {
+  const log = ['Player 1 rolls', 'Player 1 draws from Jiggly Boo: Get out of bed. Collect £50.'];
+  const showing = { ...fresh(), phase: 'card', log };
+  assert.deepEqual(storyFor(showing, NAMES), ['Harvey rolls', 'Harvey draws from Jiggly Boo.']);
+  assert.equal(showing.log[1], log[1]);
+  assert.deepEqual(storyFor({ ...showing, phase: 'end' }, NAMES), ['Harvey rolls', 'Harvey draws from Jiggly Boo: Get out of bed. Collect £50.']);
+});
+
+test('placesFor says Mortgage is off the table while any place in the set has buildings', () => {
+  const built = placesFor(table(), 0);
+  const far = built.groups.find((g) => g.key === 'far');
+  assert.ok(far.places.every((p) => p.mortgageOnTable === false));
+  const romcom = built.groups.find((g) => g.key === 'romcom');
+  assert.ok(romcom.places.every((p) => p.mortgageOnTable === true));
+  assert.equal(built.groups.find((g) => g.key === 'stn').places[0].mortgageOnTable, true, 'a station has no buildings');
+});

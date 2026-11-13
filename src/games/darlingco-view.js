@@ -72,7 +72,7 @@ function tallyFor(state, mySeat, names) {
   return {
     canOffer: false,
     waiting: false,
-    detail: `${seatName(names, offer)} offers to tally up and call it. Net worth right now: you ${mine}, them ${theirs}. It is counted at the moment you accept.`,
+    detail: `${seatName(names, offer)} offers to tally up and call it. Net worth right now: you ${sterling(mine)}, them ${sterling(theirs)}. It is counted at the moment you accept.`,
     buttons: [
       { type: 'accept-tally', label: 'Accept', kind: 'primary' },
       { type: 'decline-tally', label: 'Decline', kind: 'secondary' }
@@ -81,7 +81,15 @@ function tallyFor(state, mySeat, names) {
 }
 
 /** The running story under the name the stage uses: the last `n` lines. */
-export const storyFor = (state, names, n = 2) => feedLines(state, n, names);
+export function storyFor(state, names, n = 2) {
+  const lines = feedLines(state, n, names);
+  // While the stage shows the card, the line says who drew from which deck and
+  // leaves the text to the card itself (the stored log line is untouched).
+  if (state.phase === 'card' && lines.length) {
+    lines[lines.length - 1] = lines[lines.length - 1].replace(/^(.+ draws from [^:]+): .*$/, '$1.');
+  }
+  return lines;
+}
 
 /** What the centre must offer `mySeat` right now:
  *  { title, detail, buttons: [{type, label, kind}], mine, tally, subject, ... }
@@ -359,7 +367,9 @@ export function placesFor(state, mySeat) {
           square: sq, name: spec.name,
           rentNow: rentFor(state, sq, 7), rentText,
           gain: spec.mortgage, lift: unmortgageCost(spec.mortgage),
-          houses: housesOn(state, sq), mortgaged, buttons
+          houses: housesOn(state, sq), mortgaged, buttons,
+          // Mortgaging is not on the table while any place in the set has buildings.
+          mortgageOnTable: mortgaged || !(spec.set ? SETS[spec.set].squares : [sq]).some((q) => housesOn(state, q) > 0)
         };
       })
     });

@@ -277,6 +277,8 @@ function actionButton(world, spec, buildAction, className, onSend) {
     if (spec.thenRoll) chain = chain.then(() => followWithRoll(world));
     chain.then(() => {}, () => {}).then(() => {
       setSpinning(world, false);   // the write has settled: a refusal leaves no state to stop it
+      // A roll that moved nothing was refused: the tap's dice must not silence the next real roll's.
+      if (world.state && world.state.moves === world.spunMoves) world.spunAt = 0;
       world.pending = false;
       b.disabled = false;
       paint(world);       // the sheet closes here if the state shows the send landed
@@ -396,7 +398,7 @@ function showFaces(world) {
 function setSpinning(world, on) {
   try {
     if (on && !motionOn()) return;
-    if (on) { world.spunAt = Date.now(); world.sound.play('dice'); }   // the roller hears the throw when they tap
+    if (on) { world.spunAt = Date.now(); world.spunMoves = world.state ? world.state.moves : -1; ring(world, 'dice'); }   // the roller hears the throw when they tap
     world.diceBox.classList[on ? 'add' : 'remove']('is-spinning');
   } catch (e) { /* losing a spin is cheap */ }
 }
@@ -509,7 +511,7 @@ function buildWorld(doc, host) {
     generation: 0, flipGeneration: 0, hold: null, animatedKey: null, stateJson: '',
     shown: null, builtSeen: null, state: null, mySeat: null, names: [],
     tumbling: false, ...buildDice(doc),
-    soundOn: true, sound: null, spunAt: 0, deferred: null,
+    soundOn: true, sound: null, spunAt: 0, spunMoves: -1, deferred: null,
     looks: null, looksKey: '', chat: { toggle() {}, unread: () => 0 }, onLook: () => {}, onRematch: () => {}, onAction: () => {}
   };
   // Audio may only start from a real tap: one listener, added once, wakes it.
@@ -1714,7 +1716,7 @@ export function renderBoard(state, host, ctx = {}) {
  *  a re-delivered state (the score write after a win) triggers nothing. */
 function noteChanges(world, prev) {
   const s = world.state;
-  noteSounds(world, prev);
+  try { noteSounds(world, prev); } catch (e) { /* a sound must never abort a paint */ }
   const built = world.tiles.map((_, i) => housesOn(s, i));
   const seen = world.builtSeen;
   world.builtSeen = built;
@@ -1760,11 +1762,16 @@ function noteSounds(world, prev) {
   if (wasRoll(prev, s) && motionOn()) {
     const spun = Date.now() - world.spunAt < 4000;
     world.spunAt = 0;
-    if (!spun) world.sound.play('dice');
+    if (!spun) ring(world, 'dice');
     world.deferred = { key: `${s.moves}:${s.actor}`, names: names.filter((n) => n !== 'dice') };
     return;
   }
-  names.forEach((n) => world.sound.play(n));
+  names.forEach((n) => ring(world, n));
+}
+
+/** Play one sound; the sound object never throws, but nothing here may rely on that. */
+function ring(world, name) {
+  try { world.sound.play(name); } catch (e) { /* a lost sound is cheap */ }
 }
 
 function gavel(tile) {
@@ -1826,7 +1833,7 @@ function flick(world, from, to, amount) {
 function settle(world, repaint) {
   const d = world.deferred;
   world.deferred = null;
-  if (d && d.key === world.animatedKey) d.names.forEach((n) => world.sound.play(n));
+  if (d && d.key === world.animatedKey) d.names.forEach((n) => ring(world, n));
   world.shown = [...world.state.pos];
   world.busy = false;
   world.tumbling = false;
@@ -1867,7 +1874,7 @@ function animate(world, prev) {
       for (const seat of [0, 1]) {
         if (step[seat] < paths[seat].length) { world.shown[seat] = paths[seat][step[seat]++]; hopped = true; }
       }
-      if (hopped) world.sound.play('step');   // one tick per hop, whoever walks
+      if (hopped) ring(world, 'step');   // one tick per hop, whoever walks
       if (step[0] < paths[0].length || step[1] < paths[1].length) {
         paintTokens(world);
         setTimeout(hop, STEP_MS);

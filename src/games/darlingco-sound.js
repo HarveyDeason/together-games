@@ -122,7 +122,7 @@ export function createSound({ AudioContextCtor, enabled = () => true } = {}) {
     unlock() {
       try {
         build();
-        if (ctx && ctx.state === 'suspended' && typeof ctx.resume === 'function') {
+        if (ctx && ctx.state !== 'running' && ctx.state !== 'closed' && typeof ctx.resume === 'function') {
           const p = ctx.resume();
           if (p && typeof p.catch === 'function') p.catch(() => {});
         }

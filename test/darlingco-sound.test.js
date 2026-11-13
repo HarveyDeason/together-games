@@ -80,3 +80,18 @@ test('all ten sounds play, last under 400ms and release every node', async () =>
     assert.equal(ctx.live, base, `${name} released its nodes`);
   }
 });
+
+test('unlock resumes a context in any state but running or closed (iOS reports interrupted)', () => {
+  for (const [state, resumes] of [['suspended', 1], ['interrupted', 1], ['running', 0], ['closed', 0]]) {
+    const log = { made: [] };
+    const C = fakeCtor(log);
+    let resumed = 0;
+    C.prototype.resume = function () { resumed++; return Promise.resolve(); };
+    const s = createSound({ AudioContextCtor: C });
+    s.unlock();                         // builds it (suspended)
+    resumed = 0;
+    log.made[0].state = state;
+    s.unlock();
+    assert.equal(resumed, resumes, state);
+  }
+});

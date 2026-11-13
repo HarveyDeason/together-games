@@ -3386,6 +3386,88 @@ test('a re-delivered state plays no sound and starts no tumble', () => {
   });
 });
 
+// ---- sound wiring: when each name is played, and never twice ----------------------------
+// Seat 0 rolls 2+2 from square 3 onto the chance square 7: four hops, then a card is turned.
+const heardFrom = (h) => { const played = []; h.__dc.sound.play = (n) => { played.push(n); }; return played; };
+const count = (list, n) => list.filter((x) => x === n).length;
+
+test('a roll is heard as dice, one step a hop, then its result sounds once after the walk settles', () => {
+  withTimers((t) => {
+    const { from, next } = rollFrom([3, 0], 2, 2);
+    assert.equal(next.phase, 'card');
+    const h = mount(from, 1);
+    const played = heardFrom(h);
+    draw(h, next);
+    assert.deepEqual(played, ['dice'], 'the dice start the moment the state arrives and nothing else yet');
+    draw(h, { ...next });                                      // a room redraw mid-tumble
+    let sawRedeliveryMidWalk = false;
+    while (t.pending()) {
+      t.step();
+      if (count(played, 'step') === 2 && !sawRedeliveryMidWalk) { sawRedeliveryMidWalk = true; draw(h, { ...next }); }
+      if (t.pending()) assert.equal(count(played, 'card'), 0, 'the result waits for the walk to settle');
+    }
+    assert.ok(sawRedeliveryMidWalk, 'a state was re-delivered mid-walk');
+    assert.equal(count(played, 'dice'), 1);
+    assert.equal(count(played, 'step'), 4, 'one tick per hop');
+    assert.equal(count(played, 'card'), 1, 'the card is heard exactly once');
+    assert.ok(played.lastIndexOf('step') < played.indexOf('card'), 'and after the last hop');
+  });
+});
+
+test('a newer move arriving mid-walk drops the deferred sounds of the old roll', () => {
+  withTimers((t) => {
+    const { from, next } = rollFrom([3, 0], 2, 2);
+    const h = mount(from, 1);
+    const played = heardFrom(h);
+    draw(h, next);
+    while (count(played, 'step') < 2) t.step();
+    const newer = applyAction(next, { type: 'card-ok' }, 0).state;
+    assert.ok(newer && newer.moves > next.moves);
+    draw(h, newer);
+    t.flush();
+    assert.equal(count(played, 'card'), 0, 'the superseded chain never plays its card');
+  });
+});
+
+test('the same state rendered twice at rest plays nothing', () => {
+  withTimers((t) => {
+    const { next } = rollFrom([3, 0], 2, 2);
+    const h = mount(next, 1);
+    const played = heardFrom(h);
+    draw(h, next);
+    draw(h, { ...next });
+    t.flush();
+    assert.deepEqual(played, []);
+  });
+});
+
+test('a throwing sound never aborts a paint', () => {
+  withTimers((t) => {
+    const { from, next } = rollFrom([3, 0], 2, 2);
+    const h = mount(from, 1);
+    h.__dc.sound.play = () => { throw new Error('audio exploded'); };
+    draw(h, { ...next, cash: [1234, 987] });
+    t.flush();
+    assert.ok(text(h).includes('£1,234'), 'the board painted the new state');
+  });
+});
+
+test('a refused roll does not let its dice sound silence the next real roll', async () => {
+  const from = at([3, 0], { moves: 1, phase: 'roll', actor: 0 });
+  const h = mount(from, 0, () => Promise.resolve());            // the write settles and no state follows
+  const played = heardFrom(h);
+  rollBtn(h).click();
+  assert.deepEqual(played, ['dice'], 'the tap is heard');
+  await new Promise((r) => setImmediate(r));
+  assert.equal(h.__dc.spunAt, 0, 'the write settled with no roll: the marker is cleared');
+  withTimers((t) => {
+    const r = applyAction(from, { type: 'roll', die1: 2, die2: 2 }, 0);
+    render(r.state, h, { mySeat: 0, names: ['Ann', 'Bo'], onAction: () => {} });
+    t.flush();
+    assert.equal(count(played, 'dice'), 2, 'the later roll is heard');
+  });
+});
+
 test('every flourish class the renderer adds has a rule that targets something in the tile and plate DOM', () => {
   const css = cssText();
   const src = readFileSync(new URL('../src/games/darlingco-render.js', import.meta.url), 'utf8');

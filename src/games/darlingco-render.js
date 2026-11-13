@@ -200,6 +200,26 @@ function fitNames(world) {
 // switched to another game and back) takes the old board's listeners off first.
 const watching = new WeakMap();
 
+/** Stop a board for good: its walk and flip chains end at their next tick (so no step sound
+ *  or paint comes late), whatever result sounds were waiting are dropped, and its resize, font
+ *  and size listeners come off. The room calls it before it empties the host. Optional in the
+ *  game contract: the other games have nothing to stop. */
+export function dispose(host) {
+  const world = host && host.__dc;
+  if (world) {
+    world.generation++;
+    world.flipGeneration++;
+    world.deferred = null;
+    world.hold = null;
+    world.busy = false;
+    world.tumbling = false;
+    world.disposed = true;
+  }
+  const off = watching.get(host);
+  if (off) off();
+  watching.delete(host);
+}
+
 /** Fit now, and again whenever the board changes size or a font arrives. */
 function watchNames(world, host) {
   const previous = watching.get(host);
@@ -508,7 +528,7 @@ function buildWorld(doc, host) {
     doc, root, board, plates, plateNodes, discs, pot, bar, slots, tiles, mid, story, subject, strips, actions, sheet, dim,
     selected: -1, picking: false, confirming: false, storyOpen: false, pickedHere: false,
     bidStep: null, bidKey: '', sheetMode: null, rulesTab: 'turn', rulesCard: '', draft: null, reviewId: null, sent: null, pending: false, busy: false,
-    generation: 0, flipGeneration: 0, hold: null, animatedKey: null, stateJson: '',
+    generation: 0, flipGeneration: 0, hadSeat: false, hold: null, animatedKey: null, stateJson: '',
     shown: null, builtSeen: null, state: null, mySeat: null, names: [],
     tumbling: false, ...buildDice(doc),
     soundOn: true, sound: null, spunAt: 0, spunMoves: -1, deferred: null,
@@ -574,7 +594,14 @@ function paintSheet(world) {
   const mode = world.sheetMode;
   // A watcher has no places or deals, and a finished game has none left to manage: the
   // result is what to see, so those faces step aside (the rules stay readable).
-  if (NEEDS_SEAT.includes(mode) && (!seated || world.state.phase === 'over')) { shutSheet(world); return; }
+  if (NEEDS_SEAT.includes(mode) && world.state.phase === 'over') { shutSheet(world); return; }
+  if (NEEDS_SEAT.includes(mode) && !seated) {
+    // The room passes no seat while the phone is offline, and phones drop connection routinely: a
+    // player who has had a seat keeps the sheet's mode and the draft in it (out of sight) and gets
+    // the sheet back with the seat. Someone who was never seated has no sheet to keep.
+    if (world.hadSeat) hideSheet(world); else shutSheet(world);
+    return;
+  }
   if (mode === 'places') paintPlaces(world);
   else if (mode === 'deals') paintDeals(world);
   else if (mode === 'deal') paintBuilder(world);
@@ -1702,6 +1729,7 @@ export function renderBoard(state, host, ctx = {}) {
   const prev = world.state;
   world.state = state;
   world.mySeat = mySeat === undefined ? null : mySeat;
+  if (world.mySeat === 0 || world.mySeat === 1) world.hadSeat = true;
   world.names = names || [];
   world.soundOn = !ctx.sound || ctx.sound.on !== false;
   world.onAction = onAction || (() => {});
@@ -1765,7 +1793,11 @@ function noteSounds(world, prev) {
   const s = world.state;
   if (!prev || s.moves === prev.moves) return;
   const names = soundsFor(prev, s, world.mySeat);
-  world.deferred = null;   // anything still waiting belongs to a superseded chain
+  // Anything still waiting belongs to a roll's walk. A side move (build, mortgage, a deal, the
+  // tally: either seat, any time) leaves phase, actor, turn and every position alone, so the walk
+  // in flight carries on and settles on the latest state, and the roll's result sounds still play
+  // when it does. Anything else (a new roll, a card resolved, the game ending) supersedes it.
+  if (!continuesWalk(prev, s)) world.deferred = null;
   if (!names.length) return;
   if (wasRoll(prev, s) && motionOn()) {
     const spun = Date.now() - world.spunAt < 4000;
@@ -1775,6 +1807,13 @@ function noteSounds(world, prev) {
     return;
   }
   names.forEach((n) => ring(world, n));
+}
+
+/** True for a move that changes neither where anyone is nor whose step the game is on. */
+function continuesWalk(prev, s) {
+  return s.moves > prev.moves && s.phase !== 'over' && s.phase === prev.phase
+    && s.actor === prev.actor && s.turn === prev.turn
+    && s.pos[0] === prev.pos[0] && s.pos[1] === prev.pos[1];
 }
 
 /** Play one sound; the sound object never throws, but nothing here may rely on that. */
@@ -1841,7 +1880,8 @@ function flick(world, from, to, amount) {
 function settle(world, repaint) {
   const d = world.deferred;
   world.deferred = null;
-  if (d && d.key === world.animatedKey) d.names.forEach((n) => ring(world, n));
+  // `noteSounds` is what drops a superseded roll's sounds, so what is waiting here is the live chain's.
+  if (d) d.names.forEach((n) => ring(world, n));
   world.shown = [...world.state.pos];
   world.busy = false;
   world.tumbling = false;

@@ -95,3 +95,30 @@ test('unlock resumes a context in any state but running or closed (iOS reports i
     assert.equal(resumed, resumes, state);
   }
 });
+
+test('two sound objects with the same constructor share one context', () => {
+  const log = { made: [] };
+  const C = fakeCtor(log);
+  const a = createSound({ AudioContextCtor: C, enabled: () => true });
+  const b = createSound({ AudioContextCtor: C, enabled: () => true });
+  a.unlock(); b.unlock(); a.unlock();
+  assert.equal(log.made.length, 1, 'one AudioContext for the page');
+  const c = createSound({ AudioContextCtor: fakeCtor(log), enabled: () => true });
+  c.unlock();
+  assert.equal(log.made.length, 2, 'a different constructor is its own context');
+});
+
+test('the shared context plays for the second sound object, and its enabled flag is its own', () => {
+  const log = { made: [] };
+  const C = fakeCtor(log);
+  let bOn = false;
+  const a = createSound({ AudioContextCtor: C, enabled: () => true });
+  const b = createSound({ AudioContextCtor: C, enabled: () => bOn });
+  a.unlock(); b.unlock();
+  const ctx = log.made[0], base = ctx.live;
+  b.play('buy');
+  assert.equal(ctx.live, base, 'b is off');
+  bOn = true; b.play('buy');
+  assert.ok(ctx.live > base, 'b sounds through the shared context');
+});
+

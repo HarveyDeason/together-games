@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { gridCell, edgeOf, buildBoard, paintTile, decisionFor, feedLines, propertyFor, cardFor, walkPath, chipParts, tradeStrips, canOpenDeal, sendLanded, stripsShown, STRIP_CAP, auctionFor,
   dealSheetFor, dealReviewFor, flipOrder, nudgeCash, bumpCash, toggleChip, draftFromDeal, tidyDraft, DICE_MS } from '../src/games/darlingco-render.js';
 import { readFileSync } from 'node:fs';
-import { createInitialState, render, applyAction, meta } from '../src/games/darlingco.js';
+import { createInitialState, render, dispose, applyAction, meta } from '../src/games/darlingco.js';
 import { COLOURS, DEFAULT_LOOKS } from '../src/games/darlingco-pieces.js';
 import { setChar, BLANK_OWN, BLANK_MORTG, BLANK_PROPS, BLANK_BUILT, dealChar, dealDest } from '../src/games/darlingco-state.js';
 import { SQUARES, SETS, STATION_RENT, MIN_BID, BID_STEP, MAX_TRADES } from '../src/games/darlingco-board.js';
@@ -1106,10 +1106,39 @@ test('the Deals slot opens the sheet; + New deal is off with its reason at the c
   render(s, h, { mySeat: null, names: ['Ann', 'Bo'], onAction: () => {} });
   assert.equal(slot.disabled, true);
   assert.equal(slot.attrs.title, 'Only the players can make deals');
-  assert.equal(h.__dc.sheetMode, null, 'a watcher has no deals sheet');
+  assert.equal(h.__dc.sheetMode, 'deals', 'a dropped connection keeps the sheet that was open, out of sight');
+  assert.equal(h.__dc.sheet.hidden, true);
+  // Someone who was never seated has no sheet to keep.
+  const watcher = mount(s, null);
+  watcher.__dc.sheetMode = 'deals';
+  render(s, watcher, { mySeat: null, names: ['Ann', 'Bo'], onAction: () => {} });
+  assert.equal(watcher.__dc.sheetMode, null, 'a watcher has no deals sheet');
   render({ ...s, phase: 'over' }, h, { mySeat: 0, names: ['Ann', 'Bo'], onAction: () => {} });
   assert.equal(slot.disabled, true);
   assert.equal(slot.attrs.title, 'The game is over');
+});
+
+test('a deal draft survives the connection dropping and the seat coming back', () => {
+  const { host } = container();
+  const s = { ...owned({ 24: 0, 6: 1 }), cash: [1500, 1500] };
+  const ctx = (mySeat) => ({ mySeat, names: NAMES, onAction: () => Promise.resolve() });
+  renderBoard(s, host, ctx(0));
+  openNewDeal(host);
+  bySquare(host.__dc.sheet, 24).click();
+  bySquare(host.__dc.sheet, 6).click();
+  byStep(host.__dc.sheet, 'give-up').click();
+  const draft = host.__dc.draft;
+  assert.ok(draft.cash !== 0 && draft.props !== BLANK_PROPS, 'a draft was built');
+  renderBoard(s, host, ctx(null));                       // the phone went offline
+  renderBoard({ ...s }, host, ctx(null));                // and a snapshot arrives while it is
+  assert.deepEqual(host.__dc.draft, draft, 'the draft is kept while there is no seat');
+  assert.equal(host.__dc.sheetMode, 'deal');
+  assert.equal(host.__dc.sheet.hidden, true, 'and nothing is shown to nobody');
+  renderBoard(s, host, ctx(0));                          // back online
+  assert.equal(host.__dc.sheetMode, 'deal');
+  assert.equal(host.__dc.sheet.hidden, false, 'the builder is open again');
+  assert.deepEqual(host.__dc.draft, draft, 'with the same draft');
+  assert.equal(byType(host.__dc.sheet, 'trade-offer').disabled, false, 'ready to send');
 });
 
 test('Counter is enabled for the seat being asked, and it opens the builder rather than sending', () => {
@@ -3430,6 +3459,110 @@ test('a newer move arriving mid-walk drops the deferred sounds of the old roll',
   });
 });
 
+// The other player may build, sell, mortgage, unmortgage, deal or tally at any time, so their tap lands
+// while my piece is still walking. It is not a roll and moves nobody: my result sounds must survive it.
+const ownedBy1 = () => {
+  let own = '.'.repeat(40);
+  for (const q of setSquares) own = setChar(own, q, '1');
+  return own;
+};
+const sideMortgage = (state, seat = 1) => {
+  const r = applyAction(state, { type: 'mortgage', square: setSquares[0] }, seat);
+  assert.equal(r.error, undefined, r.error);
+  return r.state;
+};
+
+test('the other seat mortgaging mid-walk does not cost the roller their card sound', () => {
+  withTimers((t) => {
+    const { from, next } = rollFrom([3, 0], 2, 2, { own: ownedBy1() });
+    assert.equal(next.phase, 'card');
+    const h = mount(from, 1);
+    const played = heardFrom(h);
+    draw(h, next);
+    while (count(played, 'step') < 2) t.step();
+    const side = sideMortgage(next);
+    assert.equal(side.phase, next.phase);
+    assert.deepEqual(side.pos, next.pos);
+    assert.ok(side.moves > next.moves);
+    draw(h, side);
+    assert.equal(count(played, 'card'), 0, 'still waiting for the walk');
+    t.flush();
+    assert.equal(count(played, 'card'), 1, 'the card is heard exactly once');
+    assert.equal(count(played, 'dice'), 1);
+    assert.equal(count(played, 'step'), 4, 'the walk carried on, one tick per hop, none repeated');
+    assert.equal(count(played, 'cashIn'), 1, 'the mortgage own sound plays once as well');
+    assert.ok(played.lastIndexOf('step') < played.indexOf('card'), 'the card is after the last step');
+    assert.deepEqual(h.__dc.shown, side.pos, 'and the walk settled on the latest state');
+    assert.equal(h.__dc.busy, false);
+    // and nothing fires late
+    draw(h, { ...side });
+    t.flush();
+    assert.equal(count(played, 'card'), 1);
+  });
+});
+
+test('several side moves mid-walk still play the card once', () => {
+  withTimers((t) => {
+    const { from, next } = rollFrom([3, 0], 2, 2, { own: ownedBy1() });
+    const h = mount(from, 0);
+    const played = heardFrom(h);
+    draw(h, next, { mySeat: 0 });
+    while (count(played, 'step') < 1) t.step();
+    const m1 = sideMortgage(next);
+    draw(h, m1, { mySeat: 0 });
+    t.step();
+    const m2 = applyAction(m1, { type: 'unmortgage', square: setSquares[0] }, 1).state;
+    assert.ok(m2 && m2.moves > m1.moves);
+    draw(h, m2, { mySeat: 0 });
+    t.flush();
+    assert.equal(count(played, 'card'), 1);
+    assert.equal(count(played, 'step'), 4);
+  });
+});
+
+test('a new roll mid-walk still discards the deferred sounds of the old roll', () => {
+  withTimers((t) => {
+    const { from, next } = rollFrom([3, 0], 2, 2);
+    const h = mount(from, 1);
+    const played = heardFrom(h);
+    draw(h, next);
+    while (count(played, 'step') < 2) t.step();
+    const roll2 = applyAction({ ...next, phase: 'roll', actor: 1, turn: 1, doubles: 0 }, { type: 'roll', die1: 1, die2: 2 }, 1);
+    assert.equal(roll2.error, undefined, roll2.error);
+    draw(h, roll2.state);
+    t.flush();
+    assert.equal(count(played, 'card'), 0, 'the card of the old roll is never played late');
+  });
+});
+
+test('a turn step that moves nobody (the phase or the actor changing) still discards the old deferred sounds', () => {
+  for (const [label, patch] of [['phase', { phase: 'end' }], ['actor', { actor: 1 }], ['turn', { turn: 1 }]]) {
+    withTimers((t) => {
+      const { from, next } = rollFrom([3, 0], 2, 2);
+      const h = mount(from, 1);
+      const played = heardFrom(h);
+      draw(h, next);
+      while (count(played, 'step') < 2) t.step();
+      draw(h, { ...next, moves: next.moves + 1, ...patch });   // same squares, so only the guard can tell
+      t.flush();
+      assert.equal(count(played, 'card'), 0, `a ${label} change supersedes the roll`);
+    });
+  }
+});
+
+test('a move that ends the game mid-walk discards the deferred sounds', () => {
+  withTimers((t) => {
+    const { from, next } = rollFrom([3, 0], 2, 2);
+    const h = mount(from, 1);
+    const played = heardFrom(h);
+    draw(h, next);
+    while (count(played, 'step') < 2) t.step();
+    draw(h, { ...next, moves: next.moves + 1, phase: 'over', over: 'tally', winner: 0 });
+    t.flush();
+    assert.equal(count(played, 'card'), 0);
+  });
+});
+
 test('the same state rendered twice at rest plays nothing', () => {
   withTimers((t) => {
     const { next } = rollFrom([3, 0], 2, 2);
@@ -3525,4 +3658,70 @@ test('a greyed bar slot does not print its reason into the label, but keeps it a
     assert.equal(b.attrs.title, 'The game is over');
     assert.equal(b.attrs['aria-label'], 'The game is over');
   }
+});
+
+// ---- disposing a board ---------------------------------------------------------------------
+test('dispose stops a walk in flight: a pending timer plays nothing and paints nothing', () => {
+  withTimers((t) => {
+    const { from, next } = rollFrom([3, 0], 2, 2);
+    const h = mount(from, 1);
+    const played = heardFrom(h);
+    draw(h, next);
+    while (count(played, 'step') < 1) t.step();
+    const before = JSON.stringify(shownOf(h)), heard = [...played], tile = tileOfTok(h, 0);
+    assert.ok(t.pending() > 0, 'a hop is queued');
+    dispose(h);
+    assert.equal(h.__dc.deferred, null, 'the waiting result sounds are dropped');
+    t.flush();
+    assert.deepEqual(played, heard, 'no late step and no card');
+    assert.equal(JSON.stringify(shownOf(h)), before, 'no further hop');
+    assert.equal(tileOfTok(h, 0), tile, 'and nothing painted');
+  });
+});
+
+test('dispose ends a tile-flip chain and a tumble', () => {
+  withTimers((t) => {
+    const { from, next } = rollFrom([3, 0], 2, 2);
+    const h = mount(from, 1);
+    const played = heardFrom(h);
+    draw(h, next);                       // the dice are tumbling: the walk is still to come
+    dispose(h);
+    t.flush();
+    assert.equal(count(played, 'step'), 0, 'the walk never began');
+    assert.equal(count(played, 'card'), 0);
+    assert.equal(h.__dc.flipGeneration > 0, true);
+  });
+});
+
+test('dispose takes the resize and font listeners off, and is safe twice and on an empty host', () => {
+  const realAdd = globalThis.addEventListener, realRemove = globalThis.removeEventListener;
+  const live = new Set(), fontLive = new Set();
+  globalThis.addEventListener = (type, f) => { live.add(f); };
+  globalThis.removeEventListener = (type, f) => { live.delete(f); };
+  const fonts = { ready: Promise.resolve(), addEventListener: (type, f) => fontLive.add(f), removeEventListener: (type, f) => fontLive.delete(f) };
+  try {
+    const host = makeEl('div');
+    host.ownerDocument = { createElement: clickable, fonts };
+    render(fresh(), host, { mySeat: 0, names: ['Ann', 'Bo'], onAction: () => {} });
+    assert.equal(live.size, 1);
+    assert.equal(fontLive.size, 1);
+    dispose(host);
+    assert.equal(live.size, 0, 'no resize listener left');
+    assert.equal(fontLive.size, 0, 'no font listener left');
+    dispose(host);
+    dispose(makeEl('div'));
+  } finally {
+    if (realAdd === undefined) delete globalThis.addEventListener; else globalThis.addEventListener = realAdd;
+    if (realRemove === undefined) delete globalThis.removeEventListener; else globalThis.removeEventListener = realRemove;
+  }
+});
+
+test('the Darling module exports dispose as an optional hook and the others need none', async () => {
+  const mod = await import('../src/games/darlingco.js');
+  assert.equal(typeof mod.dispose, 'function');
+  const { GAMES } = await import('../src/games/registry.js');
+  for (const [id, g] of Object.entries(GAMES)) {
+    if (id !== 'darlingco') assert.equal(g.dispose, undefined, id);
+  }
+  assert.doesNotThrow(() => GAMES.tictactoe?.dispose?.({}));
 });

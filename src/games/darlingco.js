@@ -133,9 +133,9 @@ function addCash(state, seat, delta) {
   return { ...state, cash: withAt(state.cash, seat, state.cash[seat] + delta) };
 }
 
-/** `state` with `line` on its log. */
 const pounds = (n) => `£${n.toLocaleString('en-GB')}`;
 
+/** `state` with `line` on its log. */
 function say(state, line) {
   return { ...state, log: logged(state, line) };
 }
@@ -459,11 +459,6 @@ function doEnd(state, seat) {
     : `Player ${turn + 1}'s turn.`) };
 }
 
-/** build / sell / mortgage / unmortgage: side activities, not turn steps.
- *  They change cash and the 40-character strings only; phase, turn and actor
- *  are untouched, so either seat may do them in any live phase (the one
- *  exception, an auction, is sideGate's call). Your places are yours to manage. */
-
 /** Ending the game leaves nothing dangling in the saved state. `trades: {}`
  *  is the honest local value; the database drops it and readTrades copes. */
 const clearedForEnd = (state) => ({ ...state, trades: {}, aucSq: -1, aucBid: 0, aucBy: -1, aucPass: 0 });
@@ -473,6 +468,10 @@ const clearedForEnd = (state) => ({ ...state, trades: {}, aucSq: -1, aucBid: 0, 
  *  an integer (50 -> 56, 100 -> 111). */
 const unmortgageCost = (mortgage) => Math.ceil(mortgage * 11 / 10);
 
+/** build / sell / mortgage / unmortgage: side activities, not turn steps.
+ *  They change cash and the 40-character strings only; phase, turn and actor
+ *  are untouched, so either seat may do them in any live phase (the one
+ *  exception, an auction, is sideGate's call). Your places are yours to manage. */
 function doSide(state, action, seat) {
   const sq = action.square;
   if (!Number.isInteger(sq) || sq < 0 || sq >= SQUARES.length) return { error: 'bad-square' };
@@ -688,4 +687,4 @@ export function applyAction(state, action, seat) {
   }
 }
 
-export { renderBoard as render } from './darlingco-render.js';
+export { renderBoard as render, dispose } from './darlingco-render.js';

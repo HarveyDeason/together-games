@@ -107,3 +107,18 @@ export function looksFor(players, mySeat, saved) {
   }
   return resolveLooks(raw);
 }
+
+/** The look this device should write to its own player record, or null when
+ *  there is nothing to write. `looksFor` lays the saved look over this device's
+ *  seat on this phone only, so without a write the other phone sees the default
+ *  and can draw the two of us in swapped colours. What is written is the RESOLVED
+ *  look (seat 1 moved off a clash), so both phones compute the same pair once it
+ *  lands. This device's choice wins for its own seat, as in `looksFor`. Pure. */
+export function lookToPublish(players, clientId, saved) {
+  const me = players?.[clientId];
+  if (!me || (me.seat !== 0 && me.seat !== 1)) return null;
+  if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return null;
+  if (!validIndex(saved.piece, PIECES.length) || !validIndex(saved.colour, COLOURS.length)) return null;
+  const look = looksFor(players, me.seat, saved)[me.seat];
+  return me.piece === look.piece && me.colour === look.colour ? null : look;
+}

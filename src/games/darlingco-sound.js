@@ -62,6 +62,12 @@ const VOICES = {
   }
 };
 
+// One audio context per page, not per board: the room builds the board again each time it
+// switches away from Darling & Co. and back, and browsers cap live contexts (Chrome refuses
+// after about six), after which sound is silent until reload. Keyed on the constructor so a
+// test that injects its own gets its own.
+const SHARED = new WeakMap();
+
 /** `AudioContextCtor`: the browser's constructor (or undefined where there is none).
  *  `enabled()`: read on every `play`. */
 export function createSound({ AudioContextCtor, enabled = () => true } = {}) {
@@ -106,15 +112,22 @@ export function createSound({ AudioContextCtor, enabled = () => true } = {}) {
   }
 
   function build() {
-    if (ctx || typeof AudioContextCtor !== 'function') return;
-    ctx = new AudioContextCtor();
-    master = ctx.createGain();
-    master.gain.value = MASTER;
-    master.connect(ctx.destination);
-    const length = Math.max(1, Math.floor(ctx.sampleRate * 0.4));
-    noiseBuffer = ctx.createBuffer(1, length, ctx.sampleRate);
-    const data = noiseBuffer.getChannelData(0);
-    for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+    if (ctx) return;
+    if (typeof AudioContextCtor !== 'function') return;
+    let shared = SHARED.get(AudioContextCtor);
+    if (!shared) {
+      const made = new AudioContextCtor();
+      const gain = made.createGain();
+      gain.gain.value = MASTER;
+      gain.connect(made.destination);
+      const length = Math.max(1, Math.floor(made.sampleRate * 0.4));
+      const buffer = made.createBuffer(1, length, made.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+      shared = { ctx: made, master: gain, noiseBuffer: buffer };
+      SHARED.set(AudioContextCtor, shared);
+    }
+    ({ ctx, master, noiseBuffer } = shared);
   }
 
   return {

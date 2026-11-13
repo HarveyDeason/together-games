@@ -7,7 +7,7 @@ import { GAMES, getGame, DEFAULT_GAME } from './games/registry.js';
 import { initChat } from './chat.js';
 import { initReactions } from './reactions.js';
 import { watchScores, recordResult } from './scoreboard.js';
-import { looksFor } from './games/darlingco-pieces.js';
+import { looksFor, lookToPublish } from './games/darlingco-pieces.js';
 
 const boardEl = document.getElementById('board');
 const turnEl = document.getElementById('turn-line');
@@ -59,6 +59,21 @@ function readSavedLook() {
   }
 }
 
+let triedLook = '';   // the last look this page load tried to publish: one try per distinct look
+
+/** Write this device's saved look to its own player record when the room lacks
+ *  it, so the other phone draws the same colours. Attempted once per distinct
+ *  look: the players listener fires again when the write lands, and a rejected
+ *  write (rules not yet published) must not be retried on every snapshot. */
+function publishLook() {
+  const look = lookToPublish(players, identity.clientId, readSavedLook());
+  if (!look) return;
+  const key = `${look.piece}:${look.colour}`;
+  if (key === triedLook) return;
+  triedLook = key;
+  setLook(code, identity.clientId, look).catch(() => {});
+}
+
 function onLook(look) {
   try {
     localStorage.setItem(LOOK_KEY, JSON.stringify(look));
@@ -66,6 +81,7 @@ function onLook(look) {
   draw();
   // A rules set that predates piece and colour rejects this; the saved look
   // above is what keeps the pick on screen, so the rejection is swallowed.
+  triedLook = `${look.piece}:${look.colour}`;
   setLook(code, identity.clientId, look).catch(() => {});
 }
 
@@ -241,6 +257,7 @@ async function submitAction(action) {
 function showEnded() {
   ended = true;
   state = null;        // nothing left for a stray draw() to repaint
+  GAMES[gameId]?.dispose?.(boardEl);
   boardEl.innerHTML = '';
   delete boardEl.__sl;
   delete boardEl.__dc;
@@ -418,6 +435,7 @@ async function start() {
 
   onValue(ref(db, `rooms/${code}/players`), (snap) => {
     players = snap.val() || {};
+    publishLook();
     updateOpponent();
     renderScores();
     draw();
@@ -464,6 +482,7 @@ async function start() {
     // game, leaving its lobby row named "Game" for good.
     cacheRoom(code, { gameId: nextId });
     if (nextId !== gameId) {
+      GAMES[gameId]?.dispose?.(boardEl);   // the old game's timers and listeners, before its board goes
       gameId = nextId;
       game = getGame(gameId);
       boardEl.innerHTML = '';

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  PIECES, COLOURS, METAL_DEFS, DEFAULT_LOOKS, resolveLooks, looksFor
+  PIECES, COLOURS, METAL_DEFS, DEFAULT_LOOKS, resolveLooks, looksFor, lookToPublish
 } from '../src/games/darlingco-pieces.js';
 
 const rules = JSON.parse(readFileSync(new URL('../firebase-rules.json', import.meta.url), 'utf8'));
@@ -136,4 +136,73 @@ test('rules drift: the validators match the data', () => {
     assert.match(v, /% 1 === 0/);
   }
   assert.equal(playerRules.$other['.validate'], false);
+});
+
+// ---- publishing the saved look to the room ----------------------------------------------
+const rec = (seat, look = {}) => ({ name: 'x', seat, ...look });
+const roomOf = (a, b) => ({ idA: a, idB: b });
+
+test('lookToPublish: no record for this client, nothing to publish', () => {
+  assert.equal(lookToPublish({}, 'idA', { piece: 3, colour: 1 }), null);
+  assert.equal(lookToPublish(undefined, 'idA', { piece: 3, colour: 1 }), null);
+  assert.equal(lookToPublish(roomOf(rec(0), rec(1)), 'idZ', { piece: 3, colour: 1 }), null);
+});
+
+test('lookToPublish: a record without a look gets the saved look', () => {
+  assert.deepEqual(lookToPublish(roomOf(rec(0), rec(1)), 'idA', { piece: 3, colour: 2 }), { piece: 3, colour: 2 });
+  assert.deepEqual(lookToPublish(roomOf(rec(0, { piece: 3 }), rec(1)), 'idA', { piece: 3, colour: 2 }), { piece: 3, colour: 2 });
+});
+
+test('lookToPublish: a record that already holds the look publishes nothing', () => {
+  assert.equal(lookToPublish(roomOf(rec(0, { piece: 3, colour: 2 }), rec(1)), 'idA', { piece: 3, colour: 2 }), null);
+});
+
+test('lookToPublish: an invalid or missing saved look publishes nothing', () => {
+  const players = roomOf(rec(0), rec(1));
+  for (const saved of [null, undefined, 'x', [], {}, { piece: 3 }, { piece: 9, colour: 1 }, { piece: 1, colour: -1 }, { piece: 1.5, colour: 1 }]) {
+    assert.equal(lookToPublish(players, 'idA', saved), null, JSON.stringify(saved));
+  }
+});
+
+test('lookToPublish: a different look on the record is overwritten by the saved look of this device', () => {
+  const players = roomOf(rec(0, { piece: 5, colour: 4 }), rec(1));
+  assert.deepEqual(lookToPublish(players, 'idA', { piece: 3, colour: 2 }), { piece: 3, colour: 2 });
+});
+
+test('both phones agree once the saved look of seat 0 is written and seat 1 has nothing', () => {
+  const saved0 = { piece: 3, colour: 1 };
+  const players = roomOf(rec(0, saved0), rec(1));
+  const mine = looksFor(players, 0, saved0);
+  const theirs = looksFor(players, 1, null);
+  assert.deepEqual(theirs, mine);
+  assert.deepEqual(mine[0], saved0);
+  assert.notEqual(mine[1].colour, mine[0].colour);
+  // and before the write the two phones disagree, which is what publishing cures
+  assert.notDeepEqual(looksFor(roomOf(rec(0), rec(1)), 1, null)[0], mine[0]);
+});
+
+test('a saved look that clashes is resolved the same on both phones, and what it publishes is the resolved look', () => {
+  const seat0 = { piece: 3, colour: 1 };
+  const saved1 = { piece: 3, colour: 1 };                       // seat 1 saved exactly seat 0's look
+  const players = roomOf(rec(0, seat0), rec(1));
+  const publish = lookToPublish(players, 'idB', saved1);
+  assert.deepEqual(publish, looksFor(players, 1, saved1)[1], 'seat 1 publishes its resolved look');
+  assert.notDeepEqual(publish, saved1);
+  const written = roomOf(rec(0, seat0), rec(1, publish));
+  const onSeat1 = looksFor(written, 1, saved1);
+  const onSeat0 = looksFor(written, 0, seat0);
+  assert.deepEqual(onSeat1, onSeat0);
+  assert.equal(lookToPublish(written, 'idB', saved1), null, 'and nothing more is published: no loop');
+  assert.equal(lookToPublish(written, 'idA', seat0), null);
+});
+
+test('a clash where seat 0 is the one holding the saved look still settles', () => {
+  const saved0 = { piece: 2, colour: 4 };
+  const players = roomOf(rec(0), rec(1, { piece: 2, colour: 4 }));  // seat 1 published first
+  assert.deepEqual(lookToPublish(players, 'idA', saved0), saved0);
+  const written = roomOf(rec(0, saved0), rec(1, { piece: 2, colour: 4 }));
+  const fromSeat1 = lookToPublish(written, 'idB', { piece: 2, colour: 4 });
+  assert.ok(fromSeat1, 'seat 1 publishes the resolved look');
+  const settled = roomOf(rec(0, saved0), rec(1, fromSeat1));
+  assert.deepEqual(looksFor(settled, 0, saved0), looksFor(settled, 1, { piece: 2, colour: 4 }));
 });

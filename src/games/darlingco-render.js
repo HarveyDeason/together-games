@@ -14,10 +14,11 @@ import { SQUARES, SETS, GAME_NAME, BID_STEP, LJ_NAME, JB_NAME } from './darlingc
 import {
   POT_NAME, chipParts, storyFor, decisionFor, auctionFor, cardFor, STRIP_CAP, builtReason, sterling, tradeStrips, stripsShown,
   canOpenDeal, blankDraft, draftFromDeal, nudgeCash, bumpCash, toggleChip, tidyDraft, dealSheetFor, dealReviewFor, walkPath, sendLanded, flipOrder,
-  placesFor, rulesFor, helpTab, wasRoll, DICE_MS
+  placesFor, rulesFor, helpTab, wasRoll, soundsFor, DICE_MS
 } from './darlingco-view.js';
 import { PIECES, COLOURS, METAL_DEFS, DEFAULT_LOOKS, resolveLooks } from './darlingco-pieces.js';
 import { readTrades } from './darlingco.js';
+import { createSound } from './darlingco-sound.js';
 import { ownerOf, housesOn, isMortgaged, setChar } from './darlingco-state.js';
 
 export * from './darlingco-view.js';
@@ -378,6 +379,7 @@ function showFaces(world) {
 function setSpinning(world, on) {
   try {
     if (on && !motionOn()) return;
+    if (on) { world.spunAt = Date.now(); world.sound.play('dice'); }   // the roller hears the throw when they tap
     world.diceBox.classList[on ? 'add' : 'remove']('is-spinning');
   } catch (e) { /* losing a spin is cheap */ }
 }
@@ -487,8 +489,17 @@ function buildWorld(doc, host) {
     generation: 0, flipGeneration: 0, hold: null, animatedKey: null, stateJson: '',
     shown: null, builtSeen: null, state: null, mySeat: null, names: [],
     tumbling: false, ...buildDice(doc),
+    soundOn: true, sound: null, spunAt: 0, deferred: null,
     looks: null, looksKey: '', chat: { toggle() {}, unread: () => 0 }, onLook: () => {}, onRematch: () => {}, onAction: () => {}
   };
+  // Audio may only start from a real tap: one listener, added once, wakes it.
+  world.sound = createSound({
+    AudioContextCtor: typeof window !== 'undefined' ? (window.AudioContext || window.webkitAudioContext) : undefined,
+    enabled: () => world.soundOn
+  });
+  const unlock = () => world.sound.unlock();
+  root.addEventListener('pointerdown', unlock);
+  root.addEventListener('click', unlock);
   tiles.forEach((tile, i) => {
     tile.addEventListener('click', () => {
       if (!cardFor(world.state, world.mySeat, i, world.names)) return;
@@ -1657,6 +1668,7 @@ export function renderBoard(state, host, ctx = {}) {
   world.state = state;
   world.mySeat = mySeat === undefined ? null : mySeat;
   world.names = names || [];
+  world.soundOn = !ctx.sound || ctx.sound.on !== false;
   world.onAction = onAction || (() => {});
   world.onLook = onLook || (() => {});
   world.onRematch = onRematch || (() => {});
@@ -1677,6 +1689,7 @@ export function renderBoard(state, host, ctx = {}) {
  *  a re-delivered state (the score write after a win) triggers nothing. */
 function noteChanges(world, prev) {
   const s = world.state;
+  noteSounds(world, prev);
   const built = world.tiles.map((_, i) => housesOn(s, i));
   const seen = world.builtSeen;
   world.builtSeen = built;
@@ -1708,6 +1721,25 @@ function noteChanges(world, prev) {
       }
     }
   }
+}
+
+/** Sounds for a genuinely new move. A roll's own sounds wait for the walk to settle (see
+ *  `settle`), so the dice are heard alone first; the dice themselves play now, unless this
+ *  phone's own tap already played them. A re-delivered state compares equal and does nothing. */
+function noteSounds(world, prev) {
+  const s = world.state;
+  if (!prev || s.moves === prev.moves) return;
+  const names = soundsFor(prev, s, world.mySeat);
+  world.deferred = null;   // anything still waiting belongs to a superseded chain
+  if (!names.length) return;
+  if (wasRoll(prev, s) && motionOn()) {
+    const spun = Date.now() - world.spunAt < 4000;
+    world.spunAt = 0;
+    if (!spun) world.sound.play('dice');
+    world.deferred = { key: `${s.moves}:${s.actor}`, names: names.filter((n) => n !== 'dice') };
+    return;
+  }
+  names.forEach((n) => world.sound.play(n));
 }
 
 function gavel(tile) {
@@ -1767,6 +1799,9 @@ function flick(world, from, to, amount) {
 }
 
 function settle(world, repaint) {
+  const d = world.deferred;
+  world.deferred = null;
+  if (d && d.key === world.animatedKey) d.names.forEach((n) => world.sound.play(n));
   world.shown = [...world.state.pos];
   world.busy = false;
   world.tumbling = false;
@@ -1803,9 +1838,11 @@ function animate(world, prev) {
   const hop = () => {
     if (superseded()) return;
     try {
+      let hopped = false;
       for (const seat of [0, 1]) {
-        if (step[seat] < paths[seat].length) world.shown[seat] = paths[seat][step[seat]++];
+        if (step[seat] < paths[seat].length) { world.shown[seat] = paths[seat][step[seat]++]; hopped = true; }
       }
+      if (hopped) world.sound.play('step');   // one tick per hop, whoever walks
       if (step[0] < paths[0].length || step[1] < paths[1].length) {
         paintTokens(world);
         setTimeout(hop, STEP_MS);

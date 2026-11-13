@@ -762,6 +762,30 @@ export function wasRoll(prev, next) {
     && next.phase !== 'roll' && next.phase !== 'over';
 }
 
+/** Which sounds a move deserves, from the last state seen to this one. Pure: the
+ *  renderer decides when to play them. Empty when there is nothing to compare or
+ *  the state is the same move again (a re-delivered state is silent). */
+export function soundsFor(prev, next, mySeat) {
+  if (!prev || !next || next.moves === prev.moves) return [];
+  const out = [];
+  if (wasRoll(prev, next)) out.push('dice');
+  let bought = false;
+  for (let sq = 0; sq < 40; sq++) {
+    if (ownerOf(prev, sq) < 0 && ownerOf(next, sq) >= 0) bought = true;
+  }
+  if (bought) out.push(prev.phase === 'auction' ? 'gavel' : 'buy');
+  if (next.phase === 'card' && prev.phase !== 'card') out.push('card');
+  if ([0, 1].some((seat) => prev.jail[seat] === 0 && next.jail[seat] === 1)) out.push('jail');
+  if (mySeat === 0 || mySeat === 1) {
+    const diff = next.cash[mySeat] - prev.cash[mySeat];
+    if (diff > 0) out.push('cashIn');
+    else if (diff < 0 && !bought) out.push('cashOut');
+  }
+  if (next.actor === mySeat && prev.actor !== mySeat && next.phase !== 'over') out.push('turn');
+  if (next.phase === 'over' && prev.phase !== 'over') out.push('win');
+  return out;
+}
+
 const MAX_WALK = 12;    // beyond this a move is a jump (jail, a card), not a walk
 
 /** The squares a token steps on going from `from` to `to`, forward round the

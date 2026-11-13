@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { wasRoll, DICE_MS, propertyFor, decisionFor, placesFor, raiseCashFor, storyFor, bumpCash, blankDraft, nudgeCash, dealSheetFor } from '../src/games/darlingco-view.js';
-import { SQUARES, SETS, MAX_DEAL_CASH } from '../src/games/darlingco-board.js';
+import { SQUARES, SETS, MAX_DEAL_CASH, MIN_BID } from '../src/games/darlingco-board.js';
 import { createInitialState, applyAction } from '../src/games/darlingco.js';
 import { setChar, dealChar, dealProblem, BLANK_PROPS } from '../src/games/darlingco-state.js';
 
@@ -444,4 +444,65 @@ test('wasRoll is false for an action that leaves a phase other than roll', () =>
   const declined = applyAction(buy, { type: 'decline' }, 0).state;
   assert.ok(declined.moves > buy.moves && declined.phase !== 'roll' && declined.phase !== 'over', `phase ${declined.phase}`);
   assert.equal(wasRoll(buy, declined), false, 'declining a lot is not a roll');
+});
+
+// ---- soundsFor: what a move sounds like ---------------------------------------
+
+test('soundsFor names the sounds each real transition deserves', async () => {
+  const { soundsFor } = await import('../src/games/darlingco-view.js');
+  const go = (s, a, seat) => { const r = applyAction(s, a, seat); assert.equal(r.error, undefined, JSON.stringify(a)); return r.state; };
+  const roll = (s, a, b, seat = 0) => go(s, { type: 'roll', die1: a, die2: b }, seat);
+  const f = fresh();
+
+  const onLot = roll(f, 1, 2);
+  assert.deepEqual(soundsFor(f, onLot, 0), ['dice']);
+  assert.deepEqual(soundsFor(f, onLot, 1), ['dice']);
+
+  const bought = go(onLot, { type: 'buy' }, 0);
+  assert.deepEqual(soundsFor(onLot, bought, 0), ['buy'], 'a purchase is not also cash out');
+
+  const card = roll(f, 1, 1);
+  assert.deepEqual(soundsFor(f, card, 0), ['dice', 'card']);
+
+  const tax = roll(f, 1, 3);
+  assert.deepEqual(soundsFor(f, tax, 0), ['dice'], 'a debt is not paid yet');
+  const paid = go(tax, { type: 'pay' }, 0);
+  assert.ok(soundsFor(tax, paid, 0).includes('cashOut'));
+  assert.ok(!soundsFor(tax, paid, 1).includes('cashOut'), 'only my own cash');
+
+  const nearJail = { ...f, pos: [24, 0] };
+  const jailed = roll(nearJail, 3, 3);
+  assert.deepEqual(soundsFor(nearJail, jailed, 1), ['dice', 'jail']);
+
+  // Auction: decline, seat 1 bids, seat 0 passes... whoever is to act passes and the bidder wins.
+  const auc = go(onLot, { type: 'decline' }, 0);
+  assert.equal(auc.phase, 'auction');
+  const bid = go(auc, { type: 'bid', amount: MIN_BID }, auc.actor);
+  const won = go(bid, { type: 'pass' }, bid.actor);
+  const names = soundsFor(bid, won, 0);
+  assert.ok(names.includes('gavel') && !names.includes('buy'), names.join());
+
+  const ended = go(roll(f, 4, 6), { type: 'end' }, 0);
+  assert.ok(soundsFor(roll(f, 4, 6), ended, 1).includes('turn'));
+  assert.ok(!soundsFor(roll(f, 4, 6), ended, 0).includes('turn'));
+
+  const offered = go(f, { type: 'offer-tally' }, 1);
+  const over = go(offered, { type: 'accept-tally' }, 0);
+  assert.deepEqual(soundsFor(offered, over, 0), ['win']);
+});
+
+test('soundsFor is silent for a re-delivered state, no previous state, and no seat', async () => {
+  const { soundsFor } = await import('../src/games/darlingco-view.js');
+  const next = applyAction(fresh(), { type: 'roll', die1: 1, die2: 2 }, 0).state;
+  assert.deepEqual(soundsFor(next, next, 0), []);
+  assert.deepEqual(soundsFor(null, next, 0), []);
+  assert.deepEqual(soundsFor(fresh(), next, null), ['dice']);
+});
+
+test('soundsFor: money in sounds for the receiver', async () => {
+  const { soundsFor } = await import('../src/games/darlingco-view.js');
+  const s = { ...fresh(), cash: [1500, 1500] };
+  const up = { ...s, moves: s.moves + 1, cash: [1600, 1400] };
+  assert.deepEqual(soundsFor(s, up, 0), ['cashIn']);
+  assert.deepEqual(soundsFor(s, up, 1), ['cashOut']);
 });

@@ -894,32 +894,34 @@ body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
   100% { transform: scale(1); }
 }
 .dc-coin {
+  /* A coin flies in the lane just under the two plates, from the payer's to the payee's: it never
+     crosses a cash figure (they sit inside the plates) and takes no taps. */
   position: absolute;
-  top: 50%;
-  left: 0;
-  z-index: 2;
-  padding: 1px 7px;
+  top: 100%;
+  left: 20%;
+  z-index: 3;
+  padding: 1px 8px;
   border-radius: 999px;
   background: var(--gold);
   color: var(--ink);
-  font: 700 13px var(--cond);
+  font: 700 14px/1.2 var(--cond);
   pointer-events: none;
   white-space: nowrap;
-  transform: translate(0, -50%);
+  transform: translateX(-50%);
   animation: dc-flick-right 650ms ease-in-out forwards;
 }
-.dc-coin[data-to="0"] { left: auto; right: 0; animation-name: dc-flick-left; }
+.dc-coin[data-to="0"] { left: 80%; animation-name: dc-flick-left; }
 @keyframes dc-flick-right {
-  0% { left: 8%; opacity: 0; transform: translate(0, -50%) scale(0.6); }
-  20% { opacity: 1; transform: translate(0, -110%) scale(1.1); }
+  0% { left: 20%; opacity: 0; transform: translateX(-50%) scale(0.6); }
+  20% { opacity: 1; transform: translateX(-50%) scale(1.1); }
   80% { opacity: 1; }
-  100% { left: 40%; opacity: 0; transform: translate(0, -50%) scale(0.8); }
+  100% { left: 80%; opacity: 0; transform: translateX(-50%) scale(0.8); }
 }
 @keyframes dc-flick-left {
-  0% { right: 40%; opacity: 0; transform: translate(0, -50%) scale(0.6); }
-  20% { opacity: 1; transform: translate(0, -110%) scale(1.1); }
+  0% { left: 80%; opacity: 0; transform: translateX(-50%) scale(0.6); }
+  20% { opacity: 1; transform: translateX(-50%) scale(1.1); }
   80% { opacity: 1; }
-  100% { right: 70%; opacity: 0; transform: translate(0, -50%) scale(0.8); }
+  100% { left: 20%; opacity: 0; transform: translateX(-50%) scale(0.8); }
 }
 .dc-tile.dc-flip { animation: dc-flip 420ms ease-in-out; z-index: 2; }
 @keyframes dc-flip {

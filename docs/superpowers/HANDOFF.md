@@ -1,4 +1,4 @@
-# Handoff — state of together-games, 2026-10-24
+# Handoff — state of together-games, 2026-11-13
 
 ## What exists and works
 
@@ -15,8 +15,11 @@ Live at <https://harveydeason.github.io/together-games/>. Zero dependencies,
 - **Snakes & Ladders** — Keynsham to Nagpur across two floating isometric
   islands, with a camera that follows the players.
 - **Darling & Co.** — the Monopoly-rules game. Board, money, buying, rent,
-  colour sets, houses and hotels, jail, two card decks, mortgaging, and two
-  ways to end. Forty squares on screen at once, no camera.
+  colour sets, houses and hotels, jail, two card decks, mortgaging, auctions,
+  deals between the two players, and two ways to end. Forty squares on screen at
+  once, no camera, on the dark "Midnight" board: player plates above, the board,
+  a bar of sheets (Deals, My places, Rules, Chat) below, and a centre stage that
+  shows one decision at a time. Pieces and colours, dice that tumble, sound.
 - **Firebase Realtime Database** holds everything under `rooms/<code>/`.
 
 ## The game contract
@@ -27,6 +30,19 @@ no network, no DOM, and **no randomness generated inside it**. Dice arrive in
 the action. Darling & Co. extends this to cards: both decks are shuffled once
 into an order string held in the state, and drawing advances a cursor, so a
 draw is deterministic and both phones agree.
+
+`meta` carries `id`, `name`, `seats`, and two optional flags: `sound: true` shows
+the room's Sound toggle, and `chrome: 'own'` tells the room the game draws its
+own turn line, Rematch and Chat button (the room hides its versions and moves
+the reaction bar into the chat sheet). Every other game keeps the room's chrome.
+
+`render(state, host, ctx)` is called on every snapshot. `ctx` is `mySeat`,
+`names`, `onAction`, and, optional for every game, `looks` (both seats' piece and
+colour, already resolved), `onLook` (a pick to save), `chat` (`toggle`, `unread`),
+`onRematch`, and `sound` (`{ on }`). A game that ignores the extras is unharmed.
+The scene is built once and cached on the host (`host.__dc` for Darling & Co.);
+`main-room.js` deletes the cache whenever the game changes or the room ends, so
+a game that is switched away from and back is rebuilt cleanly.
 
 `rooms/<code>/game` holds `{ id, state, scored }` together, so switching game is
 one atomic transaction.
@@ -39,16 +55,36 @@ one atomic transaction.
 - `darlingco-state.js` is the pure query layer: ownership, rent, net worth,
   build legality.
 - `darlingco.js` is the contract and the whole turn state machine.
-- `darlingco-render.js` is the board, the centre panel and the animations.
+- `darlingco-view.js` is the pure description layer: what each screen says (the
+  decision, the story lines, deeds, My places, deal sheets, the rules text) and
+  which sounds a move earns. `darlingco-render.js` only draws it, and is also
+  where the animations live. `darlingco-pieces.js` is the eight pieces and six
+  colours and how a seat's look is resolved. `darlingco-rules.js` is the how-to-play
+  copy as data. `darlingco-sound.js` is the Web Audio voices; no sound files.
+  The look is `darlingco.css`, scoped to `.dc-game` so no other game sees it.
 - **Per-square data is three 40-character strings** (`own`, `built`, `mortg`),
   never an object keyed by square index — see the traps below.
 - The turn state machine: `phase` is `roll | buy | pay | card | end | over`, and
   **`actor` is who must act now, which is not always `turn`** — a player paying
   rent acts during the other's turn. `getStatus().whoseTurn` returns `actor`,
   because `main-room.js` reads only that.
-- Guard order inside `applyAction` is `game-over`, then `not-your-turn`, then
+- Guard order inside `applyAction` is `game-over`, then the table-wide carve-outs
+  (the tally-up, deals, and the side actions), then `not-your-turn`, then
   `wrong-phase`. That order is what makes a double tap or a transaction retry
   safe: the second application is refused by the phase guard.
+- **`sideGate` is the rule for side actions** (build, sell, mortgage and lift a
+  mortgage): either seat may take them in any phase, whoever the actor is, with
+  one exception. While an auction is live only `sell` and `mortgage` are admitted,
+  because those can only add cash; anything that spends it is refused as
+  `wrong-phase`, which is what keeps a standing bid affordable until it wins.
+  Nothing else gates them. The UI mirrors it: every control `sideGate` refuses is
+  shown disabled with the reason as text.
+- **A seat's piece and colour** are two numbers on
+  `rooms/<code>/players/<clientId>` (`piece` 0 to 7, `colour` 0 to 5), not part of
+  the game state. Both phones read them and `resolveLooks` makes the pair valid and
+  distinct (seat 1 yields on a clash); this device's own pick is also kept in
+  `localStorage` so it shows at once. They survive a rematch because the players
+  node does.
 - **Bankruptcy is declared, never computed.** The engine never decides a player
   cannot pay. A tally needs both players, and a seat cannot accept its own offer.
 - Free Parking is a jackpot. Fines and taxes feed it, and **the pot is credited
@@ -57,12 +93,9 @@ one atomic transaction.
 
 ## What is NOT in Darling & Co., deliberately
 
-- **Trading and auctions.** This is the next project. An unowned property you
-  decline is simply not bought. The state shape leaves trading an additive
-  change: ownership is one character in `own`, so a transfer is `setChar` plus a
-  cash move, and nothing assumes ownership only changes by buying. A trade will
-  need its own pending keys and matching rules validators.
-- **Bots**, which come after trading.
+- **Bots.** Trading and auctions are built (a declined property goes to auction;
+  deals are `trade-offer`, `-counter`, `-accept`, `-decline`, `-cancel`), so bots
+  are what is next.
 - **More than two seats**, though players are a list indexed by seat rather than
   hard-coded `pos0`/`pos1`, so a third is a data change.
 - **The final board copy.** Every place name and card line is a placeholder.
@@ -113,15 +146,31 @@ get again. Read it before writing any board copy.
 
 ## Known limits and open decisions for Harvey
 
-- **Tile names compute to about 5px on a phone**, in roughly 29x37px tiles, and
-  longer ones clip to an ellipsis with the full name on the tooltip. That is the
-  price of forty squares on one screen, which Harvey chose over a camera. Short
-  place names will fare much better in the copy pass.
-- The flick coin covers the payer's balance for about half a second mid-flight.
-- Side actions are gated on being the actor, so you cannot build on the
-  opponent's turn, which real Monopoly allows.
-- Money in the Free Parking pot is not counted by `netWorth`, so at a tally it is
-  out of play.
-- Two Jiggly Boo cards read "Back to..." but move forward round the board.
-- `main-room.js` clears `boardEl.__sl` but not `boardEl.__dc`. Safe today because
-  the renderer checks its cached root is still mounted — a trap for game four.
+- **Nobody has watched the dice tumble or heard the sounds yet.** The dev
+  environment's browser pane is hidden, so CSS animation does not run there: the
+  tumble, the house pop, the tile flip, the gavel and the money flick were
+  checked by their DOM state and their rules, not by eye or by ear. Watch one
+  whole game on a phone with the sound on before calling it finished.
+- **The rules copy is the builder's.** `src/games/darlingco-rules.js` was written
+  alongside the engine and checked against it, but it awaits Harvey's read. It is
+  data: edit the words there and nowhere else.
+- **`firebase-rules.json` must be published by Harvey** (paste it into the
+  Firebase console and press Publish) before pieces and colours reach the other
+  phone. Until then each phone shows its own pick and the other sees the
+  defaults; the game itself is unaffected.
+- **Tiles rely on CSS container queries** to decide how many lines of name and
+  whether the price shows (Chrome 105+, Safari 16+). A browser older than that
+  has not been tried and will not size the tiles as designed.
+- **On short screens the auction shows fewer raise-cash shortcuts** (the list is
+  trimmed under 700px and again under 620px tall, to keep the lot and the buttons
+  on screen). "All my places" is always kept, and My places has the rest.
+- **The dev server on port 5070 may be a stale one** serving an old worktree.
+  Check that `/src/games/registry.js` lists six games, or use another port.
+- **Tile names are small.** Forty squares on one screen, which Harvey chose over a
+  camera, means a name is fitted by measurement to the tile and clipped to an
+  ellipsis past that, with the full name on the tooltip. Short place names will
+  fare much better in the copy pass.
+- **The Free Parking pot is not counted by `netWorth`**, so at a tally it is out
+  of play.
+- **Two Jiggly Boo cards read "Back to..."** but move forward round the board.
+- The dog and the iron are the weakest silhouettes at 19px.

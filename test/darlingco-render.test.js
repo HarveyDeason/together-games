@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { gridCell, edgeOf, buildBoard, paintTile, decisionFor, feedLines, propertyFor, cardFor, walkPath, chipParts, tradeStrips, canOpenDeal, sendLanded, stripsShown, STRIP_CAP, auctionFor,
-  dealSheetFor, dealReviewFor, flipOrder, nudgeCash, toggleChip, draftFromDeal, tidyDraft, DICE_MS } from '../src/games/darlingco-render.js';
+  dealSheetFor, dealReviewFor, flipOrder, nudgeCash, bumpCash, toggleChip, draftFromDeal, tidyDraft, DICE_MS } from '../src/games/darlingco-render.js';
 import { readFileSync } from 'node:fs';
 import { createInitialState, render, applyAction, meta } from '../src/games/darlingco.js';
 import { COLOURS, DEFAULT_LOOKS } from '../src/games/darlingco-pieces.js';
@@ -3179,4 +3179,236 @@ test('the old tumble, when its timer fires, does not settle the board under the 
     assert.deepEqual(shownOf(h), [10, 5]);
     assert.equal(h.__dc.busy, false);
   });
+});
+
+// ---- Task 10: leftovers the reviews parked ---------------------------------------------
+// Which face a cube is actually showing, read back off its transform (the inverse of `orient`).
+const SHOWN_FACES = { '0,0': 1, '0,-90': 2, '-90,0': 3, '90,0': 4, '0,90': 5, '0,180': 6 };
+const faceFromTransform = (die, k) => {
+  const m = /rotateX\((-?[\d.]+)deg\) rotateY\((-?[\d.]+)deg\)/.exec(die.style.transform);
+  assert.ok(m, `no transform on the die: ${die.style.transform}`);
+  const norm = (a) => { const r = ((Math.round(a) % 360) + 360) % 360; return r > 180 ? r - 360 : r; };
+  const x = norm(Number(m[1]) + 14), y = norm(Number(m[2]) - 16);
+  const face = SHOWN_FACES[`${x},${y === -180 ? 180 : y}`];
+  assert.ok(face, `die ${k} is turned to no face: ${x},${y}`);
+  return face;
+};
+const seenFaces = (h) => h.__dc.dice.map(faceFromTransform);
+
+test('a tumble superseded by a state that lands back on the old resting face still rests on it, data-face and transform agreeing', () => {
+  withTimers((t) => {
+    const { from, next } = rollFrom([3, 0], 2, 3);      // the dice were resting on 1, 1; the tumble heads for 2, 3
+    const h = mount(from, 1);
+    draw(h, next);
+    assert.equal(h.__dc.tumbling, true);
+    assert.deepEqual(seenFaces(h), [2, 3], 'mid-tumble the cubes are turned toward the roll');
+    // A newer state lands inside the tumble and its dice are 1 and 1 again: the very faces the cubes last RESTED on.
+    draw(h, at([3, 5], { moves: 3, actor: 1, phase: 'end', die1: 1, die2: 1 }));
+    t.flush();
+    assert.deepEqual(facesOf(h), ['1', '1']);
+    assert.deepEqual(seenFaces(h), [1, 1], 'the transform shows the same faces data-face names');
+  });
+});
+
+test('a tumble that fails to start leaves the cubes on the latest faces too', () => {
+  withTimers((t) => {
+    const { from, next } = rollFrom([3, 0], 2, 3);
+    const h = mount(from, 0);
+    // The second cube cannot be turned, so the first is already off its resting face when the tumble gives up.
+    const second = h.__dc.dice[1];
+    const realStyle = second.style;
+    second.style = new Proxy(realStyle, { set(target, prop, value) { if (prop === 'transform') throw new Error('no transform'); target[prop] = value; return true; } });
+    draw(h, next, { mySeat: 0 });
+    assert.equal(h.__dc.tumbling, false, 'the tumble gave up');
+    second.style = realStyle;
+    draw(h, { ...next, die1: 1, die2: 1, moves: next.moves + 1, actor: 1, phase: 'end' }, { mySeat: 0 });
+    t.flush();
+    assert.equal(h.__dc.dice[0].dataset.face, '1');
+    assert.equal(faceFromTransform(h.__dc.dice[0], 0), 1, 'the cube that did turn is turned back');
+  });
+});
+
+test('the story holds what it said before the roll until the dice land', () => {
+  withTimers((t) => {
+    const { from, next } = rollFrom([3, 0], 2, 3);
+    const h = mount(from, 1);
+    const before = text(h.__dc.story);
+    draw(h, next);
+    assert.equal(h.__dc.tumbling, true);
+    assert.equal(text(h.__dc.story), before, 'nothing about the roll is told while the dice are in the air');
+    assert.ok(!/rolls/.test(text(h.__dc.story)));
+    t.step();                                                // they land
+    assert.match(text(h.__dc.story), /rolls 2 and 3/, 'the roll is told as the dice land');
+    t.flush();
+    assert.match(text(h.__dc.story), /rolls 2 and 3/);
+  });
+});
+
+test('a superseded tumble does not strand the story, and a throwing one does not either', () => {
+  withTimers((t) => {
+    const { from, next } = rollFrom([3, 0], 2, 3);
+    const h = mount(from, 1);
+    draw(h, next);
+    // A newer state while the dice are in the air: the story is the newest, not the one held for the old roll.
+    const newer = applyAction({ ...next, phase: 'end' }, { type: 'end' }, 0).state;
+    assert.ok(newer, 'the turn ended');
+    draw(h, newer);
+    assert.equal(h.__dc.tumbling, false);
+    assert.match(text(h.__dc.story), /Bo's turn/, 'the story shows what the newest state says, not the one held for the old roll');
+    t.flush();
+  });
+  withTimers((t) => {
+    const { from, next } = rollFrom([3, 0], 2, 3);
+    const h = mount(from, 0);
+    draw(h, next, { mySeat: 0 });
+    h.__dc.dice[0].style = null;                             // settling the faces throws
+    assert.throws(() => t.step());
+    assert.equal(h.__dc.tumbling, false);
+    assert.match(text(h.__dc.story), /rolls 2 and 3/, 'the story comes out of hold when the tumble fails');
+  });
+});
+
+test('reduced motion tells the roll at once (no tumble, no hold)', () => {
+  withTimers(() => {
+    const { from, next } = rollFrom([3, 0], 2, 3);
+    const h = mount(from, 1);
+    draw(h, next);
+    assert.match(text(h.__dc.story), /rolls 2 and 3/);
+  }, { reduced: true });
+});
+
+test('building the board twice for one host leaves one live resize listener and one font listener', () => {
+  const realAdd = globalThis.addEventListener, realRemove = globalThis.removeEventListener;
+  const live = new Set();
+  globalThis.addEventListener = (type, f) => { live.add(f); };
+  globalThis.removeEventListener = (type, f) => { live.delete(f); };
+  const fontLive = new Set();
+  const fonts = {
+    ready: Promise.resolve(),
+    addEventListener: (type, f) => fontLive.add(f),
+    removeEventListener: (type, f) => fontLive.delete(f)
+  };
+  try {
+    const host = makeEl('div');
+    host.ownerDocument = { createElement: clickable, fonts };
+    const ctx = { mySeat: 0, names: ['Ann', 'Bo'], onAction: () => {} };
+    render(fresh(), host, ctx);
+    assert.equal(live.size, 1);
+    assert.equal(fontLive.size, 1);
+    // The room switched game and back: main-room empties the host and forgets the scene.
+    host.children = [];
+    delete host.__dc;
+    render(fresh(), host, ctx);
+    assert.equal(live.size, 1, 'the first board resize listener was taken off');
+    assert.equal(fontLive.size, 1, 'and its font listener');
+    // A re-render on the same board adds nothing.
+    render(fresh(), host, ctx);
+    assert.equal(live.size, 1);
+    assert.equal(fontLive.size, 1);
+  } finally {
+    if (realAdd === undefined) delete globalThis.addEventListener; else globalThis.addEventListener = realAdd;
+    if (realRemove === undefined) delete globalThis.removeEventListener; else globalThis.removeEventListener = realRemove;
+  }
+});
+
+test('closing the piece picker with Done puts away a bankruptcy confirm opened beside it', () => {
+  const { host } = stage(short(), { looks: DEFAULT_LOOKS });
+  const w = host.__dc;
+  w.plateNodes[0].click();
+  assert.equal(w.picking, true);
+  buttonsIn(w.actions).find((b) => /declare bankruptcy/i.test(b.textContent)).click();
+  assert.equal(w.confirming, true, 'the confirm can be opened while the picker is up');
+  byType(w.subject, 'picker-done').click();
+  assert.equal(w.picking, false);
+  assert.equal(w.confirming, false, 'it did not survive the picker closing');
+  assert.ok(!actionLabels(host).includes('Yes, I am out'));
+});
+
+test('a quick-chip deal is signed against the engine for both seats, with unequal cash', () => {
+  // Unequal cash makes the sign convention matter: giving 500 is legal for the rich seat, not the poor one.
+  const s = { ...owned({ 24: 0, 6: 1 }), cash: [1500, 100] };
+  const buildFor = (seat) => {
+    const sq = seat === 0 ? 24 : 6;               // a property of mine to give
+    const draft = bumpCash({ ...emptyDraft(), props: propsOf({ [sq]: [1 - seat, false] }) }, seat, 'give', 500);
+    const sheet = dealSheetFor(s, seat, draft, []);
+    assert.equal(sheet.give.cash, 500, `seat ${seat} sees itself giving 500`);
+    return sheet;
+  };
+  const poor = buildFor(1);
+  assert.equal(poor.send.disabled, true, 'the sheet already says why');
+  assert.ok(poor.send.why);
+  assert.equal(applyAction(s, poor.send.action, 1).error, 'cannot-afford', 'seat 1 has 100 and cannot give 500');
+  const rich = buildFor(0);
+  assert.equal(applyAction(s, rich.send.action, 0).error, undefined, 'seat 0 has 1500 and can');
+});
+
+test('the seat that offered a tally-up has no accept-tally control, the other seat does', () => {
+  const offered = withState({ settleOffer: 0 });
+  const { host: mine } = stage(offered, { mySeat: 0 });
+  clickSlot(mine, 'deals');
+  assert.equal(byType(sheetOf(mine), 'accept-tally'), undefined, 'a seat cannot accept its own offer');
+  assert.equal(byType(sheetOf(mine), 'decline-tally'), undefined);
+  assert.equal(byType(sheetOf(mine), 'offer-tally'), undefined);
+  const { host: theirs } = stage(offered, { mySeat: 1 });
+  clickSlot(theirs, 'deals');
+  assert.ok(byType(sheetOf(theirs), 'accept-tally'));
+  // and the engine agrees
+  assert.notEqual(applyAction(offered, { type: 'accept-tally' }, 0).error, undefined);
+  assert.equal(applyAction(offered, { type: 'accept-tally' }, 1).error, undefined);
+});
+
+test('a re-delivered state plays no sound and starts no tumble', () => {
+  withTimers((t) => {
+    const { from, next } = rollFrom([3, 0], 2, 3);
+    const h = mount(from, 1);
+    const played = [];
+    h.__dc.sound.play = (name) => { played.push(name); };
+    draw(h, next);
+    t.flush();
+    assert.ok(played.includes('dice'), 'the new roll is heard once');
+    const heard = [...played], gen = h.__dc.generation;
+    draw(h, { ...next });                                    // the same state again
+    draw(h, { ...next, scored: true });                      // and again with a score write on it
+    assert.deepEqual(played, heard, 'a re-delivered state is silent');
+    assert.equal(h.__dc.generation, gen);
+    assert.equal(h.__dc.tumbling, false);
+    assert.equal(t.pending(), 0, 'and starts nothing');
+    // and mid-flight: a roll tumble is not restarted, nor its sounds repeated
+    const again = applyAction({ ...next, phase: 'roll', actor: 0, doubles: 0 }, { type: 'roll', die1: 1, die2: 2 }, 0).state;
+    assert.ok(again, 'a second roll');
+    draw(h, again);
+    const mid = [...played], midGen = h.__dc.generation, queued = t.pending();
+    draw(h, { ...again });
+    assert.deepEqual(played, mid);
+    assert.equal(h.__dc.generation, midGen);
+    assert.equal(t.pending(), queued);
+    t.flush();
+  });
+});
+
+test('every flourish class the renderer adds has a rule that targets something in the tile and plate DOM', () => {
+  const css = cssText();
+  const src = readFileSync(new URL('../src/games/darlingco-render.js', import.meta.url), 'utf8');
+  const added = new Set([...src.matchAll(/classList\.add\('(dc-[a-z-]+)'\)/g)].map((m) => m[1]));
+  for (const cls of ['dc-pop', 'dc-flip', 'dc-gavel']) assert.ok(added.has(cls), `the renderer adds ${cls}`);
+  assert.match(src, /el\(world\.doc, 'span', 'dc-coin'/);
+  for (const cls of [...added, 'dc-coin']) assert.ok(css.includes(`.${cls}`), `${cls} has no rule`);
+  // The pop is drawn on the houses strip, which every tile has (the houses sit on the colour stripe).
+  assert.match(css, /\.dc-tile\.dc-pop \.dc-houses\s*\{[^}]*animation:\s*dc-pop/);
+  assert.ok(buildBoard(doc).tiles.every((t) => all(t).some((n) => n.classes.has('dc-houses'))));
+  // The coin flies in the lane under the plates (top: 100%), which holds the cash figures, so it covers neither.
+  const coin = ruleBody('.dc-coin', css);
+  assert.match(coin, /position:\s*absolute/);
+  assert.match(coin, /top:\s*100%/, 'the coin starts below the plate row, not on top of a balance');
+  assert.match(coin, /pointer-events:\s*none/);
+  assert.match(css, /@keyframes dc-flick-right/);
+  assert.match(css, /@keyframes dc-flick-left/);
+  // Every keyframe of the flight stays out of the plate row: only left, opacity and transform move.
+  const keys = [...css.matchAll(/@keyframes dc-flick-(?:right|left) \{([\s\S]*?)\n\}/g)].map((m) => m[1]).join('\n');
+  assert.ok(keys && !/\btop\s*:/.test(keys) && !/translateY\(-/.test(keys), 'the flight never rises into the plates');
+  // The plates are a positioned ancestor of the coin and sit above the lane it flies in.
+  assert.match(ruleBody('.dc-plates', css), /position:\s*relative/);
+  // Reduced motion: no coin, and no animation on any of them.
+  const rm = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce) {\n  .dc-tok, .dc-tile.dc-pop'));
+  assert.ok(/\.dc-coin[^{]*\{\s*display:\s*none/.test(rm.slice(0, rm.indexOf('\n}\n') + 3)), 'the coin is hidden');
 });

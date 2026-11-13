@@ -196,13 +196,28 @@ function fitNames(world) {
   }
 }
 
+// What each host is currently watching, so building the board again for the same host (the room
+// switched to another game and back) takes the old board's listeners off first.
+const watching = new WeakMap();
+
 /** Fit now, and again whenever the board changes size or a font arrives. */
-function watchNames(world) {
-  if (typeof ResizeObserver === 'function') new ResizeObserver(() => fitNames(world)).observe(world.board);
-  if (typeof addEventListener === 'function') addEventListener('resize', () => fitNames(world));
+function watchNames(world, host) {
+  const previous = watching.get(host);
+  if (previous) previous();
+  const refit = () => fitNames(world);
+  const watcher = typeof ResizeObserver === 'function' ? new ResizeObserver(refit) : null;
+  if (watcher) watcher.observe(world.board);
+  const hasWindow = typeof addEventListener === 'function';
+  if (hasWindow) addEventListener('resize', refit);
   const fonts = world.doc.fonts;
-  if (fonts && fonts.ready && typeof fonts.ready.then === 'function') fonts.ready.then(() => fitNames(world), () => {});
-  if (fonts && typeof fonts.addEventListener === 'function') fonts.addEventListener('loadingdone', () => fitNames(world));
+  if (fonts && fonts.ready && typeof fonts.ready.then === 'function') fonts.ready.then(refit, () => {});
+  const hasFontEvents = !!fonts && typeof fonts.addEventListener === 'function';
+  if (hasFontEvents) fonts.addEventListener('loadingdone', refit);
+  watching.set(host, () => {
+    if (watcher) watcher.disconnect();
+    if (hasWindow && typeof removeEventListener === 'function') removeEventListener('resize', refit);
+    if (hasFontEvents && typeof fonts.removeEventListener === 'function') fonts.removeEventListener('loadingdone', refit);
+  });
   fitNames(world);
 }
 
@@ -342,6 +357,7 @@ const orient = (n, k, turns) => {
 function restDie(die, k, n) {
   die.style.transform = orient(n, k, die.dcTurns);
   die.dataset.face = String(n);
+  die.dcAway = false;
 }
 
 function buildDice(doc) {
@@ -370,7 +386,8 @@ function buildDice(doc) {
 function showFaces(world) {
   world.dice.forEach((die, k) => {
     const n = faceOf(world.state[k ? 'die2' : 'die1']);
-    if (die.dataset.face !== String(n)) restDie(die, k, n);
+    // A cube thrown toward some face is not resting where data-face says, even if the latest roll names that face.
+    if (die.dcAway || die.dataset.face !== String(n)) restDie(die, k, n);
   });
 }
 
@@ -392,11 +409,14 @@ function startTumble(world, s) {
     world.dice.forEach((die, k) => {
       die.dcTurns += 1;
       die.style.transform = orient(faceOf(s[k ? 'die2' : 'die1']), k, die.dcTurns);
+      die.dcAway = true;   // turned toward the throw: showFaces must re-rest it whatever data-face says
     });
     world.tumbling = true;
     return true;
   } catch (e) {
     world.tumbling = false;
+    // A cube may already have turned: none of them is resting where data-face says.
+    world.dice.forEach((die) => { die.dcAway = true; });
     return false;
   }
 }
@@ -524,7 +544,7 @@ function buildWorld(doc, host) {
   slots.places.addEventListener('click', () => { if (!slots.places.disabled) openSheet(world, 'places'); });
   slots.rules.addEventListener('click', () => openRules(world, ''));
   slots.chat.addEventListener('click', () => world.chat.toggle());
-  watchNames(world);
+  watchNames(world, host);
   return world;
 }
 
@@ -1167,7 +1187,7 @@ function paintPicker(world) {
   const done = el(doc, 'button', 'dc-done', 'Done');
   done.type = 'button';
   done.dataset.type = 'picker-done';
-  done.addEventListener('click', () => { world.picking = false; paint(world); });
+  done.addEventListener('click', () => { world.picking = false; world.confirming = false; paint(world); });
   head.appendChild(done);
   wrap.appendChild(head);
   const pick = (patch) => {
@@ -1535,7 +1555,12 @@ function paintStage(world, d) {
   clearSubject(world);
   clear(actions);
   // Whatever the stage shows, the dice rest on the last roll unless a tumble is in the air.
-  if (!world.tumbling) showFaces(world);
+  if (!world.tumbling) {
+    try { showFaces(world); } catch (e) { /* the cubes are a flourish; the stage still paints */ }
+  }
+  // What the roll did is told when the dice land, not before: while they are in the air the story
+  // stays on the last state painted with them at rest.
+  if (!world.tumbling || !world.storyState) world.storyState = state;
   const c = world.selected >= 0 ? cardFor(state, mySeat, world.selected, names) : null;
   if (!c) world.selected = -1;
   const seated = mySeat === 0 || mySeat === 1;
@@ -1552,7 +1577,7 @@ function paintStage(world, d) {
 
   // A crowded stage (raising cash, an auction) keeps one line of story so the buttons fit.
   const crowded = !!(d.raise || d.auction || d.bankrupt);
-  const lines = storyFor(state, names, world.storyOpen ? 6 : crowded ? 1 : 2);
+  const lines = storyFor(world.storyState, names, world.storyOpen ? 6 : crowded ? 1 : 2);
   story.hidden = picking || !lines.length;
   story.classList[world.storyOpen ? 'add' : 'remove']('is-open');
   lines.forEach((line) => story.appendChild(storyLine(world, line)));
@@ -1870,11 +1895,13 @@ function animate(world, prev) {
       if (superseded()) return;
       try {
         endTumble(world);
+        paint(world);   // the roll is told as the dice land
         walk();
       } catch (e) {
         world.busy = false;
         world.tumbling = false;
         world.shown = [...world.state.pos];
+        try { paint(world); } catch (e2) { /* the original error is the one worth raising */ }
         throw e;
       }
     }, DICE_MS);

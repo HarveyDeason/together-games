@@ -243,6 +243,7 @@ function showEnded() {
   state = null;        // nothing left for a stray draw() to repaint
   boardEl.innerHTML = '';
   delete boardEl.__sl;
+  delete boardEl.__dc;
   turnEl.textContent = 'This game has ended.';
   scoreEl.textContent = '';
   rematchEl.hidden = true;
@@ -463,6 +464,7 @@ async function start() {
       game = getGame(gameId);
       boardEl.innerHTML = '';
       delete boardEl.__sl;          // drop the previous game's cached scene
+      delete boardEl.__dc;
       watchGameScores();
       renderPicker();
       applyChrome();

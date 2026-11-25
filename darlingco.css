@@ -76,6 +76,16 @@ body[data-game="darlingco"] #board {
 }
 body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
 
+/* A reaction rises from the bottom of #board, which on this game is the whole
+   screen INCLUDING the bar -- so every float lived inside the bar's strip, behind
+   it, and firing an emote showed nothing at all. Start them clear of the bar, and
+   above it in the stacking order (6 is the bar, 7 the emote tray, 10 the sheet's
+   dim layer, which should still cover them). */
+body[data-game="darlingco"] .reaction-float {
+  bottom: calc(74px + env(safe-area-inset-bottom));
+  z-index: 8;
+}
+
 /* ---- the plates ----------------------------------------------------------- */
 .dc-plates {
   position: relative;

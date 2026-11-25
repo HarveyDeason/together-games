@@ -193,6 +193,21 @@ get again. Read it before writing any board copy.
   exists for the other games and now draws the same chosen six.
   **No Firebase rules change**: `rooms/<code>/reactions` is unchanged, and every
   emoji in the pool is within the 8-character cap.
+  The tray **stays open** until it is closed: firing one emote is rarely the whole
+  thought. Three things that only two live clients would show, all measured in a real
+  room rather than reasoned about:
+  - A burst of eight arrives intact on the other phone, in order, even at the old
+    `limitToLast(1)` — and so does a simultaneous burst from both phones. The window
+    is now 20 anyway, but it is **not** what makes a burst work.
+  - **A reaction could replay ten seconds late.** A client that fires one and leaves
+    before its own cleanup runs leaves the entry behind; when the next reaction is
+    cleaned up, the window slides back onto the stale one and `onChildAdded` delivers
+    it again. Reproduced on two clients, fixed by the `seen` key set — that set, not
+    the wider window, is the fix.
+  - **Floats were invisible on this screen.** They rise from the bottom of `#board`,
+    which on this game spans the bar, so every one sat behind it (measured at y769-801
+    under a bar at y754) and firing an emote showed nothing at all. `darlingco.css`
+    now starts them above the bar at z-index 8.
 - **Tokens are 23px** (`--dc-tok` on `.dc-board`), up from 18. The old squeeze —
   two on a square shrinking to 13px, smallest when it mattered most — is gone:
   they **overlap at full size** instead. The size is paid for honestly: a tile a

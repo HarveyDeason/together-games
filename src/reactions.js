@@ -18,6 +18,9 @@ const DEFAULT_PICKS = ['\u{1F602}', '\u{1F62E}', '\u{1F621}', '\u2764\uFE0F', '\
 const PICKS_KEY = 'together-games.emotes';
 const FLOAT_MS = 2200;
 const CLEANUP_MS = 10_000;
+/** How many reactions the listener's window holds. More than anyone can tap in
+ *  the ten seconds before the first is cleaned up. */
+const WINDOW = 20;
 
 /** Which emotes this phone keeps on its bar. A convenience, not game state, so it
  *  lives per device beside the sound toggle and the piece pick — never in the room,
@@ -91,9 +94,24 @@ export function initReactions({ code, identity, mount }) {
 
   buildBar();
 
-  const recent = query(ref(db, `rooms/${code}/reactions`), limitToLast(1));
+  // The window is wide enough to hold a burst. At limitToLast(1) a run of taps
+  // could arrive as one update and be collapsed to the last of them, and every
+  // cleanup that emptied the window slid an OLDER reaction into it, which
+  // onChildAdded then delivered as if it were new. Both are a real hazard now
+  // that the tray stays open and several can be fired in a second.
+  const recent = query(ref(db, `rooms/${code}/reactions`), limitToLast(WINDOW));
+
+  // Every key the window has ever handed over, floated or not. A key that slides
+  // back in after a removal has been seen and is ignored; one too old to float is
+  // still recorded, so it cannot come round again either.
+  const seen = new Set();
 
   onChildAdded(recent, (snap) => {
+    if (seen.has(snap.key)) return;
+    // Bounded: a long game would otherwise grow this forever. Far more than the
+    // window holds, so clearing it can never resurrect something still in view.
+    if (seen.size > 500) seen.clear();
+    seen.add(snap.key);
     const reaction = snap.val();
     if (!reaction?.emoji) return;
     // Ignore anything left over from before this page loaded, so opening the

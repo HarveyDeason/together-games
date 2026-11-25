@@ -2454,13 +2454,35 @@ test('the Emotes slot opens a tray on the game screen, leaving the board in view
   assert.equal(trayOf(host).hidden, true, 'its own close brings the slots back');
 });
 
-test('tapping an emote sends it and puts the tray away', () => {
+test('the tray stays open so a run of emotes can be fired, and closes only when asked', () => {
   const react = fakeReact();
   const { host } = stage(fresh(), { react });
   clickSlot(host, 'emote');
-  buttonsIn(trayOf(host)).find((b) => b.textContent === 'b').click();
+  const face = (e) => buttonsIn(trayOf(host)).find((b) => b.textContent === e);
+  face('b').click();
   assert.deepEqual(react.sent, ['b']);
-  assert.equal(trayOf(host).hidden, true, 'one tap, one emote, board back');
+  assert.equal(trayOf(host).hidden, false, 'firing one does not dismiss the tray');
+  // The same one again, and again, and a different one: every tap is its own send.
+  face('b').click();
+  face('b').click();
+  face('a').click();
+  assert.deepEqual(react.sent, ['b', 'b', 'b', 'a']);
+  assert.equal(trayOf(host).hidden, false);
+  buttonsIn(trayOf(host)).find((b) => b.classes.has('is-shut')).click();
+  assert.equal(trayOf(host).hidden, true, 'and it goes away when told to');
+});
+
+test('a burst of taps keeps working while the state changes underneath', () => {
+  const react = fakeReact();
+  const { host, redraw } = stage(fresh(), { react });
+  clickSlot(host, 'emote');
+  buttonsIn(trayOf(host)).find((b) => b.textContent === 'a').click();
+  // The room redraws on every snapshot; the tray must survive one mid-burst with
+  // live buttons, not a stale node that sends nothing.
+  redraw(withState({ moves: 3 }), { react });
+  assert.equal(trayOf(host).hidden, false, 'a redraw does not shut the tray');
+  buttonsIn(trayOf(host)).find((b) => b.textContent === 'b').click();
+  assert.deepEqual(react.sent, ['a', 'b']);
 });
 
 test('an emote can be fired by a watcher and after the game is over', () => {
@@ -2472,6 +2494,20 @@ test('an emote can be fired by a watcher and after the game is over', () => {
     buttonsIn(trayOf(host)).find((b) => b.textContent === 'a').click();
     assert.deepEqual(react.sent, ['a'], what);
   }
+});
+
+test('the reactions listener holds a burst and never floats one key twice', () => {
+  const src = readFileSync(new URL('../src/reactions.js', import.meta.url), 'utf8');
+  // Comments out: this file explains the old window, and prose is not a call.
+  const code = src.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  // limitToLast(1) could collapse a run of taps into the last of them, and slid an
+  // older reaction into view every time a cleanup emptied the window.
+  assert.ok(!/limitToLast\(1\)/.test(code), 'a one-deep window cannot carry a burst');
+  assert.match(code, /limitToLast\(WINDOW\)/);
+  const window = /const WINDOW = (\d+)/.exec(src);
+  assert.ok(window && Number(window[1]) >= 10, 'the window holds more than anyone can tap in ten seconds');
+  assert.match(src, /seen\.has\(snap\.key\)/, 'a key that comes round again is ignored');
+  assert.match(src, /seen\.add\(snap\.key\)/);
 });
 
 test('the picker changes which emotes are on the bar, mid-game, on this phone only', () => {
@@ -2515,6 +2551,21 @@ test('opening another sheet from the bar puts the tray away', () => {
   clickSlot(host, 'places');
   assert.equal(trayOf(host).hidden, true);
   assert.equal(sheetOf(host).dataset.mode, 'places');
+});
+
+test('a reaction floats clear of the bar instead of behind it', () => {
+  // Found by playing, not by the suite: #board on this game spans the bar too, so
+  // every float sat inside the bar's strip, hidden, and firing an emote showed
+  // nothing. Measured at 375x812: the floats were at y769-801 under a bar at y754.
+  const css = cssText();
+  const body = ruleBody('body[data-game="darlingco"] .reaction-float', css);
+  assert.ok(body, 'the game does not reposition the float');
+  // The bar is 58px tall before the safe area, so the float clears it outright.
+  const bottom = /bottom:[^;]*?(\d+)px/.exec(body);
+  assert.ok(bottom && Number(bottom[1]) >= 60, 'a float must start above the bar, which is 58px tall');
+  const z = /z-index:\s*(\d+)/.exec(body);
+  assert.ok(z && Number(z[1]) > 7, 'a float must paint above the bar (6) and the emote tray (7)');
+  assert.ok(Number(z[1]) < 10, 'but below the sheet dim layer (10), which should cover it');
 });
 
 test('the room no longer tucks its reaction bar into the chat sheet', () => {

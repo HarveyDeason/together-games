@@ -780,11 +780,10 @@ function paintTray(world) {
     b.type = 'button';
     b.dataset.emoji = emoji;
     b.setAttribute('aria-label', `Send ${emoji}`);
-    b.addEventListener('click', () => {
-      react.send(emoji);
-      world.emotesOpen = false;
-      paint(world);
-    });
+    // The tray STAYS OPEN: firing one is rarely the whole thought, and having to
+    // reopen it between taps made a burst impossible. It closes on its own ✕, on
+    // the bar's slot, or when a sheet takes over -- never by itself.
+    b.addEventListener('click', () => { react.send(emoji); });
     tray.appendChild(b);
   }
   const edit = el(doc, 'button', 'dc-em is-edit', '✎');

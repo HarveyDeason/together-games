@@ -2385,13 +2385,16 @@ test('the plates show names, money, the pot, and whose move it is', () => {
   assert.match(text(host.__dc.pot), /£321/);
 });
 
-test('the bar has four slots, with the deals waiting on you and unread chat badged', () => {
+test('the bar has five slots, with the deals waiting on you and unread chat badged', () => {
   const s = ok(offer(owned({ 24: 1 }), 0, { 24: [0, false] }, 200));   // seat 0 offers; seat 1 must answer
   let unread = 3;
   let toggled = 0;
   const chat = { toggle: () => { toggled++; }, unread: () => unread };
   const { host, redraw } = stage(s, { mySeat: 1, chat });
-  assert.deepEqual(Object.keys(host.__dc.slots), ['deals', 'places', 'rules', 'chat']);
+  assert.deepEqual(Object.keys(host.__dc.slots), ['deals', 'places', 'rules', 'chat', 'emote']);
+  // No emote capability in this render: the slot is gone and the bar closes to four.
+  assert.equal(host.__dc.slots.emote.hidden, true);
+  assert.equal(host.__dc.bar.dataset.emote, 'off');
   assert.equal(host.__dc.slots.deals.dataset.slot, 'deals');
   const badge = (slot) => host.__dc.slots[slot].children.find((n) => n.classes.has('dc-badge'));
   assert.equal(badge('deals').textContent, '1');
@@ -2404,6 +2407,123 @@ test('the bar has four slots, with the deals waiting on you and unread chat badg
   assert.equal(badge('chat').hidden, true);
   const { host: offerer } = stage(s, { mySeat: 0 });
   assert.equal(offerer.__dc.slots.deals.children.find((n) => n.classes.has('dc-badge')).hidden, true, 'nothing waits on the offerer');
+});
+
+// ---- the emote tray and picker -------------------------------------------------
+// The regression this guards: the reaction bar used to be moved INTO the chat sheet
+// for this game, so firing an emote covered the board.
+const fakeReact = ({ picks = ['a', 'b'], pool = ['a', 'b', 'c', 'd'], slots = 3 } = {}) => {
+  let chosen = picks.slice();
+  const sent = [];
+  return {
+    sent,
+    saved: () => chosen.slice(),
+    pool: () => pool.slice(),
+    slots: () => slots,
+    picks: () => chosen.slice(),
+    setPicks: (list) => { chosen = list.slice(); },
+    send: (emoji) => sent.push(emoji)
+  };
+};
+const trayOf = (h) => h.__dc.tray;
+const trayFaces = (h) => buttonsIn(trayOf(h))
+  .filter((b) => !b.classes.has('is-edit') && !b.classes.has('is-shut'))
+  .map((b) => b.textContent);
+
+test('the Emotes slot opens a tray on the game screen, leaving the board in view', () => {
+  const react = fakeReact();
+  const { host } = stage(fresh(), { react });
+  // The tray belongs to the bar, not to the chat sheet, and the bar keeps its fifth column.
+  assert.ok(host.__dc.bar.children.includes(trayOf(host)), 'the tray hangs off the game bar');
+  assert.equal(host.__dc.bar.dataset.emote, 'on');
+  assert.equal(host.__dc.slots.emote.hidden, false);
+  assert.equal(trayOf(host).hidden, true, 'shut until asked for');
+
+  clickSlot(host, 'emote');
+  assert.equal(trayOf(host).hidden, false);
+  assert.equal(sheetOf(host).hidden, true, 'no sheet covers the board');
+  assert.equal(host.__dc.dim.hidden, true);
+  assert.deepEqual(trayFaces(host), ['a', 'b'], "this phone's picks, in order");
+
+  clickSlot(host, 'emote');
+  assert.equal(trayOf(host).hidden, true, 'the slot shuts it again');
+
+  // The tray stands over the bar's slots, so it carries its own way back to them.
+  clickSlot(host, 'emote');
+  buttonsIn(trayOf(host)).find((b) => b.classes.has('is-shut')).click();
+  assert.equal(trayOf(host).hidden, true, 'its own close brings the slots back');
+});
+
+test('tapping an emote sends it and puts the tray away', () => {
+  const react = fakeReact();
+  const { host } = stage(fresh(), { react });
+  clickSlot(host, 'emote');
+  buttonsIn(trayOf(host)).find((b) => b.textContent === 'b').click();
+  assert.deepEqual(react.sent, ['b']);
+  assert.equal(trayOf(host).hidden, true, 'one tap, one emote, board back');
+});
+
+test('an emote can be fired by a watcher and after the game is over', () => {
+  for (const [state, mySeat, what] of [[fresh(), null, 'a watcher'], [withState({ phase: 'over', winner: 0 }), 0, 'a finished game']]) {
+    const react = fakeReact();
+    const { host } = stage(state, { mySeat, react });
+    assert.equal(host.__dc.slots.emote.disabled, false, `${what} may emote`);
+    clickSlot(host, 'emote');
+    buttonsIn(trayOf(host)).find((b) => b.textContent === 'a').click();
+    assert.deepEqual(react.sent, ['a'], what);
+  }
+});
+
+test('the picker changes which emotes are on the bar, mid-game, on this phone only', () => {
+  const react = fakeReact();
+  const { host } = stage(fresh(), { react });
+  clickSlot(host, 'emote');
+  buttonsIn(trayOf(host)).find((b) => b.classes.has('is-edit')).click();
+  assert.equal(trayOf(host).hidden, true, 'the tray steps aside for the picker');
+  assert.equal(sheetOf(host).dataset.mode, 'emotes');
+  const keys = () => buttonsIn(sheetOf(host)).filter((b) => b.classes.has('dc-ek'));
+  assert.deepEqual(keys().map((b) => b.textContent), ['a', 'b', 'c', 'd'], 'the whole pool');
+  assert.deepEqual(keys().filter((b) => b.classes.has('is-on')).map((b) => b.textContent), ['a', 'b']);
+
+  keys().find((b) => b.textContent === 'c').click();
+  assert.deepEqual(react.saved(), ['a', 'b', 'c']);
+  // Three of three: a fourth is refused as a disabled key, not a tap that does nothing.
+  assert.equal(keys().find((b) => b.textContent === 'd').disabled, true);
+  keys().find((b) => b.textContent === 'a').click();
+  assert.deepEqual(react.saved(), ['b', 'c']);
+
+  // And the change is on the bar at once.
+  buttonsIn(sheetOf(host)).find((b) => b.textContent === 'Done').click();
+  clickSlot(host, 'emote');
+  assert.deepEqual(trayFaces(host), ['b', 'c']);
+});
+
+test('the picker will not leave the bar empty', () => {
+  const react = fakeReact({ picks: ['a'] });
+  const { host } = stage(fresh(), { react });
+  clickSlot(host, 'emote');
+  buttonsIn(trayOf(host)).find((b) => b.classes.has('is-edit')).click();
+  const only = buttonsIn(sheetOf(host)).find((b) => b.classes.has('dc-ek') && b.textContent === 'a');
+  assert.equal(only.disabled, true);
+  only.click();
+  assert.deepEqual(react.saved(), ['a'], 'the last one stays');
+});
+
+test('opening another sheet from the bar puts the tray away', () => {
+  const { host } = stage(ownerState([6, 8, 9], 0), { react: fakeReact() });
+  clickSlot(host, 'emote');
+  clickSlot(host, 'places');
+  assert.equal(trayOf(host).hidden, true);
+  assert.equal(sheetOf(host).dataset.mode, 'places');
+});
+
+test('the room no longer tucks its reaction bar into the chat sheet', () => {
+  const site = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  assert.ok(!/chat-sheet\s+\.reaction-bar/.test(site), 'the in-chat placement is gone');
+  assert.match(site, /body\[data-chrome="own"\][\s\S]{0,200}#reaction-bar/, "the room's bar is hidden for a game with its own");
+  const room = readFileSync(new URL('../src/main-room.js', import.meta.url), 'utf8');
+  assert.ok(!/chatSheet\w*\.insertBefore/.test(room), 'nothing moves the bar into chat any more');
+  assert.match(room, /react,/, 'the game is handed the emote capability');
 });
 
 test('a watcher has no bar actions but Rules and Chat, and no enabled stage button', () => {
@@ -2837,7 +2957,7 @@ test('every sheet and stage control is at least 40px in the stylesheet', () => {
     const vals = props.map((p) => px(body, p)).filter((v) => v !== null);
     if (!vals.length || Math.max(...vals) < 40) small.push(`${selector} ${vals}`);
   };
-  for (const s of ['.dc-sheet-close', '.dc-mortbtn', '.dc-help', '.dc-pstep', '.dc-tab', '.dc-dchip', '.dc-step', '.dc-cashbox', '.dc-qchip', '.dc-drow', '.dc-btn', '.dc-astep', '.dc-aval', '.dc-done', '.dc-pk', '.dc-col', '.dc-close', '.dc-slot']) check(s);
+  for (const s of ['.dc-sheet-close', '.dc-mortbtn', '.dc-help', '.dc-pstep', '.dc-tab', '.dc-dchip', '.dc-step', '.dc-cashbox', '.dc-qchip', '.dc-drow', '.dc-btn', '.dc-astep', '.dc-aval', '.dc-done', '.dc-pk', '.dc-col', '.dc-close', '.dc-slot', '.dc-em', '.dc-ek']) check(s);
   check('.dc-sheet .dc-btn');
   assert.deepEqual(small, []);
   // widths of the thumb targets that are narrow by nature
@@ -2881,12 +3001,28 @@ test('the tile stylesheet never breaks a word and clamps names to the room the t
   assert.match(ruleBody('.dc-tile', css), /container-type:\s*size/);
 });
 
-test('a tile never clips what stands on it, and tokens ride over the icon rather than the name', () => {
+test('a tile never clips what stands on it, and a token is given room rather than covering the name', () => {
   const css = cssText();
   assert.ok(!/overflow:\s*hidden/.test(ruleBody('.dc-tile', css)), 'a tile that clips would cut a token off');
   assert.match(ruleBody('.dc-toks', css), /pointer-events:\s*none/);
-  assert.match(css, /\.dc-toks\[data-n="2"\] \.dc-tok \{ width: 13px/);
   assert.match(css, /\.dc-tile\[data-tok\] \{ z-index: 5; \}/);
+  // One size for every token, big enough that the thinner silhouettes read.
+  assert.ok(px(ruleBody('.dc-board', css), '--dc-tok') >= 22, 'a token is at least 22px');
+  assert.match(ruleBody('.dc-tok', css), /width:\s*var\(--dc-tok\)/);
+  assert.match(ruleBody('.dc-tok', css), /height:\s*var\(--dc-tok\)/);
+  // Two on one square overlap at full size; nothing shrinks them.
+  assert.ok(!/\.dc-toks\[data-n="2"\][^{]*\{[^}]*(?:width|height):/.test(css), 'sharing a square must not shrink a token');
+  assert.match(css, /\.dc-toks\[data-n="2"\] \.dc-tok \+ \.dc-tok \{[\s\S]*?margin-left:\s*calc\(var\(--dc-tok\) \* -0?\.\d+\)/);
+  // The room that pays for the size, on the occupied tile only.
+  assert.match(css, /\.dc-tile\[data-tok\] \.dc-ic \{ display: none; \}/);
+  assert.match(css, /\.dc-tile\[data-tok\] \.dc-pr \{ display: none; \}/);
+  // The name re-clamps for the room the token took, and outweighs the unoccupied ladder.
+  assert.match(css, /\.dc-tile\[data-tok\]:is\(\[data-edge="top"\], \[data-edge="bottom"\]\):not\(\.dc-corner\) \.dc-nm \{ -webkit-line-clamp: 3; \}/);
+  const occupied = [...css.matchAll(/\.dc-tile\[data-tok\]:is\(\[data-edge="left"\], \[data-edge="right"\]\):not\(\.dc-corner\) \.dc-nm \{ -webkit-line-clamp: (\d)/g)].map((m) => Number(m[1]));
+  assert.deepEqual(occupied, [1, 2, 3, 4], 'a side tile gains a line as it gets taller');
+  // Every edge pushes its content clear of the token, the band-side one by band + token.
+  assert.match(css, /\.dc-tile\[data-tok\]:not\(\.dc-corner\) \{ padding-top: calc\(var\(--dc-tok\) \+ 3px\); \}/);
+  assert.match(css, /\.dc-tile\[data-tok\]\[data-edge="bottom"\]:not\(\.dc-corner\) \{ padding-top: calc\(var\(--dc-band\) \+ var\(--dc-tok\) \+ 2px\); \}/);
 });
 
 test('paintTile records how many tokens stand on a tile and whether a price shows', () => {

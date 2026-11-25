@@ -449,11 +449,19 @@ function endTumble(world) {
   world.tumbling = false;
 }
 
+/** A game rendered with no emote capability at all (solo, a test, a bot run): the
+ *  Emotes slot is left out of the bar entirely rather than opening an empty tray. */
+const NO_REACT = { pool: () => [], slots: () => 0, picks: () => [], setPicks() {}, send() {} };
+
+// Four named slots and one that is icon only. Five labels will not fit a phone's
+// width, so Emotes rides on its face and "My places" is shortened to Places (the
+// sheet it opens still says My places).
 const SLOTS = [
   { slot: 'deals', icon: '\u{1F91D}', label: 'Deals' },
-  { slot: 'places', icon: '\u{1F3E0}', label: 'My places' },
+  { slot: 'places', icon: '\u{1F3E0}', label: 'Places' },
   { slot: 'rules', icon: '\u{1F4D6}', label: 'Rules' },
-  { slot: 'chat', icon: '\u{1F4AC}', label: 'Chat' }
+  { slot: 'chat', icon: '\u{1F4AC}', label: 'Chat' },
+  { slot: 'emote', icon: '\u{1F604}', label: 'Emotes', faceOnly: true }
 ];
 
 function buildWorld(doc, host) {
@@ -505,6 +513,9 @@ function buildWorld(doc, host) {
     const b = el(doc, 'button', 'dc-slot');
     b.type = 'button';
     b.dataset.slot = spec.slot;
+    // Every slot keeps all four children whatever it shows, because paintBar
+    // reaches the note and the badge by position.
+    if (spec.faceOnly) b.dataset.face = '1';
     b.appendChild(el(doc, 'span', 'dc-slot-ico', spec.icon));
     b.appendChild(el(doc, 'span', 'dc-slot-lbl', spec.label));
     b.appendChild(el(doc, 'span', 'dc-slot-note'));
@@ -512,6 +523,13 @@ function buildWorld(doc, host) {
     bar.appendChild(b);
     slots[spec.slot] = b;
   }
+  // The emote tray: a row that floats clear above the bar when the Emotes slot is
+  // tapped, so an emote can be fired without a sheet covering the board. Absolutely
+  // positioned, so the grid above does not count it as a sixth column.
+  const tray = el(doc, 'div', 'dc-emotes');
+  tray.hidden = true;
+  tray.setAttribute('aria-label', 'Send an emote');
+  bar.appendChild(tray);
   root.appendChild(bar);
 
   // One bottom sheet serves My places, Deals, the deal builder and review, and the
@@ -525,14 +543,14 @@ function buildWorld(doc, host) {
   host.appendChild(root);
 
   const world = {
-    doc, root, board, plates, plateNodes, discs, pot, bar, slots, tiles, mid, story, subject, strips, actions, sheet, dim,
-    selected: -1, picking: false, confirming: false, storyOpen: false, pickedHere: false,
+    doc, root, board, plates, plateNodes, discs, pot, bar, slots, tray, tiles, mid, story, subject, strips, actions, sheet, dim,
+    selected: -1, picking: false, confirming: false, storyOpen: false, pickedHere: false, emotesOpen: false,
     bidStep: null, bidKey: '', sheetMode: null, rulesTab: 'turn', rulesCard: '', draft: null, reviewId: null, sent: null, pending: false, busy: false,
     generation: 0, flipGeneration: 0, hadSeat: false, hold: null, animatedKey: null, stateJson: '',
     shown: null, builtSeen: null, state: null, mySeat: null, names: [],
     tumbling: false, ...buildDice(doc),
     soundOn: true, sound: null, spunAt: 0, spunMoves: -1, deferred: null,
-    looks: null, looksKey: '', chat: { toggle() {}, unread: () => 0 }, onLook: () => {}, onRematch: () => {}, onAction: () => {}
+    looks: null, looksKey: '', chat: { toggle() {}, unread: () => 0 }, react: NO_REACT, onLook: () => {}, onRematch: () => {}, onAction: () => {}
   };
   // Audio may only start from a real tap: one listener, added once, wakes it.
   world.sound = createSound({
@@ -566,6 +584,7 @@ function buildWorld(doc, host) {
   slots.places.addEventListener('click', () => { if (!slots.places.disabled) openSheet(world, 'places'); });
   slots.rules.addEventListener('click', () => openRules(world, ''));
   slots.chat.addEventListener('click', () => world.chat.toggle());
+  slots.emote.addEventListener('click', () => { world.emotesOpen = !world.emotesOpen; paint(world); });
   watchNames(world, host);
   return world;
 }
@@ -602,7 +621,8 @@ function paintSheet(world) {
     if (world.hadSeat) hideSheet(world); else shutSheet(world);
     return;
   }
-  if (mode === 'places') paintPlaces(world);
+  if (mode === 'emotes') paintEmotes(world);
+  else if (mode === 'places') paintPlaces(world);
   else if (mode === 'deals') paintDeals(world);
   else if (mode === 'deal') paintBuilder(world);
   else if (mode === 'review') paintReview(world);
@@ -644,6 +664,7 @@ function openSheet(world, mode) {
   world.confirming = false;
   world.picking = false;
   world.selected = -1;
+  world.emotesOpen = false;
   paint(world);
 }
 
@@ -737,6 +758,89 @@ function helpButton(world, cardId, aria) {
   b.appendChild(el(world.doc, 'span', 'dc-help-dot', '?'));
   b.addEventListener('click', () => openRules(world, cardId));
   return b;
+}
+
+// ---- emotes --------------------------------------------------------------------
+// The room's reaction bar used to be moved into the chat sheet for this game, so
+// reacting meant covering the board. Instead: a slot on the bar opens a tray of
+// the six emotes this phone keeps, floating just above the bar with the board
+// still in view. Firing one closes the tray. The pencil opens the picker, which
+// is the one thing here that does want the sheet, because choosing is not a thing
+// you do mid-move. The choice is this phone's alone and lives in localStorage
+// beside the sound toggle and the piece pick: it is a convenience, not game state,
+// and putting it in the room would impose one player's taste on the other.
+
+/** Redraw the tray from this phone's picks. Cheap enough to rebuild on every paint,
+ *  and it holds nothing (no scroll, no text) that a rebuild could lose. */
+function paintTray(world) {
+  const { doc, tray, react } = world;
+  clear(tray);
+  for (const emoji of react.picks()) {
+    const b = el(doc, 'button', 'dc-em', emoji);
+    b.type = 'button';
+    b.dataset.emoji = emoji;
+    b.setAttribute('aria-label', `Send ${emoji}`);
+    b.addEventListener('click', () => {
+      react.send(emoji);
+      world.emotesOpen = false;
+      paint(world);
+    });
+    tray.appendChild(b);
+  }
+  const edit = el(doc, 'button', 'dc-em is-edit', '✎');
+  edit.type = 'button';
+  edit.dataset.type = 'edit-emotes';
+  edit.setAttribute('aria-label', 'Choose your emotes');
+  edit.setAttribute('title', 'Choose your emotes');
+  edit.addEventListener('click', () => openSheet(world, 'emotes'));
+  tray.appendChild(edit);
+  // The tray stands where the five slots do, so it carries its own way back to them.
+  const shut = el(doc, 'button', 'dc-em is-shut', '✕');
+  shut.type = 'button';
+  shut.dataset.type = 'shut-emotes';
+  shut.setAttribute('aria-label', 'Close the emotes');
+  shut.addEventListener('click', () => { world.emotesOpen = false; paint(world); });
+  tray.appendChild(shut);
+}
+
+/** The picker: the whole pool, the chosen ones lit. The last one cannot be removed
+ *  and a full bar refuses another, both shown as a disabled button rather than a tap
+ *  that silently does nothing. */
+function paintEmotes(world) {
+  const { doc, react } = world;
+  const picks = react.picks();
+  const max = react.slots();
+  const { body, foot, restore } = sheetFrame(world, 'Your emotes', () => closeSheet(world), 'emotes');
+  // When the bar is full the rest are refused, so the line says what to do about it
+  // rather than repeating the count at someone looking at ten dimmed keys.
+  const full = picks.length >= max;
+  body.appendChild(el(doc, 'p', 'dc-lab', full
+    ? `Your bar is full at ${max}. Tap one of yours to take it off, then pick another.`
+    : `Tap to add one. ${picks.length} of ${max} chosen.`));
+  body.appendChild(el(doc, 'p', 'dc-lab', 'They are yours on this phone only: you each pick your own.'));
+  const grid = el(doc, 'div', 'dc-empick');
+  for (const emoji of react.pool()) {
+    const on = picks.includes(emoji);
+    const b = el(doc, 'button', on ? 'dc-ek is-on' : 'dc-ek', emoji);
+    b.type = 'button';
+    b.dataset.emoji = emoji;
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    const why = on && picks.length <= 1 ? 'Keep at least one' : !on && picks.length >= max ? `Your bar is full at ${max}` : '';
+    b.disabled = !!why;
+    b.setAttribute('aria-label', why || `${on ? 'Remove' : 'Add'} ${emoji}`);
+    if (why) b.setAttribute('title', why);
+    b.addEventListener('click', () => {
+      // The disabled key is the cue; this is the rule. A tap that would empty the
+      // bar or overfill it changes nothing, whatever reached the handler.
+      if (why) return;
+      react.setPicks(on ? picks.filter((e) => e !== emoji) : [...picks, emoji]);
+      paint(world);
+    });
+    grid.appendChild(b);
+  }
+  body.appendChild(grid);
+  foot.appendChild(doneButton(world));
+  restore();
 }
 
 // ---- My places ---------------------------------------------------------------
@@ -1674,6 +1778,23 @@ function paintBar(world) {
   badge('rules', 0);
   note('chat', '');
   badge('chat', world.chat.unread());
+
+  // Emotes are the room's, not the game's: a watcher has them, and so does a
+  // finished game, where a 🎉 is exactly what you want. Only a render with no
+  // emote capability at all drops the slot, and the bar closes to four columns.
+  const canEmote = world.react.pool().length > 0;
+  world.bar.dataset.emote = canEmote ? 'on' : 'off';
+  slots.emote.hidden = !canEmote;
+  note('emote', '');
+  badge('emote', 0);
+  reason(slots.emote, 'Emotes');
+  const trayOpen = canEmote && world.emotesOpen;
+  slots.emote.setAttribute('aria-expanded', String(trayOpen));
+  if (trayOpen) slots.emote.classList.add('is-on');
+  else slots.emote.classList.remove('is-on');
+  world.tray.hidden = !trayOpen;
+  if (trayOpen) paintTray(world);
+  else clear(world.tray);
 }
 
 function paint(world) {
@@ -1720,7 +1841,7 @@ function viewOf(world) {
  *  it is built again. Everything in `ctx` beyond mySeat, names and onAction is
  *  optional: a missing looks gives the defaults, and the rest does nothing. */
 export function renderBoard(state, host, ctx = {}) {
-  const { mySeat, names, onAction, looks, onLook, chat, onRematch } = ctx;
+  const { mySeat, names, onAction, looks, onLook, chat, onRematch, react } = ctx;
   let world = host.__dc;
   if (!world || !Array.from(host.children).includes(world.root)) {
     world = buildWorld(host.ownerDocument, host);
@@ -1736,6 +1857,7 @@ export function renderBoard(state, host, ctx = {}) {
   world.onLook = onLook || (() => {});
   world.onRematch = onRematch || (() => {});
   world.chat = chat || { toggle() {}, unread: () => 0 };
+  world.react = react || NO_REACT;
   // A genuinely new state ends any question that was open about the old one; a state
   // delivered twice (the room redraws on every listener) leaves it alone.
   const json = JSON.stringify(state);

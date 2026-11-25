@@ -33,13 +33,15 @@ draw is deterministic and both phones agree.
 
 `meta` carries `id`, `name`, `seats`, and two optional flags: `sound: true` shows
 the room's Sound toggle, and `chrome: 'own'` tells the room the game draws its
-own turn line, Rematch and Chat button (the room hides its versions and moves
-the reaction bar into the chat sheet). Every other game keeps the room's chrome.
+own turn line, Rematch, Chat button and emote bar (the room hides its versions;
+the stylesheet hides `#reaction-bar`). Every other game keeps the room's chrome.
 
 `render(state, host, ctx)` is called on every snapshot. `ctx` is `mySeat`,
 `names`, `onAction`, and, optional for every game, `looks` (both seats' piece and
 colour, already resolved), `onLook` (a pick to save), `chat` (`toggle`, `unread`),
-`onRematch`, and `sound` (`{ on }`). A game that ignores the extras is unharmed.
+`onRematch`, `react` (`pool`, `slots`, `picks`, `setPicks`, `send` — the emotes,
+for a game that draws its own bar) and `sound` (`{ on }`). A game that ignores
+the extras is unharmed.
 The scene is built once and cached on the host (`host.__dc` for Darling & Co.);
 `main-room.js` deletes the cache whenever the game changes or the room ends, so
 a game that is switched away from and back is rebuilt cleanly.
@@ -173,4 +175,31 @@ get again. Read it before writing any board copy.
 - **The Free Parking pot is not counted by `netWorth`**, so at a tally it is out
   of play.
 - **Two Jiggly Boo cards read "Back to..."** but move forward round the board.
-- The dog and the iron are the weakest silhouettes at 19px.
+- The dog and the iron are the weakest silhouettes at 19px. **Tokens are now 23px**
+  (21px under 700px tall), which helps them a lot; see below.
+
+## Emotes and tokens, 2026-11-25
+
+- **Emotes are on the game screen.** `src/reactions.js` owns the pool (sixteen),
+  how many fit a bar (six) and this phone's picks, kept in `localStorage` under
+  `together-games.emotes` — a convenience, not game state, so it is per device
+  like the sound toggle and the piece pick, and the two players pick their own.
+  It hands the room an API, the room hands it to the game as `ctx.react`, and
+  Darling & Co. draws a fifth bar slot (😄, icon only — five labels will not fit,
+  which is also why "My places" reads "Places" there) that **replaces the bar's
+  slots with a tray of emotes** rather than floating over the board. That is the
+  point: firing an emote covers no tile. The tray's pencil opens the picker
+  (sheet mode `'emotes'`), its ✕ brings the slots back. The room's own bar still
+  exists for the other games and now draws the same chosen six.
+  **No Firebase rules change**: `rooms/<code>/reactions` is unchanged, and every
+  emoji in the pool is within the 8-character cap.
+- **Tokens are 23px** (`--dc-tok` on `.dc-board`), up from 18. The old squeeze —
+  two on a square shrinking to 13px, smallest when it mattered most — is gone:
+  they **overlap at full size** instead. The size is paid for honestly: a tile a
+  token stands on hides its icon, drops its price, and grows its top padding by
+  the token's height, so the token is given room rather than covering the name.
+  A tile is its own size container and the query is against its CONTENT box, so
+  that padding automatically re-clamps the name — but the unoccupied thresholds
+  land a line or two too mean, which is why `darlingco.css` restates the ladder
+  for `[data-tok]` tiles. Every occupied tile was measured un-clipped at 375x812
+  and 360x640. If you change `--dc-tok`, re-check those thresholds.

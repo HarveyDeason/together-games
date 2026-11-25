@@ -138,6 +138,7 @@ body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
 /* ---- the board -------------------------------------------------------------- */
 .dc-board {
   --dc-band: 9px;
+  --dc-tok: 23px;
   position: relative;
   flex: 1 1 0;
   min-height: 420px;
@@ -272,9 +273,24 @@ body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
 .dc-tile.is-picked { outline: 2.5px solid var(--cream); outline-offset: -1px; z-index: 3; }
 .dc-tile[data-tok][data-lit], .dc-tile[data-tok][data-lot], .dc-tile[data-tok].is-picked { z-index: 5; }
 
-/* Tokens: the player's chosen piece on a disc of their colour. They sit over the icon, at
-   the tile's outer end, so the name beneath stays readable; two on one square are drawn
-   smaller and side by side so both are whole. A corner's name is centred, so they ride its top edge. */
+/* Tokens: the player's chosen piece on a disc of their colour, at the end of the tile
+   that faces the middle, where a piece stands on a real board. 23px, up from 18, because
+   at 18 the thinner silhouettes (the dog, the iron) were guesswork and on a 40-square
+   board the one thing you must see at a glance is where you both are.
+
+   The trade-off that used to squeeze them: a token sits over the tile, so size is taken
+   from the name beneath, and two on one square used to shrink to 13px -- smallest exactly
+   when it matters most. Both halves are solved rather than traded:
+
+   - Room: a tile a piece stands on hides its icon (the token has replaced it as the thing
+     to look at), gives up the price (tap the tile for the deed) and clamps its name to two
+     lines, and the tile's top padding grows by the token's height. So the token is given
+     real space instead of covering the name. Only the one or two occupied tiles pay it.
+   - Two on one square OVERLAP at full size instead of shrinking, the near one in front with
+     a dark rim so the two discs read apart. A tile holding a token is already above its
+     neighbours (z-index 5) and nothing clips it, so the small overhang is whole and legible.
+
+   A corner's name is centred, so its tokens ride the top edge. */
 .dc-toks {
   position: absolute;
   top: 0;
@@ -282,7 +298,7 @@ body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
   right: 0;
   display: flex;
   justify-content: center;
-  gap: 1px;
+  gap: 0;
   pointer-events: none;
   z-index: 4;
 }
@@ -294,17 +310,45 @@ body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
   flex: none;
   display: grid;
   place-items: center;
-  width: 18px;
-  height: 18px;
-  border: 1.5px solid #fff;
+  width: var(--dc-tok);
+  height: var(--dc-tok);
+  border: 2px solid #fff;
   border-radius: 50%;
   background: var(--p0);
-  box-shadow: 0 2px 4px rgb(0 0 0 / 0.5), inset 0 -2px 0 rgb(0 0 0 / 0.25);
+  box-shadow: 0 2px 5px rgb(0 0 0 / 0.55), inset 0 -2px 0 rgb(0 0 0 / 0.25);
 }
 .dc-tok[data-seat="1"] { background: var(--p1); }
-.dc-toks[data-n="2"] .dc-tok { width: 13px; height: 13px; border-width: 1px; }
-.dc-tile:is([data-edge="left"], [data-edge="right"]) .dc-toks[data-n="2"] .dc-tok { width: 15px; height: 15px; }
-.dc-corner .dc-toks[data-n="2"] .dc-tok { width: 18px; height: 18px; border-width: 1.5px; }
+
+/* Sharing a square: overlap by a third, the second disc in front. */
+.dc-toks[data-n="2"] .dc-tok + .dc-tok {
+  margin-left: calc(var(--dc-tok) * -0.32);
+  box-shadow: -2px 2px 5px rgb(0 0 0 / 0.6), inset 0 -2px 0 rgb(0 0 0 / 0.25);
+}
+
+/* The room the token is given on the tile it stands on. */
+.dc-tile[data-tok] .dc-ic { display: none; }
+.dc-tile[data-tok] .dc-pr { display: none; }
+.dc-tile[data-tok]:not(.dc-corner) { padding-top: calc(var(--dc-tok) + 3px); }
+.dc-tile[data-tok][data-edge="bottom"]:not(.dc-corner) { padding-top: calc(var(--dc-band) + var(--dc-tok) + 2px); }
+.dc-corner[data-tok] { justify-content: flex-end; padding-top: 0; padding-bottom: 2px; }
+/* How many lines of name are left. A tile is its own size container and the query is
+   against its CONTENT box, so the padding above has already told the rules there is
+   less room -- but their thresholds were drawn for a tile with no token on it and a
+   price to fit, and they land a line or two too mean. These restate the ladder for an
+   occupied tile, where the price has gone: one line, then more as the tile gets taller
+   (6.6px a line on a side tile, and the ladder is in content-box height, so 21px is a
+   47px tile). Every rule here outweighs the unoccupied ones, which is the point. */
+.dc-tile[data-tok]:is([data-edge="top"], [data-edge="bottom"]):not(.dc-corner) .dc-nm { -webkit-line-clamp: 3; }
+.dc-tile[data-tok]:is([data-edge="left"], [data-edge="right"]):not(.dc-corner) .dc-nm { -webkit-line-clamp: 1; }
+@container (min-height: 14px) {
+  .dc-tile[data-tok]:is([data-edge="left"], [data-edge="right"]):not(.dc-corner) .dc-nm { -webkit-line-clamp: 2; }
+}
+@container (min-height: 21px) {
+  .dc-tile[data-tok]:is([data-edge="left"], [data-edge="right"]):not(.dc-corner) .dc-nm { -webkit-line-clamp: 3; }
+}
+@container (min-height: 27px) {
+  .dc-tile[data-tok]:is([data-edge="left"], [data-edge="right"]):not(.dc-corner) .dc-nm { -webkit-line-clamp: 4; }
+}
 
 /* ---- the stage: the centre, one decision at a time ------------------------- */
 .dc-mid {
@@ -683,12 +727,14 @@ body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
   z-index: 6;
   flex: none;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, 1fr) 48px;
   gap: 6px;
   margin: 0 -8px;
   padding: 7px 8px calc(7px + env(safe-area-inset-bottom));
   background: var(--table);
 }
+/* No emote capability (solo, a bot run): the slot is gone and the four close up. */
+.dc-bar[data-emote="off"] { grid-template-columns: repeat(4, 1fr); }
 .dc-slot {
   position: relative;
   display: flex;
@@ -708,11 +754,67 @@ body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
   cursor: pointer;
 }
 .dc-slot-lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The emote slot carries no label: five of them will not fit a phone, and a face
+   says it on its own. The word still reaches a screen reader through aria-label. */
+.dc-slot[data-face] { padding: 0; }
+.dc-slot[data-face] .dc-slot-lbl { display: none; }
+.dc-slot[data-face] .dc-slot-ico { font-size: 21px; }
+.dc-slot.is-on { background: var(--felt2); box-shadow: inset 0 0 0 1.5px var(--gold); }
 .dc-slot-note { color: var(--mut); font-size: 10.5px; }
 .dc-slot-note:empty { display: none; }
 .dc-slot:disabled { cursor: default; color: #7f90ad; }
 .dc-badge { flex: none; padding: 0 5px; border-radius: 9px; background: var(--gold); color: var(--ink); font-size: 11px; font-style: normal; font-weight: 700; }
 .dc-badge:empty { display: none; }
+
+/* ---- the emote tray -------------------------------------------------------------
+   The whole point: an emote without losing sight of the board. So the tray takes the
+   bar's own strip rather than floating over the board -- it replaces the five slots
+   for as long as it is open and covers not one tile. Absolutely positioned inside the
+   sticky bar, so the grid above it stays five columns. z-index 7: above the bar's own
+   slots, below the sheet's dim layer (10). Its own close brings the slots back. */
+.dc-emotes {
+  position: absolute;
+  inset: 7px 8px calc(7px + env(safe-area-inset-bottom));
+  z-index: 7;
+  display: flex;
+  gap: 4px;
+  background: var(--table);
+}
+.dc-em {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--felt);
+  color: var(--cream);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.dc-em:active { transform: scale(0.9); }
+.dc-em:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+/* The pencil and the close are narrower than an emote: they are the ways out, not choices. */
+.dc-em.is-edit, .dc-em.is-shut { flex: 0 0 34px; background: var(--inset); color: var(--mut); font-size: 16px; }
+
+/* The picker, in the sheet. Four across, so sixteen is one grid with no scroll. */
+.dc-empick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.dc-ek {
+  display: grid;
+  place-items: center;
+  height: 52px;
+  border: 1.5px solid var(--line);
+  border-radius: 12px;
+  background: var(--inset);
+  font-size: 26px;
+  line-height: 1;
+  cursor: pointer;
+}
+.dc-ek.is-on { border-color: var(--gold); background: var(--felt2); box-shadow: 0 0 0 2px rgb(255 182 39 / 0.35); }
+/* Refused, not broken: dimmed enough to be out of play, bright enough to still read. */
+.dc-ek:disabled { cursor: default; border-style: dashed; opacity: 0.62; }
+.dc-ek:focus-visible { outline: 2px solid var(--cream); outline-offset: 2px; }
 
 /* ---- the sheet: My places, Deals, the deal builder and review, How to play ----------
    One paper sheet over the board, at most 86% of the game's height, with a dim layer
@@ -943,6 +1045,9 @@ body[data-game="darlingco"] #back-home { margin: 0.5rem 0; }
 
 /* ---- short screens ----------------------------------------------------------------- */
 @media (max-height: 700px) {
+  /* Side tiles are under 40px here, and the room a token takes is room the name loses.
+     21px still reads, and still beats the 18px a lone token used to get. */
+  .dc-board { --dc-tok: 21px; }
   /* The raise-cash list gives way to the lot and the buttons: two ways here, one below, the rest in My places. */
   .dc-raise .dc-rc:nth-child(n+4) { display: none; }
   .dc-btn, .dc-abid, .dc-apass { min-height: 40px; }

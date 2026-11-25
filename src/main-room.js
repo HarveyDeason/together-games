@@ -24,7 +24,6 @@ const menuEl = document.getElementById('room-menu');
 const menuToggleEl = document.getElementById('menu-toggle');
 const soundEl = document.getElementById('sound-toggle');
 const reactionBarEl = document.getElementById('reaction-bar');
-const chatSheetEl = document.getElementById('chat-sheet');
 
 const code = normaliseCode(new URLSearchParams(location.search).get('r'));
 const identity = getIdentity();
@@ -46,6 +45,17 @@ let state = null;
 let online = true;
 let ended = false;
 let chat = { toggle() {}, unread: () => 0 };
+let reactions = { pool: () => [], slots: () => 0, picks: () => [], setPicks() {}, send() {} };
+
+/** Handed to a game that draws its own emote bar. A stable object, because
+ *  `reactions` is only replaced once the room is joined and a draw can come first. */
+const react = {
+  pool: () => reactions.pool(),
+  slots: () => reactions.slots(),
+  picks: () => reactions.picks(),
+  setPicks: (list) => reactions.setPicks(list),
+  send: (emoji) => reactions.send(emoji)
+};
 
 const LOOK_KEY = 'together-games.look';
 
@@ -119,18 +129,18 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !menuEl.hidden) setMenuOpen(false);
 });
 
-/** A game with meta.chrome === 'own' draws its own turn line, Rematch and Chat
- *  button, so the room hides its versions and tucks the reactions into the chat
- *  sheet. Every other game keeps the room's chrome unchanged. */
+/** A game with meta.chrome === 'own' draws its own turn line, Rematch, Chat
+ *  button and emote bar, so the room hides its versions. Every other game keeps
+ *  the room's chrome unchanged.
+ *
+ *  The room's reaction bar stays where it has always been and is hidden by the
+ *  stylesheet for such a game: it used to be moved into the chat sheet, which
+ *  meant reacting covered the board. The game puts its own within reach instead. */
 function applyChrome() {
   const own = game.meta.chrome === 'own';
   document.body.dataset.game = gameId;
   document.body.dataset.chrome = own ? 'own' : 'room';
-  if (own) {
-    chatSheetEl.insertBefore(reactionBarEl, document.getElementById('chat-log'));
-  } else {
-    boardEl.after(reactionBarEl);
-  }
+  boardEl.after(reactionBarEl);
   renderSoundToggle();
 }
 
@@ -196,6 +206,7 @@ function draw() {
     onLook,
     chat: { toggle: () => chat.toggle(), unread: () => chat.unread() },
     onRematch: rematch,
+    react,
     sound: { on: soundOn() },
     onAction: (action) => submitAction(action)
   });
@@ -509,7 +520,7 @@ async function start() {
   chat = initChat({ code, identity, namesFor: (clientId) => players[clientId]?.name ?? 'Them' });
   // The game's own Chat slot carries the unread count, so it is redrawn when that changes.
   chat.onUnread(() => draw());
-  initReactions({ code, identity });
+  reactions = initReactions({ code, identity, mount: reactionBarEl });
 }
 
 // location.replace() above does not stop this module, so gate the entry point

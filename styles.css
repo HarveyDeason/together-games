@@ -907,10 +907,13 @@ body {
 .room-menu .btn { margin-top: 0.25rem; padding: 0.6rem 1rem; }
 .room-menu .leave-row { margin-top: 1rem; }
 
-/* A game that draws its own turn line, Rematch and Chat button. */
+/* A game that draws its own turn line, Rematch, Chat button and emote bar. The
+   room's reaction bar used to be moved into the chat sheet for such a game, which
+   meant reacting covered the board; the game now keeps its own within reach and
+   the room's is simply out of the way. */
 body[data-chrome="own"] #turn-line,
 body[data-chrome="own"] #rematch,
+body[data-chrome="own"] #reaction-bar,
 body[data-chrome="own"] .chat-toggle { display: none; }
-body[data-chrome="own"] .chat-sheet .reaction-bar { margin: 0 0 0.5rem; }
 .room-menu .leave-row .btn { flex: 1 1 auto; width: auto; margin: 0; }
 .room-menu .leave-row .link-btn { flex: none; margin: 0; white-space: nowrap; }
